@@ -1,0 +1,53 @@
+# Configuration for the crop-type / crop-disease mesh simulation.
+# Every value here is read by src/config.py — change experiments from this
+# file rather than editing code.
+
+data:
+  root: "data/PlantVillage"      # expects class-per-folder images, e.g. "Tomato___Bacterial_spot"
+  image_size: 160
+  num_nodes: 3                    # simulated farms
+  probe_set_fraction: 0.05        # held-out PUBLIC subset shared by all nodes for logit exchange
+  test_fraction: 0.15             # per-node held-out test split (used for accuracy + collaboration gain)
+  non_iid_strategy: "by_crop"     # "by_crop" | "by_disease" | "dirichlet"
+  dirichlet_alpha: 0.3            # only used when non_iid_strategy == "dirichlet"
+  seed: 42
+
+models:
+  # any subset of: mobilenet_v3_small, efficientnet_lite0, mobilevit_xxs
+  architectures:
+    - mobilenet_v3_small
+    - efficientnet_lite0
+    - mobilevit_xxs
+  pretrained: true
+
+training:
+  local_epochs_per_round: 2       # local training epochs before each exchange round
+  distill_epochs_per_round: 1     # epochs spent distilling towards consensus knowledge
+  rounds: 5                       # number of mesh exchange rounds
+  baseline_epochs: 10             # epochs for the local-only baseline (aligned compute budget)
+  batch_size: 32
+  lr: 0.001
+  distill_lr: 0.0005
+  proto_weight: 0.5               # weight of prototype-alignment loss during distillation
+  kd_weight: 0.5                  # weight of logit-distillation (KD) loss during distillation
+  kd_temperature: 2.0
+
+federated:
+  aggregation: "trimmed_mean"     # "trimmed_mean" | "krum"
+  trim_fraction: 0.2              # fraction trimmed from each end (trimmed_mean only)
+  krum_neighbors: 2               # number of closest peers kept (krum only)
+
+energy:
+  track_with_codecarbon: false # set true if allow to track powermetrics
+  country_iso_code: "GBR"
+  grid_carbon_intensity_gco2_per_kwh: 125   # National Grid ESO 2024 GB average
+  # Rough per-byte transmit energy budgets (Joules/byte), used ONLY for the
+  # communication-energy estimate — swap for measured figures if available.
+  radio_energy_j_per_byte:
+    wifi: 0.00003
+    cellular_lte: 0.0003
+    lora: 0.00012
+
+output:
+  dir: "outputs"
+  save_plots: true
