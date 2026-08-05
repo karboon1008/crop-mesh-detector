@@ -77,7 +77,7 @@ def run_baseline(cfg, arch, node_loaders, num_crop, num_disease, tracker, device
     return evals
 
 
-def run_mesh(cfg, arch, node_loaders, probe_loader, num_crop, num_disease, tracker, device):
+def run_mesh(cfg, arch, node_loaders, probe_loader, num_crop, num_disease, tracker, device, output_dir):
     nodes = []
     for i, (train_loader, test_loader) in enumerate(node_loaders):
         model = build_model(arch, num_crop, num_disease, pretrained=cfg.get("models.pretrained", True))
@@ -108,6 +108,12 @@ def run_mesh(cfg, arch, node_loaders, probe_loader, num_crop, num_disease, track
         print(f"  round {r}: {round_log.total_bytes_exchanged} bytes exchanged")
 
     final_evals = {node.node_id: node.evaluate() for node in nodes}
+
+    checkpoint_dir = output_dir / "checkpoints" / arch
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    for node in nodes:
+        torch.save(node.model.state_dict(), checkpoint_dir / f"{node.node_id}.pt")
+
     return final_evals, total_bytes
 
 
@@ -125,6 +131,19 @@ def main():
     num_crop = len(dataset.labels.crop_classes)
     num_disease = len(dataset.labels.disease_classes)
     print(f"Loaded {len(dataset)} images, {num_crop} crop classes, {num_disease} disease classes.")
+
+    checkpoints_dir = output_dir / "checkpoints"
+    checkpoints_dir.mkdir(parents=True, exist_ok=True)
+    (checkpoints_dir / "classes.json").write_text(
+        json.dumps(
+            {
+                "crop_classes": dataset.labels.crop_classes,
+                "disease_classes": dataset.labels.disease_classes,
+                "image_size": cfg.get("data.image_size", 160),
+            },
+            indent=2,
+        )
+    )
 
     probe_loader, node_loaders = build_dataloaders(cfg, dataset)
 
@@ -147,7 +166,7 @@ def main():
         baseline_evals = run_baseline(cfg, arch, node_loaders, num_crop, num_disease, tracker, device)
         print("-- mesh (prototype + logit exchange) --")
         mesh_evals, total_bytes = run_mesh(
-            cfg, arch, node_loaders, probe_loader, num_crop, num_disease, tracker, device
+            cfg, arch, node_loaders, probe_loader, num_crop, num_disease, tracker, device, output_dir
         )
         grand_total_bytes += total_bytes
         gain = compute_collaboration_gain(mesh_evals, baseline_evals)
