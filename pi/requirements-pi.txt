@@ -1,0 +1,12 @@
+# Runs on the Raspberry Pi itself — deliberately does NOT include
+# torch/torchvision/timm/tensorflow (those are only needed for training and
+# for scripts/export_for_pi.py, which runs on your dev machine or Colab).
+
+onnxruntime>=1.16
+numpy>=1.24
+Pillow>=10.0
+
+# Only needed if using --camera opencv (USB webcam). If using the official
+# Pi Camera Module (--camera picamera2), picamera2 already ships with
+# Raspberry Pi OS — no separate install needed.
+opencv-python-headless>=4.8

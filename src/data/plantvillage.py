@@ -30,6 +30,9 @@ from torch.utils.data import Dataset, Subset
 from torchvision import transforms
 from torchvision.datasets import ImageFolder
 
+IMAGENET_MEAN = [0.485, 0.456, 0.406]
+IMAGENET_STD = [0.229, 0.224, 0.225]
+
 
 def _parse_crop_disease(class_name: str) -> tuple[str, str]:
     """'Tomato___Bacterial_spot' -> ('Tomato', 'Bacterial_spot').
@@ -63,7 +66,7 @@ class PlantVillageDataset(Dataset):
             [
                 transforms.Resize((image_size, image_size)),
                 transforms.ToTensor(),
-                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+                transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
             ]
         )
         self.base = ImageFolder(str(root))

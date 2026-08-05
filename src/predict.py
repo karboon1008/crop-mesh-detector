@@ -27,7 +27,8 @@ from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 
-from src.data.plantvillage import _parse_crop_disease
+from src.data.plantvillage import IMAGENET_MEAN, IMAGENET_STD, _parse_crop_disease
+from src.model_selection import pick_best_arch_node
 from src.models.factory import build_model
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp"}
@@ -63,7 +64,7 @@ class InferenceDataset(Dataset):
             [
                 transforms.Resize((image_size, image_size)),
                 transforms.ToTensor(),
-                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+                transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
             ]
         )
 
@@ -73,20 +74,6 @@ class InferenceDataset(Dataset):
     def __getitem__(self, idx: int):
         image = Image.open(self.images[idx].path).convert("RGB")
         return self.transform(image), idx
-
-
-def pick_best_arch_node(results_summary_path: Path) -> tuple[str, str]:
-    results = json.loads(results_summary_path.read_text())
-    best_score, best_arch, best_node = -1.0, None, None
-    for arch, arch_result in results.items():
-        for node_id, eval_ in arch_result["mesh_eval"].items():
-            score = (eval_["crop_accuracy"] + eval_["disease_accuracy"]) / 2
-            if score > best_score:
-                best_score, best_arch, best_node = score, arch, node_id
-    if best_arch is None:
-        raise ValueError(f"No mesh_eval entries found in {results_summary_path}")
-    print(f"Auto-selected arch={best_arch} node={best_node} (avg test accuracy {best_score:.4f})")
-    return best_arch, best_node
 
 
 def main():
