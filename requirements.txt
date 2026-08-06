@@ -12,9 +12,13 @@ PyYAML>=6.0
 # Sustainability accounting
 codecarbon>=2.3       # measured compute energy -> kWh / CO2e
 
-# Raspberry Pi export (scripts/export_for_pi.py) — ONNX conversion + int8 quantization
+# Raspberry Pi export (scripts/export_for_pi.py) — ONNX conversion + int8 quantization.
+# Recent torch versions import an onnxscript-based compatibility shim inside
+# torch.onnx.export() unconditionally, even on the legacy exporter path — so
+# this is needed even though nothing here calls onnxscript directly.
 onnx>=1.15
 onnxruntime>=1.16
+onnxscript>=0.1
 
 # Dataset download helper (only needed for scripts/download_plantvillage.py) —
 # TensorFlow Datasets needs no account/API token, unlike Kaggle.
