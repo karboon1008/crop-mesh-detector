@@ -4,8 +4,19 @@ aligned-budget local-only baseline and the decentralised mesh (prototype
 then reports the collaboration gain and a compute + communication
 sustainability accounting.
 
-Run:
+Run all architectures in config.yaml's models.architectures list in one go:
     python -m src.train --config config.yaml
+
+Or restrict a single run to one architecture (e.g. to split a full sweep
+across several shorter Colab sessions to stay under free-tier GPU usage
+limits) — results merge into any existing outputs/results_summary.json
+rather than overwriting it, so running each architecture separately still
+produces one combined comparison at the end:
+    python -m src.train --config config.yaml --arch mobilenet_v3_small
+    python -m src.train --config config.yaml --arch efficientnet_lite0
+    python -m src.train --config config.yaml --arch mobilevit_xxs
+
+Pass --fresh to start a new sweep instead of merging into a previous one.
 """
 
 from __future__ import annotations
@@ -120,6 +131,16 @@ def run_mesh(cfg, arch, node_loaders, probe_loader, num_crop, num_disease, track
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default=None, help="Path to config.yaml (default: repo root)")
+    parser.add_argument(
+        "--arch",
+        default=None,
+        help="Restrict this run to a single architecture, overriding config.yaml's models.architectures list",
+    )
+    parser.add_argument(
+        "--fresh",
+        action="store_true",
+        help="Discard any existing results_summary.json / run_state.json instead of merging into them",
+    )
     args = parser.parse_args()
     cfg = Config.load(args.config)
 
@@ -157,10 +178,22 @@ def main():
         cfg.get("energy.grid_carbon_intensity_gco2_per_kwh", 125),
     )
 
-    all_results = {}
+    results_summary_path = output_dir / "results_summary.json"
+    run_state_path = output_dir / "run_state.json"
+    if args.fresh:
+        results_summary_path.unlink(missing_ok=True)
+        run_state_path.unlink(missing_ok=True)
+
+    all_results = json.loads(results_summary_path.read_text()) if results_summary_path.exists() else {}
+    run_state = (
+        json.loads(run_state_path.read_text())
+        if run_state_path.exists()
+        else {"total_compute_energy_kwh": 0.0, "total_duration_s": 0.0, "num_tracked_blocks": 0, "total_bytes_exchanged": 0}
+    )
     grand_total_bytes = 0
 
-    for arch in cfg.get("models.architectures", []):
+    architectures = [args.arch] if args.arch else cfg.get("models.architectures", [])
+    for arch in architectures:
         print(f"\n=== Architecture: {arch} ===")
         print("-- baseline (local-only) --")
         baseline_evals = run_baseline(cfg, arch, node_loaders, num_crop, num_disease, tracker, device)
@@ -186,19 +219,30 @@ def main():
         print(f"macro_gain: {gain['macro_gain']}")
         print(f"worst_node_gain: {gain['worst_node_gain']}")
 
-    (output_dir / "results_summary.json").write_text(json.dumps(all_results, indent=2))
+    results_summary_path.write_text(json.dumps(all_results, indent=2))
 
-    compute_summary = tracker.summary()
-    comm_estimate = comm_estimator.estimate_all_radios(grand_total_bytes)
+    # Accumulate this run's compute energy/bytes on top of any prior separate
+    # run(s) (e.g. one Colab session per architecture), so the sustainability
+    # report reflects the whole sweep rather than just the architecture(s)
+    # trained in this particular invocation.
+    this_run_compute = tracker.summary()
+    run_state["total_compute_energy_kwh"] += this_run_compute["total_compute_energy_kwh"]
+    run_state["total_duration_s"] += this_run_compute["total_duration_s"]
+    run_state["num_tracked_blocks"] += this_run_compute["num_tracked_blocks"]
+    run_state["total_bytes_exchanged"] += grand_total_bytes
+    run_state_path.write_text(json.dumps(run_state, indent=2))
+
+    comm_estimate = comm_estimator.estimate_all_radios(run_state["total_bytes_exchanged"])
     overall_gain = {arch: res["collaboration_gain"]["macro_gain"] for arch, res in all_results.items()}
     write_sustainability_report(
         output_dir / "sustainability_report",
-        compute_summary,
+        {k: v for k, v in run_state.items() if k != "total_bytes_exchanged"},
         comm_estimate,
         overall_gain,
         cfg.get("energy.grid_carbon_intensity_gco2_per_kwh", 125),
     )
-    print(f"\nDone. Results and sustainability report written to {output_dir}/")
+    print(f"\nDone. Results and sustainability report written to {output_dir}/ "
+          f"(now covering {len(all_results)} architecture(s): {list(all_results.keys())})")
 
 
 if __name__ == "__main__":

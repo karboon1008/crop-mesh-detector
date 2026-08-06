@@ -4,38 +4,61 @@ Runs the best-scoring trained model on a Pi's CPU, classifying images from a
 camera in near-real-time — no training stack (torch/torchvision/timm) needed
 on the Pi itself.
 
-## 1. Export the model (dev machine or Colab, wherever training ran)
+## 1. Train and export (dev machine or Colab, wherever training ran)
 
-After a completed `python -m src.train` run:
+`python -m src.train` supports training one architecture at a time via
+`--arch` — useful for splitting a full 3-architecture sweep across several
+shorter runs (e.g. to stay under Colab's free-tier GPU usage limits; see the
+Colab notebook, which does exactly this). Each run's results merge into
+`outputs/results_summary.json` rather than overwriting it:
 
 ```bash
-pip install onnxruntime   # already in requirements.txt
-python scripts/export_for_pi.py
+python -m src.train --config config.yaml --arch mobilenet_v3_small --fresh  # start a new sweep
+python -m src.train --config config.yaml --arch efficientnet_lite0          # merges in
+python -m src.train --config config.yaml --arch mobilevit_xxs               # merges in
 ```
 
-This picks whichever `(architecture, node)` scored the highest average
-crop+disease test accuracy in `outputs/results_summary.json`, converts it to
-ONNX, quantizes it to int8, and writes a small self-contained bundle to
-`outputs/pi_export/`:
+(Omit `--arch` to train every architecture listed in `config.yaml` in one
+run instead, if you're not fighting a GPU quota.)
 
-- `model.onnx` — a few MB to a few tens of MB, depending on architecture
-- `manifest.json` — class names, image size, normalization constants
+After that, `scripts/export_for_pi.py` converts trained checkpoints to
+ONNX + int8-quantized bundles a Pi can run:
 
-It also runs a parity check against a handful of real images from
-`data/PlantVillage` (if present) to confirm the quantized ONNX model agrees
-with the original PyTorch model's predictions before you ever touch hardware.
+```bash
+pip install onnx onnxruntime   # already in requirements.txt
+python scripts/export_for_pi.py --all
+```
 
-If the auto-picked architecture turns out too slow on the Pi in step 4, redo
-this with an explicit override, e.g.:
+`--all` exports **every** architecture present in `results_summary.json`
+(each using its own best-scoring node) into its own subfolder:
+
+```
+outputs/pi_export/
+├── mobilenet_v3_small/{model.onnx, manifest.json}
+├── efficientnet_lite0/{model.onnx, manifest.json}
+└── mobilevit_xxs/{model.onnx, manifest.json}
+```
+
+Each `model.onnx` is a few MB to a few tens of MB; `manifest.json` has the
+class names, image size, and normalization constants. Copy whichever
+subfolder(s) you want to try onto the Pi and compare real latency/accuracy
+there — you don't have to commit to one in advance.
+
+For a single specific model instead of all three:
 
 ```bash
 python scripts/export_for_pi.py --arch mobilenet_v3_small --node node_0
 ```
 
-(Check `outputs/results_summary.json` for available node IDs per architecture.)
+(Omitting both `--arch`/`--node`/`--all` picks the single best-scoring
+architecture+node overall.)
 
-**If you ran training on Colab**: run this export step there too, right
-after training, then download only the small `outputs/pi_export/` folder
+Every export runs a parity check against a handful of real images from
+`data/PlantVillage` (if present) to confirm the quantized ONNX model agrees
+with the original PyTorch model's predictions before you ever touch hardware.
+
+**If you ran training on Colab**: run the export step there too, right
+after training, then download only the small `outputs/pi_export/` folder(s)
 instead of the full `outputs/` — the dataset and checkpoints don't need to
 leave Colab at all.
 
@@ -56,12 +79,13 @@ pip install -r pi/requirements-pi.txt
 you only need `pi/requirements-pi.txt`'s `opencv-python-headless` if you're
 using a USB webcam instead.)
 
-## 3. Copy the bundle + script onto the Pi
+## 3. Copy the bundle(s) + script onto the Pi
 
-From your dev machine:
+With `--all` you'll have one subfolder per architecture — copy whichever
+one(s) you want to try (start with just one to keep step 4 simple):
 
 ```bash
-scp -r outputs/pi_export pi@<pi-ip>:~/crop-mesh-detector/
+scp -r outputs/pi_export/mobilenet_v3_small pi@<pi-ip>:~/crop-mesh-detector/pi_export
 scp pi/inference_service.py pi@<pi-ip>:~/crop-mesh-detector/
 ```
 

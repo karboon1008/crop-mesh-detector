@@ -1,14 +1,20 @@
-"""Exports a trained checkpoint to a small, self-contained bundle a
+"""Exports trained checkpoint(s) to small, self-contained bundle(s) a
 Raspberry Pi can run without the training stack (no torch/torchvision/timm
 needed on the Pi — only `onnxruntime`, `numpy`, `Pillow`).
 
-By default picks the (architecture, node) with the highest average
-crop/disease test accuracy in outputs/results_summary.json — same selection
-`src/predict.py` uses — override with --arch/--node for a specific one
-(e.g. if the best-scoring architecture turns out too slow on real hardware).
-
-Run (from the repo root, after `python -m src.train`):
+Single-model mode (default) picks the (architecture, node) with the highest
+average crop/disease test accuracy in outputs/results_summary.json — same
+selection `src/predict.py` uses — override with --arch/--node for a specific
+one (e.g. if the best-scoring architecture turns out too slow on real
+hardware):
     python scripts/export_for_pi.py
+    python scripts/export_for_pi.py --arch mobilenet_v3_small --node node_0
+
+--all mode exports every architecture present in results_summary.json (each
+using its own best-scoring node) into its own subfolder, so you end up with
+all trained models ready to deploy and can pick between them after comparing
+accuracy/latency on the actual Pi:
+    python scripts/export_for_pi.py --all
 """
 
 from __future__ import annotations
@@ -18,7 +24,6 @@ import json
 import sys
 from pathlib import Path
 
-import numpy as np
 import onnxruntime
 import torch
 from onnxruntime.quantization import QuantType, quantize_dynamic
@@ -26,7 +31,7 @@ from onnxruntime.quantization import QuantType, quantize_dynamic
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.data.plantvillage import IMAGENET_MEAN, IMAGENET_STD, load_full_dataset
-from src.model_selection import pick_best_arch_node
+from src.model_selection import list_architectures, pick_best_arch_node, pick_best_node_for_arch
 from src.models.factory import build_model
 
 
@@ -61,23 +66,14 @@ def check_parity(model: torch.nn.Module, session: onnxruntime.InferenceSession, 
     return mismatches
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--checkpoints-dir", default="outputs/checkpoints")
-    parser.add_argument("--results", default="outputs/results_summary.json")
-    parser.add_argument("--arch", default=None, help="Override: which architecture to export")
-    parser.add_argument("--node", default=None, help="Override: which node's checkpoint to export, e.g. node_0")
-    parser.add_argument("--data-root", default="data/PlantVillage", help="Used only for the parity check, if present")
-    parser.add_argument("--num-parity-samples", type=int, default=8)
-    parser.add_argument("--output-dir", default="outputs/pi_export")
-    args = parser.parse_args()
-
-    checkpoints_dir = Path(args.checkpoints_dir)
-    if args.arch and args.node:
-        arch, node_id = args.arch, args.node
-    else:
-        arch, node_id = pick_best_arch_node(Path(args.results))
-
+def export_one(
+    arch: str,
+    node_id: str,
+    checkpoints_dir: Path,
+    output_dir: Path,
+    data_root: Path,
+    num_parity_samples: int,
+) -> None:
     classes = json.loads((checkpoints_dir / "classes.json").read_text())
     crop_classes = classes["crop_classes"]
     disease_classes = classes["disease_classes"]
@@ -88,7 +84,6 @@ def main():
     model.load_state_dict(state_dict)
     model.eval()
 
-    output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     fp32_path = output_dir / "model_fp32.onnx"
     quantized_path = output_dir / "model.onnx"
@@ -117,26 +112,66 @@ def main():
     }
     (output_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
 
-    data_root = Path(args.data_root)
     if data_root.exists():
-        print(f"Checking PyTorch-vs-ONNX prediction parity on {args.num_parity_samples} samples from {data_root}...")
+        print(f"Checking PyTorch-vs-ONNX prediction parity on {num_parity_samples} samples from {data_root}...")
         dataset = load_full_dataset(data_root, image_size)
-        step = max(1, len(dataset) // args.num_parity_samples)
-        samples = [dataset[i] for i in range(0, len(dataset), step)][: args.num_parity_samples]
+        step = max(1, len(dataset) // num_parity_samples)
+        samples = [dataset[i] for i in range(0, len(dataset), step)][:num_parity_samples]
         session = onnxruntime.InferenceSession(str(quantized_path))
         mismatches = check_parity(model, session, samples)
         if mismatches:
             print(
                 f"WARNING: {mismatches}/{len(samples)} samples disagree between PyTorch and the "
-                f"quantized ONNX model. Consider re-running with --arch/--node to pick a different "
-                f"checkpoint, or inspect model_fp32 export for {arch} before deploying."
+                f"quantized ONNX model. Consider a different checkpoint for {arch}, or inspect the "
+                f"fp32 export before deploying."
             )
         else:
             print(f"Parity OK: all {len(samples)} sampled predictions match.")
     else:
         print(f"{data_root} not found locally — skipping parity check (export itself still succeeded).")
 
-    print(f"\nDone. Bundle ready at {output_dir}/ (model.onnx + manifest.json) — copy this whole folder to the Pi.")
+    print(f"Bundle ready at {output_dir}/ (model.onnx + manifest.json).")
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--checkpoints-dir", default="outputs/checkpoints")
+    parser.add_argument("--results", default="outputs/results_summary.json")
+    parser.add_argument("--arch", default=None, help="Override: which architecture to export")
+    parser.add_argument("--node", default=None, help="Override: which node's checkpoint to export, e.g. node_0")
+    parser.add_argument(
+        "--all", action="store_true", help="Export every architecture in results_summary.json, each to its own subfolder"
+    )
+    parser.add_argument("--data-root", default="data/PlantVillage", help="Used only for the parity check, if present")
+    parser.add_argument("--num-parity-samples", type=int, default=8)
+    parser.add_argument("--output-dir", default="outputs/pi_export")
+    args = parser.parse_args()
+
+    checkpoints_dir = Path(args.checkpoints_dir)
+    output_dir = Path(args.output_dir)
+    data_root = Path(args.data_root)
+
+    if args.all:
+        archs = list_architectures(Path(args.results))
+        print(f"Exporting all {len(archs)} architecture(s): {archs}")
+        summary = []
+        for arch in archs:
+            node_id, score = pick_best_node_for_arch(Path(args.results), arch)
+            print(f"\n=== {arch} (best node: {node_id}, avg test accuracy {score:.4f}) ===")
+            export_one(arch, node_id, checkpoints_dir, output_dir / arch, data_root, args.num_parity_samples)
+            summary.append((arch, node_id, score, output_dir / arch))
+        print("\nAll exports done:")
+        for arch, node_id, score, path in summary:
+            print(f"  {arch:20s} node={node_id:8s} avg_accuracy={score:.4f}  ->  {path}/")
+        print(f"\nCopy whichever bundle(s) you want to the Pi — see docs/raspberry_pi_deployment.md.")
+        return
+
+    if args.arch and args.node:
+        arch, node_id = args.arch, args.node
+    else:
+        arch, node_id = pick_best_arch_node(Path(args.results))
+    export_one(arch, node_id, checkpoints_dir, output_dir, data_root, args.num_parity_samples)
+    print(f"\nDone. Copy the whole {output_dir}/ folder to the Pi.")
 
 
 if __name__ == "__main__":
