@@ -29,6 +29,38 @@ from pathlib import Path
 
 DEST = Path(__file__).resolve().parent.parent / "data" / "PlantVillage"
 
+# TFDS's plant_village builder fetches from this Mendeley Data URL, which
+# 302-redirects to a plain public S3 object. Mendeley's Cloudflare protection
+# blocks that initial request from many cloud/datacenter IPs (Colab included)
+# with a 403 — but the S3 object itself has no such restriction. Verified
+# manually: this S3 URL returns 200 OK with the identical file Mendeley
+# redirects to.
+_MENDELEY_S3_FALLBACK_URL = (
+    "https://prod-dcd-datasets-public-files-eu-west-1.s3.eu-west-1.amazonaws.com/"
+    "d29ed9b2-8a5d-4663-8a82-c9174f2c7066"
+)
+
+
+def _load_plant_village(tfds):
+    """Tries the canonical Mendeley URL first (works fine off cloud IPs);
+    falls back to the direct S3 object only if that's actually blocked.
+    """
+    try:
+        return tfds.load("plant_village", split="train", with_info=True, shuffle_files=False)
+    except Exception as e:
+        if "403" not in str(e):
+            raise
+        print(
+            "Mendeley's download endpoint returned 403 (its Cloudflare protection blocking "
+            "this IP — common on Colab/cloud runners). Retrying via the direct S3 object it "
+            "redirects to instead...",
+            file=sys.stderr,
+        )
+        from tensorflow_datasets.datasets.plant_village import plant_village_dataset_builder as pv
+
+        pv._URL = _MENDELEY_S3_FALLBACK_URL
+        return tfds.load("plant_village", split="train", with_info=True, shuffle_files=False)
+
 
 def main() -> int:
     if DEST.exists() and any(DEST.iterdir()):
@@ -50,7 +82,7 @@ def main() -> int:
     from tqdm import tqdm
 
     print("Loading 'plant_village' via TensorFlow Datasets (downloads on first run)...")
-    dataset, info = tfds.load("plant_village", split="train", with_info=True, shuffle_files=False)
+    dataset, info = _load_plant_village(tfds)
     class_names = info.features["label"].names
     total = info.splits["train"].num_examples
 

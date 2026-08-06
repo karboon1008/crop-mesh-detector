@@ -20,6 +20,12 @@ onnxruntime>=1.16
 # TensorFlow Datasets needs no account/API token, unlike Kaggle.
 tensorflow>=2.13
 tensorflow-datasets>=4.9
+# Environments that pre-ship an older protobuf (e.g. Colab) can end up with
+# tensorflow-metadata's bundled *_pb2.py files (compiled against a newer
+# protobuf codegen) paired with an older protobuf runtime that can't load
+# them — "gencode X runtime Y" VersionError at import time. Pinning a floor
+# here forces pip to upgrade it on install instead of leaving the older one.
+protobuf>=6.31.1
 
 # Testing
 pytest>=7.4
