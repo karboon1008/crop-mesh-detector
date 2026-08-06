@@ -38,14 +38,22 @@ from src.models.factory import build_model
 def export_onnx(model: torch.nn.Module, image_size: int, output_path: Path) -> None:
     model.eval()
     dummy_input = torch.zeros(1, 3, image_size, image_size)
-    torch.onnx.export(
-        model,
-        dummy_input,
-        str(output_path),
+    export_kwargs = dict(
         input_names=["image"],
         output_names=["crop_logits", "disease_logits"],
         opset_version=17,  # mobilevit_xxs's attention op needs >=14
     )
+    try:
+        # Recent torch defaults to the newer torch.export-based ("dynamo") ONNX
+        # exporter, which has real bugs with this model's shape inference
+        # (mismatched dims during quantization) and an opset-downgrade path
+        # that silently fails. Force the older TorchScript-based exporter,
+        # which is what was actually validated against all 3 architectures.
+        torch.onnx.export(model, dummy_input, str(output_path), dynamo=False, **export_kwargs)
+    except TypeError:
+        # Older torch (pre-dynamo-exporter) doesn't have this kwarg at all —
+        # it only has the legacy exporter anyway, so just call without it.
+        torch.onnx.export(model, dummy_input, str(output_path), **export_kwargs)
 
 
 def check_parity(model: torch.nn.Module, session: onnxruntime.InferenceSession, samples) -> int:
