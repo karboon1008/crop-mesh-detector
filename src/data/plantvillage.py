@@ -141,18 +141,25 @@ def partition_nodes(
     strategy: str,
     dirichlet_alpha: float,
     seed: int,
+    manual_node_crops: dict[str, list[str]] | None = None,
 ) -> list[list[int]]:
     """Split `remaining_indices` into `num_nodes` non-IID shards.
 
     strategy:
-      - "by_crop":    each node sees a disjoint subset of crop species
-                      (mirrors different farms growing different crops).
+      - "by_crop":    each node sees a disjoint subset of crop species,
+                      auto-assigned round-robin (mirrors different farms
+                      growing different crops).
       - "by_disease": each node sees a disjoint subset of original
                       crop-disease classes (mirrors different regional
                       disease prevalence within similar crops).
       - "dirichlet":  classic label-skew partition via a symmetric
                       Dirichlet distribution over class proportions
                       per node (Zhu et al.'s non-IID survey; Q. Li et al.).
+      - "manual":     each node gets exactly the crop species named for it
+                      in `manual_node_crops` (e.g. an "orchard farm" node
+                      grows Apple/Cherry/Peach/Blueberry/Raspberry) — same
+                      disjoint-by-crop shape as "by_crop", but the farm/crop
+                      assignment is explicit instead of round-robin.
     """
     rng = np.random.RandomState(seed)
     targets = np.array(dataset.targets)[remaining_indices]
@@ -164,6 +171,8 @@ def partition_nodes(
         group_key = targets
     elif strategy == "dirichlet":
         return _dirichlet_partition(remaining_indices, targets, num_nodes, dirichlet_alpha, rng)
+    elif strategy == "manual":
+        return _manual_partition(dataset, remaining_indices, targets, num_nodes, manual_node_crops)
     else:
         raise ValueError(f"Unknown non_iid_strategy: {strategy}")
 
@@ -196,6 +205,40 @@ def _dirichlet_partition(
         for node_id, count in enumerate(counts):
             shards[node_id].extend(cls_indices[start : start + count])
             start += count
+    return shards
+
+
+def _manual_partition(
+    dataset: PlantVillageDataset,
+    indices: list[int],
+    targets: np.ndarray,
+    num_nodes: int,
+    manual_node_crops: dict[str, list[str]] | None,
+) -> list[list[int]]:
+    if not manual_node_crops:
+        raise ValueError("non_iid_strategy 'manual' requires data.manual_node_crops in config.yaml")
+
+    crop_to_node: dict[str, int] = {}
+    for node_key, crops in manual_node_crops.items():
+        node_idx = int(str(node_key).rsplit("_", 1)[-1])
+        for crop in crops:
+            if crop in crop_to_node:
+                raise ValueError(f"Crop '{crop}' assigned to more than one node in manual_node_crops")
+            crop_to_node[crop] = node_idx
+
+    all_crops = set(dataset.labels.crop_classes)
+    missing = all_crops - set(crop_to_node)
+    if missing:
+        raise ValueError(f"manual_node_crops is missing an assignment for: {sorted(missing)}")
+    unknown = set(crop_to_node) - all_crops
+    if unknown:
+        raise ValueError(f"manual_node_crops references unknown crop(s): {sorted(unknown)}")
+
+    shards: list[list[int]] = [[] for _ in range(num_nodes)]
+    for local_pos, global_idx in enumerate(indices):
+        crop_idx, _ = dataset.labels.class_to_crop_disease[int(targets[local_pos])]
+        crop_name = dataset.labels.crop_classes[crop_idx]
+        shards[crop_to_node[crop_name]].append(global_idx)
     return shards
 
 

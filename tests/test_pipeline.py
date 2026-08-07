@@ -73,6 +73,40 @@ def test_partition_by_crop_is_disjoint_and_complete(synthetic_dataset):
     assert sorted(all_shard_idx) == sorted(remaining_idx)
 
 
+def test_partition_manual_assigns_named_crops_to_named_nodes(synthetic_dataset):
+    _, remaining_idx = carve_public_probe_set(synthetic_dataset, 0.1, seed=0)
+    shards = partition_nodes(
+        synthetic_dataset,
+        remaining_idx,
+        num_nodes=2,
+        strategy="manual",
+        dirichlet_alpha=0.3,
+        seed=0,
+        manual_node_crops={"node_0": ["Tomato"], "node_1": ["Potato"]},
+    )
+    class_to_crop = {c: cd[0] for c, cd in synthetic_dataset.labels.class_to_crop_disease.items()}
+    crops_per_shard = [
+        {synthetic_dataset.labels.crop_classes[class_to_crop[synthetic_dataset.targets[i]]] for i in shard}
+        for shard in shards
+    ]
+    assert crops_per_shard[0] == {"Tomato"}
+    assert crops_per_shard[1] == {"Potato"}
+
+
+def test_partition_manual_rejects_incomplete_crop_assignment(synthetic_dataset):
+    _, remaining_idx = carve_public_probe_set(synthetic_dataset, 0.1, seed=0)
+    with pytest.raises(ValueError, match="missing an assignment"):
+        partition_nodes(
+            synthetic_dataset,
+            remaining_idx,
+            num_nodes=2,
+            strategy="manual",
+            dirichlet_alpha=0.3,
+            seed=0,
+            manual_node_crops={"node_0": ["Tomato"]},
+        )
+
+
 @pytest.mark.parametrize("arch", ["mobilenet_v3_small", "efficientnet_lite0", "mobilevit_xxs"])
 def test_model_forward_shapes(synthetic_dataset, arch):
     model = build_model(arch, num_crop_classes=2, num_disease_classes=3, pretrained=False)

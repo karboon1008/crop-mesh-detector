@@ -8,8 +8,15 @@ data:
   num_nodes: 3                    # simulated farms
   probe_set_fraction: 0.05        # held-out PUBLIC subset shared by all nodes for logit exchange
   test_fraction: 0.15             # per-node held-out test split (used for accuracy + collaboration gain)
-  non_iid_strategy: "by_crop"     # "by_crop" | "by_disease" | "dirichlet"
+  non_iid_strategy: "manual"      # "by_crop" | "by_disease" | "dirichlet" | "manual"
   dirichlet_alpha: 0.3            # only used when non_iid_strategy == "dirichlet"
+  # Only used when non_iid_strategy == "manual" — thematically-coherent
+  # farm-type split (volume-imbalanced by design: node_2 covers fewer,
+  # higher-yield greenhouse crops than the other two).
+  manual_node_crops:
+    node_0: ["Apple", "Cherry", "Peach", "Blueberry", "Raspberry"]        # "orchard farm" — tree/bush fruit
+    node_1: ["Corn", "Potato", "Soybean", "Strawberry", "Squash"]         # "field-crop farm" — broadacre/row crops
+    node_2: ["Tomato", "Pepper,_bell", "Grape", "Orange"]                 # "greenhouse/market-garden farm" — warm-climate produce
   seed: 42
 
 models:

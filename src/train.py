@@ -58,6 +58,7 @@ def build_dataloaders(cfg: Config, dataset):
         cfg.get("data.non_iid_strategy", "by_crop"),
         cfg.get("data.dirichlet_alpha", 0.3),
         cfg.get("data.seed", 42),
+        manual_node_crops=cfg.get("data.manual_node_crops", None),
     )
     batch_size = cfg.get("training.batch_size", 32)
     probe_loader = DataLoader(make_subset(dataset, probe_idx), batch_size=batch_size, shuffle=False)

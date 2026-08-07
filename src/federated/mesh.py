@@ -7,11 +7,8 @@ labels, gradients, or weights.
 """
 
 from __future__ import annotations
-
 from dataclasses import dataclass, field
-
 from torch.utils.data import DataLoader
-
 from src.federated.aggregation import aggregate_prototypes, aggregate_logits
 from src.federated.node import KnowledgePayload, Node
 
