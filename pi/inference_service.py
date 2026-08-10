@@ -91,9 +91,7 @@ class Picamera2Source(CameraSource):
 
 
 def preprocess(image: Image.Image, image_size: int, mean: list[float], std: list[float]) -> np.ndarray:
-    """Reimplements the training-time transform (Resize -> ToTensor -> Normalize)
-    with Pillow/numpy only, so the Pi doesn't need torchvision installed.
-    """
+    # resize & normalized
     resized = image.resize((image_size, image_size), Image.BILINEAR)
     arr = np.asarray(resized, dtype=np.float32) / 255.0  # HWC, [0, 1]
     arr = (arr - np.array(mean, dtype=np.float32)) / np.array(std, dtype=np.float32)

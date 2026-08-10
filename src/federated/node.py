@@ -129,13 +129,18 @@ class Node:
         proto_weight: float,
         kd_weight: float,
         temperature: float,
-    ) -> float:
+    ) -> dict[str, float]:
+        """Returns per-component average losses (kd_loss, sup_loss, proto_loss,
+        total_loss) instead of one blended number, so kd_weight/proto_weight
+        tuning can be diagnosed from RoundLog rather than guessed at.
+        """
         self.model.train()
         optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
         consensus_crop_logits = consensus_crop_logits.to(self.device)
         consensus_disease_logits = consensus_disease_logits.to(self.device)
 
-        total_loss, total_batches = 0.0, 0
+        kd_loss_sum, kd_batches = 0.0, 0
+        sup_loss_sum, proto_loss_sum, sup_batches = 0.0, 0.0, 0
         for _ in range(epochs):
             # (a) knowledge-distillation using the shared public probe dataset
             for batch_idx, (images, _, _) in enumerate(probe_loader):
@@ -153,8 +158,8 @@ class Node:
                 (kd_weight * kd_loss).backward()
                 optimizer.step()
 
-                total_loss += kd_loss.item()
-                total_batches += 1
+                kd_loss_sum += kd_loss.item()
+                kd_batches += 1
 
             # (b) supervised learning + prototype alignment on local labeled data only
             for images, crop_labels, disease_labels in self.train_loader:
@@ -174,10 +179,16 @@ class Node:
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
-                total_loss += loss.item()
-                total_batches += 1
+                sup_loss_sum += sup_loss.item()
+                proto_loss_sum += proto_loss.item()
+                sup_batches += 1
 
-        return total_loss / max(1, total_batches)  # return average loss
+        return {
+            "kd_loss": kd_loss_sum / max(1, kd_batches),
+            "sup_loss": sup_loss_sum / max(1, sup_batches),
+            "proto_loss": proto_loss_sum / max(1, sup_batches),
+            "total_loss": (kd_loss_sum + sup_loss_sum + proto_loss_sum) / max(1, kd_batches + sup_batches),
+        }
 
     # evaluation
     @torch.no_grad()

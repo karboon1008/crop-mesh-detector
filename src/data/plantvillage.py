@@ -19,17 +19,15 @@ per node; only derived, non-invertible artefacts ever leave a node
 """
 
 from __future__ import annotations
-
 import random
 from dataclasses import dataclass, field
 from pathlib import Path
-
 import numpy as np
-import torch
 from torch.utils.data import Dataset, Subset
 from torchvision import transforms
 from torchvision.datasets import ImageFolder
 
+# mobilenet & efficient net is trained on imagenet dataset so they share the one normalization convention
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
 

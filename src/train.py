@@ -22,6 +22,7 @@ Pass --fresh to start a new sweep instead of merging into a previous one.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 from pathlib import Path
 
@@ -104,6 +105,7 @@ def run_mesh(cfg, arch, node_loaders, probe_loader, num_crop, num_disease, track
     )
 
     total_bytes = 0
+    round_logs = []
     for r in range(cfg.get("training.rounds", 5)):
         with tracker.track(f"{arch}_mesh_round_{r}"):
             round_log = mesh.run_round(
@@ -117,7 +119,12 @@ def run_mesh(cfg, arch, node_loaders, probe_loader, num_crop, num_disease, track
                 temperature=cfg.get("training.kd_temperature", 2.0),
             )
         total_bytes += round_log.total_bytes_exchanged
+        round_logs.append(round_log)
         print(f"  round {r}: {round_log.total_bytes_exchanged} bytes exchanged")
+
+    (output_dir / f"round_logs_{arch}.json").write_text(
+        json.dumps([dataclasses.asdict(rl) for rl in round_logs], indent=2)
+    )
 
     final_evals = {node.node_id: node.evaluate() for node in nodes}
 
