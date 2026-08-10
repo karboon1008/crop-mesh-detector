@@ -62,15 +62,27 @@ def build_dataloaders(cfg: Config, dataset):
         manual_node_crops=cfg.get("data.manual_node_crops", None),
     )
     batch_size = cfg.get("training.batch_size", 32)
-    probe_loader = DataLoader(make_subset(dataset, probe_idx), batch_size=batch_size, shuffle=False)
+    num_workers = cfg.get("training.num_workers", 4)
+    loader_kwargs = dict(
+        num_workers=num_workers,
+        pin_memory=torch.cuda.is_available(),
+        persistent_workers=num_workers > 0,
+    )
+    probe_loader = DataLoader(
+        make_subset(dataset, probe_idx), batch_size=batch_size, shuffle=False, **loader_kwargs
+    )
 
     node_loaders = []
     for shard in shards:
         train_idx, test_idx = train_test_split_indices(
             shard, cfg.get("data.test_fraction", 0.15), cfg.get("data.seed", 42)
         )
-        train_loader = DataLoader(make_subset(dataset, train_idx), batch_size=batch_size, shuffle=True)
-        test_loader = DataLoader(make_subset(dataset, test_idx), batch_size=batch_size, shuffle=False)
+        train_loader = DataLoader(
+            make_subset(dataset, train_idx), batch_size=batch_size, shuffle=True, **loader_kwargs
+        )
+        test_loader = DataLoader(
+            make_subset(dataset, test_idx), batch_size=batch_size, shuffle=False, **loader_kwargs
+        )
         node_loaders.append((train_loader, test_loader))
     return probe_loader, node_loaders
 
