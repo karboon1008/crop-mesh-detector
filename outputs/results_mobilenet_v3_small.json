@@ -1,0 +1,92 @@
+{
+  "architecture": "mobilenet_v3_small",
+  "params": 1553731,
+  "model_size_mb": 5.927013397216797,
+  "baseline_eval": {
+    "node_0": {
+      "crop_accuracy": 0.9912216532553035,
+      "disease_accuracy": 0.9853694220921726
+    },
+    "node_1": {
+      "crop_accuracy": 0.9874274661508704,
+      "disease_accuracy": 0.9854932301740812
+    },
+    "node_2": {
+      "crop_accuracy": 0.9988377498837749,
+      "disease_accuracy": 0.9793119479311948
+    }
+  },
+  "mesh_eval": {
+    "node_0": {
+      "crop_accuracy": 0.9941477688368691,
+      "disease_accuracy": 0.9948792977322605
+    },
+    "node_1": {
+      "crop_accuracy": 0.996615087040619,
+      "disease_accuracy": 0.991779497098646
+    },
+    "node_2": {
+      "crop_accuracy": 0.9988377498837749,
+      "disease_accuracy": 0.9911668991166899
+    }
+  },
+  "collaboration_gain": {
+    "mesh_macro": {
+      "crop_accuracy": 0.9965335352537542,
+      "disease_accuracy": 0.9926085646491988
+    },
+    "baseline_macro": {
+      "crop_accuracy": 0.9924956230966496,
+      "disease_accuracy": 0.9833915333991495
+    },
+    "macro_gain": {
+      "crop_accuracy": 0.004037912157104584,
+      "disease_accuracy": 0.009217031250049246
+    },
+    "mesh_worst_node": {
+      "crop_accuracy": 0.9941477688368691,
+      "disease_accuracy": 0.9911668991166899
+    },
+    "baseline_worst_node": {
+      "crop_accuracy": 0.9874274661508704,
+      "disease_accuracy": 0.9793119479311948
+    },
+    "worst_node_gain": {
+      "crop_accuracy": 0.006720302685998658,
+      "disease_accuracy": 0.011854951185495066
+    },
+    "per_node": {
+      "node_0": {
+        "mesh": {
+          "crop_accuracy": 0.9941477688368691,
+          "disease_accuracy": 0.9948792977322605
+        },
+        "baseline": {
+          "crop_accuracy": 0.9912216532553035,
+          "disease_accuracy": 0.9853694220921726
+        }
+      },
+      "node_1": {
+        "mesh": {
+          "crop_accuracy": 0.996615087040619,
+          "disease_accuracy": 0.991779497098646
+        },
+        "baseline": {
+          "crop_accuracy": 0.9874274661508704,
+          "disease_accuracy": 0.9854932301740812
+        }
+      },
+      "node_2": {
+        "mesh": {
+          "crop_accuracy": 0.9988377498837749,
+          "disease_accuracy": 0.9911668991166899
+        },
+        "baseline": {
+          "crop_accuracy": 0.9988377498837749,
+          "disease_accuracy": 0.9793119479311948
+        }
+      }
+    }
+  },
+  "total_bytes_exchanged": 13123320
+}
