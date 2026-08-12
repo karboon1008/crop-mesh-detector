@@ -50,7 +50,12 @@ from src.models.factory import build_model, count_parameters, model_size_mb
 
 def build_dataloaders(cfg: Config, dataset):
     probe_idx, remaining_idx = carve_public_probe_set(
-        dataset, cfg.get("data.probe_set_fraction", 0.05), cfg.get("data.seed", 42)
+        dataset,
+        cfg.get("data.probe_set_fraction", 0.05),
+        cfg.get("data.seed", 42),
+        large_class_threshold=cfg.get("data.probe_set_large_class_threshold", 200),
+        min_samples_small_class=cfg.get("data.probe_set_min_samples_small_class", 8),
+        max_fraction_small_class=cfg.get("data.probe_set_max_fraction_small_class", 0.2),
     )
     shards = partition_nodes(
         dataset,

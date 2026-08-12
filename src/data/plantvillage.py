@@ -115,21 +115,39 @@ def load_full_dataset(root: str | Path, image_size: int = 160) -> PlantVillageDa
 
 
 def carve_public_probe_set(
-    dataset: PlantVillageDataset, probe_fraction: float, seed: int
+    dataset: PlantVillageDataset,
+    probe_fraction: float,
+    seed: int,
+    large_class_threshold: int = 200,
+    min_samples_small_class: int = 8,
+    max_fraction_small_class: float = 0.2,
 ) -> tuple[list[int], list[int]]:
-    """Split all indices into (probe_indices, remaining_indices).
+    """Split all indices into (probe_indices, remaining_indices), stratified
+    by original ImageFolder class.
 
     The probe set is PUBLIC and IDENTICAL across every node: it is used
     only to compute soft logits for knowledge exchange (Itahara et al.,
     DS-FL), never for local training, so it carries no per-farm private
     information.
     """
-    n = len(dataset)
+    targets = np.array(dataset.targets)
     rng = random.Random(seed)
-    all_idx = list(range(n))
-    rng.shuffle(all_idx)
-    n_probe = max(1, int(n * probe_fraction))
-    return all_idx[:n_probe], all_idx[n_probe:]
+    probe_idx: list[int] = []
+    remaining_idx: list[int] = []
+    for cls in sorted(set(targets.tolist())):
+        cls_indices = np.flatnonzero(targets == cls).tolist()
+        rng.shuffle(cls_indices)
+        count = len(cls_indices)
+        if count >= large_class_threshold:
+            n_probe_cls = max(1, round(count * probe_fraction))
+        else:
+            target_n = max(min_samples_small_class, round(count * probe_fraction))
+            n_probe_cls = min(target_n, int(count * max_fraction_small_class), count)
+        probe_idx.extend(cls_indices[:n_probe_cls])
+        remaining_idx.extend(cls_indices[n_probe_cls:])
+    rng.shuffle(probe_idx)
+    rng.shuffle(remaining_idx)
+    return probe_idx, remaining_idx
 
 
 def partition_nodes(
