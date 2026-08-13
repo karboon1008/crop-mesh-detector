@@ -19,7 +19,7 @@ from src.data.plantvillage import (
 from src.federated.mesh import MeshSimulator
 from src.federated.node import Node
 from src.models.factory import build_model
-from src.scenarios.harness import run_scenario, write_scenario_report
+from src.scenarios.harness import ScenarioRoundRecord, _recovery_round, run_scenario, write_scenario_report
 
 from tests.conftest import build_nodes
 
@@ -125,3 +125,22 @@ def test_run_scenario_and_write_report(tmp_path, synthetic_dataset):
     assert len(written["rounds"]) == 2
     assert "recovery_round_mesh" in written["summary"]
     assert "recovery_round_baseline" in written["summary"]
+
+
+def test_recovery_round_returns_none_for_out_of_range_disruption_start():
+    # disruption_start_round is far beyond the available records, so
+    # pre_round (disruption_start_round - 1) indexes past the end of the
+    # list. This must return None gracefully rather than raise IndexError.
+    records = [
+        ScenarioRoundRecord(0, {"node_0": {"acc": 0.9}}, {"node_0": {"acc": 0.9}}, {}),
+        ScenarioRoundRecord(1, {"node_0": {"acc": 0.9}}, {"node_0": {"acc": 0.9}}, {}),
+    ]
+    assert _recovery_round(records, "node_0", disruption_start_round=100, disruption_end_round=101, eval_key="mesh_eval") is None
+    assert _recovery_round(records, "node_0", disruption_start_round=100, disruption_end_round=101, eval_key="baseline_eval") is None
+
+
+def test_recovery_round_returns_none_for_empty_records():
+    # num_rounds=0 (or any scenario producing no records) must not raise
+    # IndexError when looking up the pre-disruption round either.
+    assert _recovery_round([], "node_0", disruption_start_round=0, disruption_end_round=1, eval_key="mesh_eval") is None
+    assert _recovery_round([], "node_0", disruption_start_round=5, disruption_end_round=6, eval_key="mesh_eval") is None

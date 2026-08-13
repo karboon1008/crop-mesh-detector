@@ -119,6 +119,8 @@ def _recovery_round(
     disruption started, or None if it never recovers within the run.
     """
     pre_round = max(0, disruption_start_round - 1)
+    if pre_round >= len(records):
+        return None
     pre_eval = getattr(records[pre_round], eval_key).get(node_id)
     if pre_eval is None:
         return None
