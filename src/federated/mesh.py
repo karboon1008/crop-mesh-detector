@@ -21,6 +21,7 @@ class RoundLog:
     per_node_distill_loss: dict[str, dict[str, float]] = field(default_factory=dict)
     per_node_eval: dict[str, dict[str, float]] = field(default_factory=dict)
     total_bytes_exchanged: int = 0
+    active_nodes: list[str] = field(default_factory=list)
 
 
 class MeshSimulator:
@@ -50,25 +51,35 @@ class MeshSimulator:
         temperature: float,
     ) -> RoundLog:
         log = RoundLog(round_idx=round_idx)
+        log.active_nodes = [node.node_id for node in self.nodes if node.active]
 
-        # 1) local supervised training, private data never leaves this loop
+        # 1) local supervised training, private data never leaves this loop.
+        # Disconnected nodes keep training locally — they drift, but are
+        # not frozen.
         for node in self.nodes:
             log.per_node_train_loss[node.node_id] = node.local_train(local_epochs, lr)
 
-        # 2) each node computes its small, non-invertible knowledge payload
+        # 2) each ACTIVE node computes its small, non-invertible knowledge
+        # payload. A disconnected node's payload never enters the pool.
         payloads: dict[str, KnowledgePayload] = {
-            node.node_id: node.compute_knowledge(self.probe_loader) for node in self.nodes
+            node.node_id: node.compute_knowledge(self.probe_loader)
+            for node in self.nodes
+            if node.active
         }
 
-        # simulate a fully-connected broadcast: every payload is sent to
-        # every OTHER peer once (an upper bound — a real gossip relay with
-        # partial connectivity would use less bandwidth than this).
-        n = len(self.nodes)
-        log.total_bytes_exchanged = sum(p.size_bytes() for p in payloads.values()) * (n - 1)
+        # simulate a fully-connected broadcast among the currently-connected
+        # nodes only: every payload is sent to every other ACTIVE peer once
+        # (an upper bound — a real gossip relay with partial connectivity
+        # would use less bandwidth than this).
+        active_n = len(payloads)
+        log.total_bytes_exchanged = sum(p.size_bytes() for p in payloads.values()) * max(0, active_n - 1)
 
-        # 3) each node aggregates what it received from PEERS (excluding
-        #    its own payload) with a robust rule, then distils towards it
+        # 3) each ACTIVE node aggregates what it received from PEERS
+        # (excluding its own payload) with a robust rule, then distils
+        # towards it. A disconnected node receives nothing and is skipped.
         for node in self.nodes:
+            if not node.active:
+                continue
             peer_payloads = [p for nid, p in payloads.items() if nid != node.node_id]
             if not peer_payloads:
                 continue  # single-node mesh: nothing to reconcile

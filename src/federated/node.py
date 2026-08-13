@@ -38,12 +38,14 @@ class Node:
         train_loader: DataLoader,
         test_loader: DataLoader,
         device: str = "cpu",
+        active: bool = True,
     ):
         self.node_id = node_id
         self.model = model.to(device)
         self.train_loader = train_loader
         self.test_loader = test_loader
         self.device = device
+        self.active = active
 
     # local supervised training (data never leaves this method)
     def local_train(self, epochs: int, lr: float) -> float:
