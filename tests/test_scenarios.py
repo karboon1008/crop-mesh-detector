@@ -196,6 +196,16 @@ def test_disconnection_scenario_end_to_end_smoke(tmp_path, synthetic_dataset):
     assert "recovery_round_mesh" in report["summary"]
     assert "recovery_round_baseline" in report["summary"]
 
+    # Hard evidence that disconnection actually excluded node_1 from the
+    # exchange: it's present in active_nodes before/after, absent during,
+    # and the disconnected round exchanges fewer total bytes than a fully
+    # connected round with the same node set.
+    rounds_by_idx = {r["round_idx"]: r for r in report["rounds"]}
+    assert "node_1" in rounds_by_idx[0]["active_nodes"]
+    assert "node_1" not in rounds_by_idx[1]["active_nodes"]
+    assert "node_1" in rounds_by_idx[2]["active_nodes"]
+    assert rounds_by_idx[1]["total_bytes_exchanged"] < rounds_by_idx[0]["total_bytes_exchanged"]
+
 
 def test_find_source_node_returns_owning_node_and_raises_for_unknown_crop():
     from src.scenarios.class_addition import find_source_node

@@ -52,12 +52,17 @@ crop-mesh-detector/
 │   │   └── tracker.py            # CodeCarbon compute-energy tracking +
 │   │                             # communication-cost estimator + sustainability report
 │   ├── train.py                   # CLI entry point
-│   └── evaluate.py                # collaboration-gain / worst-node metrics
+│   ├── evaluate.py                # collaboration-gain / worst-node metrics
+│   └── scenarios/                  # mesh simulation scenarios (disconnection,
+│                                   # class addition, distribution shift) sharing
+│                                   # a common round-driver harness
 ├── scripts/
 │   └── download_plantvillage.py   # fetches PlantVillage into data/PlantVillage/
 ├── tests/
 │   └── test_pipeline.py           # end-to-end smoke test on synthetic images
 └── outputs/                        # results, emissions.csv, sustainability_report.*
+    └── scenarios/                  # per-scenario JSON reports (disconnection.json,
+                                    # class_addition.json, distribution_shift.json)
 ```
 
 ## How it works, end to end
@@ -116,6 +121,15 @@ minutes — this is meant to be run once, ahead of training.
 ```bash
 python -m src.train --config config.yaml
 .venv/bin/python -m src.train --config config.yaml
+```
+
+To run the mesh simulation scenarios (each writes a JSON report to
+`outputs/scenarios/`):
+
+```bash
+python -m src.scenarios.disconnection [--config path] [--arch name]
+python -m src.scenarios.class_addition [--config path] [--arch name]
+python -m src.scenarios.distribution_shift [--config path] [--arch name]
 ```
 
 Everything — which architectures to run, node count, non-IID strategy,

@@ -11,6 +11,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+import torch
+
 from src.config import Config
 from src.data.plantvillage import load_full_dataset
 from src.federated.mesh import MeshSimulator
@@ -62,7 +64,7 @@ def main():
             f"< reconnect_round ({reconnect_round}) < scenarios.rounds ({num_rounds})"
         )
 
-    device = "cpu"
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     output_dir = Path(cfg.get("output.dir", "outputs"))
     dataset = load_full_dataset(cfg.get("data.root"), cfg.get("data.image_size", 160))
     num_crop = len(dataset.labels.crop_classes)

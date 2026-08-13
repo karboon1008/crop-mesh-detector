@@ -28,6 +28,8 @@ from src.scenarios.harness import (
 )
 from src.train import build_dataloaders
 
+ALLOWED_CORRUPTIONS = {"brightness_blur_noise"}
+
 
 class CorruptedDataset(Dataset):
     """Wraps a dataset, applying a severity-scaled brightness shift +
@@ -89,8 +91,15 @@ def main():
 
     if not (0 <= shift_round < num_rounds):
         raise ValueError(f"scenarios.distribution_shift.shift_round ({shift_round}) must be in [0, {num_rounds})")
+    if corruption not in ALLOWED_CORRUPTIONS:
+        raise ValueError(
+            f"scenarios.distribution_shift.corruption '{corruption}' is not supported; "
+            f"must be one of {sorted(ALLOWED_CORRUPTIONS)}"
+        )
+    if not (severity >= 0):
+        raise ValueError(f"scenarios.distribution_shift.severity ({severity}) must be >= 0")
 
-    device = "cpu"
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     output_dir = Path(cfg.get("output.dir", "outputs"))
     dataset = load_full_dataset(cfg.get("data.root"), cfg.get("data.image_size", 160))
     num_crop = len(dataset.labels.crop_classes)

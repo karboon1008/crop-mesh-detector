@@ -13,6 +13,7 @@ import argparse
 import random
 from pathlib import Path
 
+import torch
 from torch.utils.data import ConcatDataset, DataLoader
 
 from src.config import Config
@@ -40,6 +41,11 @@ def carve_reserve_pool(dataset, source_train_indices, source_crop, reserve_fract
         idx for idx in source_train_indices
         if dataset.labels.class_to_crop_disease[dataset.targets[idx]][0] == crop_idx
     ]
+    if not matching:
+        raise ValueError(
+            f"carve_reserve_pool: source_crop '{source_crop}' has zero matching training "
+            f"samples in the source node's train split — cannot carve a reserve pool"
+        )
     rng = random.Random(seed)
     shuffled = matching.copy()
     rng.shuffle(shuffled)
@@ -67,7 +73,7 @@ def make_class_addition_hook(
         target = next(n for n in nodes if n.node_id == target_node)
         target.train_loader = DataLoader(
             ConcatDataset([target.train_loader.dataset, make_subset(dataset, reserve_train_idx)]),
-            batch_size=batch_size, shuffle=True,
+            batch_size=batch_size, shuffle=True, drop_last=True,
         )
         target.test_loader = DataLoader(
             ConcatDataset([target.test_loader.dataset, make_subset(dataset, reserve_test_idx)]),
@@ -117,7 +123,7 @@ def main():
             "pick a crop owned by a DIFFERENT node so the mesh has something to teach it"
         )
 
-    device = "cpu"
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     output_dir = Path(cfg.get("output.dir", "outputs"))
     dataset = load_full_dataset(cfg.get("data.root"), cfg.get("data.image_size", 160))
     num_crop = len(dataset.labels.crop_classes)
@@ -139,7 +145,7 @@ def main():
         cfg.get("data.test_fraction", 0.15),
     )
     node_loaders[source_idx] = (
-        DataLoader(make_subset(dataset, remaining_source), batch_size=batch_size, shuffle=True),
+        DataLoader(make_subset(dataset, remaining_source), batch_size=batch_size, shuffle=True, drop_last=True),
         source_test_loader,
     )
 

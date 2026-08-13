@@ -34,6 +34,8 @@ class ScenarioRoundRecord:
     mesh_eval: dict[str, dict[str, float]]
     collaboration_gain: dict
     events: list[ScenarioEvent] = dataclasses.field(default_factory=list)
+    active_nodes: list[str] = dataclasses.field(default_factory=list)
+    total_bytes_exchanged: int = 0
 
 
 PerturbationHook = Callable[[int, "list[Node]", Optional[MeshSimulator]], "list[ScenarioEvent]"]
@@ -53,6 +55,14 @@ def build_node_set(cfg, arch: str, node_loaders, num_crop: int, num_disease: int
     """Builds one fresh, independent Node per shard in `node_loaders` — used
     to construct both the no-exchange baseline set and the mesh set from
     the same starting shards.
+
+    Note: each call builds independent DataLoader/model objects, even when
+    given the same `node_loaders` shards twice (as `run_scenario` does for
+    the baseline and mesh sets) — this is safe today only because every
+    scenario perturbation hook *replaces* a node's `train_loader`/`test_loader`
+    attribute wholesale rather than mutating a shared loader/dataset object
+    in place; a future hook that mutates in place would need to account for
+    whether the two node sets still share underlying objects.
     """
     nodes = []
     for i, (train_loader, test_loader) in enumerate(node_loaders):
@@ -88,7 +98,7 @@ def run_scenario(
             node.local_train(round_kwargs["local_epochs"], round_kwargs["lr"])
             baseline_eval[node.node_id] = node.evaluate()
 
-        mesh.run_round(
+        round_log = mesh.run_round(
             round_idx,
             local_epochs=round_kwargs["local_epochs"],
             distill_epochs=round_kwargs["distill_epochs"],
@@ -101,7 +111,11 @@ def run_scenario(
         mesh_eval = {node.node_id: node.evaluate() for node in mesh.nodes}
 
         gain = compute_collaboration_gain(mesh_eval, baseline_eval)
-        records.append(ScenarioRoundRecord(round_idx, baseline_eval, mesh_eval, gain, events))
+        records.append(ScenarioRoundRecord(
+            round_idx, baseline_eval, mesh_eval, gain, events,
+            active_nodes=round_log.active_nodes,
+            total_bytes_exchanged=round_log.total_bytes_exchanged,
+        ))
         print(f"  round {round_idx}: {len(events)} event(s), macro_gain={gain['macro_gain']}")
     return records
 
@@ -114,9 +128,11 @@ def _recovery_round(
     eval_key: str,
 ) -> Optional[int]:
     """First round index >= disruption_end_round where `node_id`'s eval
-    (from `eval_key`, "mesh_eval" or "baseline_eval") is back within
-    RECOVERY_TOLERANCE of its value from the round right before the
-    disruption started, or None if it never recovers within the run.
+    (from `eval_key`, "mesh_eval" or "baseline_eval") is back at or above
+    (within RECOVERY_TOLERANCE below) its value from the round right before
+    the disruption started, or None if it never recovers within the run.
+    Recovery is one-sided: exceeding the pre-disruption value still counts
+    as recovered.
     """
     pre_round = max(0, disruption_start_round - 1)
     if pre_round >= len(records):
@@ -130,7 +146,7 @@ def _recovery_round(
         current = getattr(record, eval_key).get(node_id)
         if current is None:
             continue
-        if all(abs(current[m] - pre_eval[m]) <= RECOVERY_TOLERANCE for m in pre_eval):
+        if all(current[m] >= pre_eval[m] - RECOVERY_TOLERANCE for m in pre_eval):
             return record.round_idx
     return None
 
