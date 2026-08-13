@@ -195,3 +195,98 @@ def test_disconnection_scenario_end_to_end_smoke(tmp_path, synthetic_dataset):
     assert all("node_1" in r["mesh_eval"] for r in report["rounds"])
     assert "recovery_round_mesh" in report["summary"]
     assert "recovery_round_baseline" in report["summary"]
+
+
+def test_find_source_node_returns_owning_node_and_raises_for_unknown_crop():
+    from src.scenarios.class_addition import find_source_node
+
+    manual_node_crops = {"node_0": ["Potato"], "node_1": ["Tomato"]}
+    assert find_source_node(manual_node_crops, "Tomato") == "node_1"
+
+    with pytest.raises(ValueError, match="not assigned to any node"):
+        find_source_node(manual_node_crops, "Corn")
+
+
+def test_carve_reserve_pool_is_disjoint_from_remaining_source(synthetic_dataset):
+    from src.scenarios.class_addition import carve_reserve_pool
+
+    _, remaining_idx = carve_public_probe_set(synthetic_dataset, 0.1, seed=4)
+    shards = partition_nodes(
+        synthetic_dataset, remaining_idx, num_nodes=2, strategy="manual", dirichlet_alpha=0.3, seed=4,
+        manual_node_crops={"node_0": ["Tomato"], "node_1": ["Potato"]},
+    )
+    source_train_idx, _ = train_test_split_indices(shards[0], test_fraction=0.3, seed=4)  # node_0 grows Tomato
+
+    remaining_source, reserve_train_idx, reserve_test_idx = carve_reserve_pool(
+        synthetic_dataset, source_train_idx, source_crop="Tomato", reserve_fraction=0.5, seed=4, test_fraction=0.3,
+    )
+
+    reserve_all = set(reserve_train_idx) | set(reserve_test_idx)
+    assert reserve_all.isdisjoint(remaining_source)
+    assert set(remaining_source) | reserve_all == set(source_train_idx)
+    assert len(reserve_all) > 0
+
+
+def test_class_addition_scenario_end_to_end_smoke(tmp_path, synthetic_dataset):
+    from src.scenarios.class_addition import carve_reserve_pool, make_class_addition_hook
+
+    _, remaining_idx = carve_public_probe_set(synthetic_dataset, 0.1, seed=5)
+    shards = partition_nodes(
+        synthetic_dataset, remaining_idx, num_nodes=2, strategy="manual", dirichlet_alpha=0.3, seed=5,
+        manual_node_crops={"node_0": ["Potato"], "node_1": ["Tomato"]},
+    )
+    probe_idx, _ = carve_public_probe_set(synthetic_dataset, 0.1, seed=5)
+    probe_loader = DataLoader(make_subset(synthetic_dataset, probe_idx), batch_size=4, shuffle=False)
+    num_crop = len(synthetic_dataset.labels.crop_classes)
+    num_disease = len(synthetic_dataset.labels.disease_classes)
+
+    source_train_idx, source_test_idx = train_test_split_indices(shards[1], test_fraction=0.3, seed=5)  # node_1: Tomato
+    target_train_idx, target_test_idx = train_test_split_indices(shards[0], test_fraction=0.3, seed=5)  # node_0: Potato
+
+    remaining_source, reserve_train_idx, reserve_test_idx = carve_reserve_pool(
+        synthetic_dataset, source_train_idx, source_crop="Tomato", reserve_fraction=0.5, seed=5, test_fraction=0.3,
+    )
+
+    def make_loaders(train_idx, test_idx):
+        return (
+            DataLoader(make_subset(synthetic_dataset, train_idx), batch_size=4, shuffle=True),
+            DataLoader(make_subset(synthetic_dataset, test_idx), batch_size=4, shuffle=False),
+        )
+
+    node_loaders = [
+        make_loaders(target_train_idx, target_test_idx),
+        make_loaders(remaining_source, source_test_idx),
+    ]
+
+    baseline_nodes = [
+        Node(f"node_{i}", build_model("mobilenet_v3_small", num_crop, num_disease, pretrained=False), tl, sl, device="cpu")
+        for i, (tl, sl) in enumerate(node_loaders)
+    ]
+    mesh_nodes = [
+        Node(f"node_{i}", build_model("mobilenet_v3_small", num_crop, num_disease, pretrained=False), tl, sl, device="cpu")
+        for i, (tl, sl) in enumerate(node_loaders)
+    ]
+    mesh = MeshSimulator(
+        mesh_nodes, probe_loader, aggregation_method="trimmed_mean", trim_fraction=0.0, krum_neighbors=1
+    )
+
+    hook = make_class_addition_hook(
+        "node_0", "Tomato", inject_round=1, reserve_train_idx=reserve_train_idx,
+        reserve_test_idx=reserve_test_idx, dataset=synthetic_dataset, batch_size=4,
+    )
+    round_kwargs = {
+        "local_epochs": 1, "distill_epochs": 1, "lr": 1e-3, "distill_lr": 1e-3,
+        "proto_weight": 0.5, "kd_weight": 0.5, "temperature": 2.0,
+    }
+    records = run_scenario(baseline_nodes, mesh, num_rounds=2, perturbation_hook=hook, round_kwargs=round_kwargs)
+
+    report_path = write_scenario_report(
+        tmp_path, "class_addition", "node_0",
+        disruption_start_round=1, disruption_end_round=1,
+        config_snapshot={"target_node": "node_0", "source_crop": "Tomato", "inject_round": 1},
+        records=records,
+    )
+    report = json.loads(report_path.read_text())
+    event_types = [e["event_type"] for r in report["rounds"] for e in r["events"]]
+    assert event_types == ["class_added"]
+    assert report["rounds"][1]["events"][0]["details"]["crop"] == "Tomato"
