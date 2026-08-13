@@ -19,9 +19,7 @@ from src.data.plantvillage import (
 from src.federated.mesh import MeshSimulator
 from src.federated.node import Node
 from src.models.factory import build_model
-# TODO(Task 3): src/scenarios/harness.py doesn't exist yet — Task 3 creates it.
-# Uncomment once that module lands.
-# from src.scenarios.harness import run_scenario, write_scenario_report
+from src.scenarios.harness import run_scenario, write_scenario_report
 
 from tests.conftest import build_nodes
 
@@ -87,3 +85,43 @@ def test_inactive_node_excluded_from_broadcast_and_distill(synthetic_dataset):
     # active peers still exchanged and distilled as normal.
     assert "node_1" in round_log.per_node_distill_loss
     assert "node_2" in round_log.per_node_distill_loss
+
+
+def test_run_scenario_and_write_report(tmp_path, synthetic_dataset):
+    probe_idx, remaining_idx = carve_public_probe_set(synthetic_dataset, 0.2, seed=2)
+    shards = partition_nodes(
+        synthetic_dataset, remaining_idx, num_nodes=2, strategy="by_crop", dirichlet_alpha=0.3, seed=2
+    )
+    probe_loader = DataLoader(make_subset(synthetic_dataset, probe_idx), batch_size=4, shuffle=False)
+    num_crop = len(synthetic_dataset.labels.crop_classes)
+    num_disease = len(synthetic_dataset.labels.disease_classes)
+
+    baseline_nodes = build_nodes(synthetic_dataset, shards, num_crop, num_disease)
+    mesh_nodes = build_nodes(synthetic_dataset, shards, num_crop, num_disease)
+    mesh = MeshSimulator(
+        mesh_nodes, probe_loader, aggregation_method="trimmed_mean", trim_fraction=0.0, krum_neighbors=1
+    )
+
+    def no_op_hook(round_idx, nodes, mesh_or_none):
+        return []
+
+    round_kwargs = {
+        "local_epochs": 1, "distill_epochs": 1, "lr": 1e-3, "distill_lr": 1e-3,
+        "proto_weight": 0.5, "kd_weight": 0.5, "temperature": 2.0,
+    }
+    records = run_scenario(baseline_nodes, mesh, num_rounds=2, perturbation_hook=no_op_hook, round_kwargs=round_kwargs)
+    assert len(records) == 2
+    assert records[0].round_idx == 0 and records[1].round_idx == 1
+
+    report_path = write_scenario_report(
+        tmp_path, "unit_test_scenario", "node_0",
+        disruption_start_round=1, disruption_end_round=1,
+        config_snapshot={"note": "test"}, records=records,
+    )
+    assert report_path == tmp_path / "scenarios" / "unit_test_scenario.json"
+    written = json.loads(report_path.read_text())
+    assert written["scenario"] == "unit_test_scenario"
+    assert written["target_node"] == "node_0"
+    assert len(written["rounds"]) == 2
+    assert "recovery_round_mesh" in written["summary"]
+    assert "recovery_round_baseline" in written["summary"]
