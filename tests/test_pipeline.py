@@ -6,55 +6,17 @@ dataset, so `pytest` works right after `pip install -r requirements.txt`.
 
 from __future__ import annotations
 
-import numpy as np
 import pytest
 import torch
-from PIL import Image
 from torch.utils.data import DataLoader
 
-from src.data.plantvillage import (
-    PlantVillageDataset,
-    carve_public_probe_set,
-    make_subset,
-    partition_nodes,
-    train_test_split_indices,
-)
+from src.data.plantvillage import carve_public_probe_set, make_subset, partition_nodes
 from src.energy.tracker import CommunicationCostEstimator, ComputeEnergyTracker
 from src.evaluate import compute_collaboration_gain
 from src.federated.mesh import MeshSimulator
-from src.federated.node import Node
 from src.models.factory import build_model, count_parameters, model_size_mb
 
-CLASSES = [
-    "Tomato___Bacterial_spot",
-    "Tomato___healthy",
-    "Potato___Early_blight",
-    "Potato___healthy",
-]
-
-
-@pytest.fixture
-def synthetic_dataset(tmp_path):
-    root = tmp_path / "PlantVillage"
-    rng = np.random.RandomState(0)
-    for cls in CLASSES:
-        cls_dir = root / cls
-        cls_dir.mkdir(parents=True)
-        for i in range(8):
-            arr = rng.randint(0, 255, size=(32, 32, 3), dtype=np.uint8)
-            Image.fromarray(arr).save(cls_dir / f"img_{i}.jpg")
-    return PlantVillageDataset(root, image_size=32)
-
-
-def _build_nodes(dataset, shards, num_crop, num_disease, arch="mobilenet_v3_small"):
-    nodes = []
-    for i, shard in enumerate(shards):
-        train_idx, test_idx = train_test_split_indices(shard, test_fraction=0.3, seed=1)
-        train_loader = DataLoader(make_subset(dataset, train_idx), batch_size=4, shuffle=True)
-        test_loader = DataLoader(make_subset(dataset, test_idx), batch_size=4, shuffle=False)
-        model = build_model(arch, num_crop, num_disease, pretrained=False)
-        nodes.append(Node(f"node_{i}", model, train_loader, test_loader, device="cpu"))
-    return nodes
+from tests.conftest import build_nodes
 
 
 def test_label_parsing(synthetic_dataset):
@@ -132,13 +94,13 @@ def test_end_to_end_mesh_round_beats_no_exchange_smoke(synthetic_dataset):
     num_crop = len(synthetic_dataset.labels.crop_classes)
     num_disease = len(synthetic_dataset.labels.disease_classes)
 
-    baseline_nodes = _build_nodes(synthetic_dataset, shards, num_crop, num_disease)
+    baseline_nodes = build_nodes(synthetic_dataset, shards, num_crop, num_disease)
     baseline_evals = {}
     for node in baseline_nodes:
         node.local_train(epochs=1, lr=1e-3)
         baseline_evals[node.node_id] = node.evaluate()
 
-    mesh_nodes = _build_nodes(synthetic_dataset, shards, num_crop, num_disease)
+    mesh_nodes = build_nodes(synthetic_dataset, shards, num_crop, num_disease)
     mesh = MeshSimulator(
         mesh_nodes, probe_loader, aggregation_method="trimmed_mean", trim_fraction=0.0, krum_neighbors=1
     )
