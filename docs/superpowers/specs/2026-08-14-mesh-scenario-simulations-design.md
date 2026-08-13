@@ -40,7 +40,7 @@ Non-goals:
   by modelling actual network partitions.
 - No changes to the aggregation algorithms (`src/federated/aggregation.py`)
   or model architectures (`src/models/`).
-- No UI/visualization — output is JSON + a human-readable `.log` file only.
+- No UI/visualization — output is JSON only.
 
 ## 3. Core extension: `src/federated/node.py` and `mesh.py`
 
@@ -70,7 +70,7 @@ Non-goals:
 ```
 src/scenarios/
   __init__.py
-  harness.py             # shared round-driver, event log, JSON+log writer
+  harness.py             # shared round-driver, event log, JSON writer
   disconnection.py       # python -m src.scenarios.disconnection
   class_addition.py      # python -m src.scenarios.class_addition
   distribution_shift.py  # python -m src.scenarios.distribution_shift
@@ -135,8 +135,7 @@ def write_scenario_report(
     config_snapshot: dict,
     records: list[ScenarioRoundRecord],
 ) -> None:
-    """Writes outputs/scenarios/{scenario_name}.json and
-    outputs/scenarios/{scenario_name}.log. The JSON includes a computed
+    """Writes outputs/scenarios/{scenario_name}.json. It includes a computed
     `recovery_round` for the target node: the first round index at/after
     the disruption's end where its mesh crop_accuracy and disease_accuracy
     are both within a fixed tolerance (5 percentage points) of its
@@ -253,10 +252,9 @@ Per scenario run, under `outputs/scenarios/`:
   `ScenarioRoundRecord`s (baseline eval, mesh eval, collaboration gain,
   events — all per round), and a top-level summary block:
   `{"target_node": ..., "recovery_round_mesh": int|null, "recovery_round_baseline": int|null}`.
-- `{name}.log` — the same events and the summary, in human-readable lines,
-  written via the stdlib `logging` module as the run progresses (not
-  reconstructed after the fact), so a live `tail -f` during a demo shows
-  progress.
+  Progress is also printed to stdout as each round completes (matching
+  `src/train.py`'s existing `print(...)`-per-round convention), but no
+  separate log file is written.
 
 This is additive to the existing `outputs/` layout (`results_*.json`,
 `round_logs_*.json`, `sustainability_report.*`) and does not change any of
