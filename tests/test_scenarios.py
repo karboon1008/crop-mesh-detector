@@ -290,3 +290,53 @@ def test_class_addition_scenario_end_to_end_smoke(tmp_path, synthetic_dataset):
     event_types = [e["event_type"] for r in report["rounds"] for e in r["events"]]
     assert event_types == ["class_added"]
     assert report["rounds"][1]["events"][0]["details"]["crop"] == "Tomato"
+
+
+def test_corrupted_dataset_is_noop_at_zero_severity_and_differs_otherwise(synthetic_dataset):
+    from src.scenarios.distribution_shift import CorruptedDataset
+
+    clean = CorruptedDataset(synthetic_dataset, severity=0.0)
+    image_a, crop_a, disease_a = clean[0]
+    image_b, crop_b, disease_b = synthetic_dataset[0]
+    assert torch.equal(image_a, image_b)
+    assert crop_a == crop_b and disease_a == disease_b
+
+    corrupted = CorruptedDataset(synthetic_dataset, severity=0.5)
+    image_c, _, _ = corrupted[0]
+    assert not torch.equal(image_c, image_b)
+
+
+def test_distribution_shift_scenario_end_to_end_smoke(tmp_path, synthetic_dataset):
+    from src.scenarios.distribution_shift import make_shift_hook
+
+    probe_idx, remaining_idx = carve_public_probe_set(synthetic_dataset, 0.2, seed=6)
+    shards = partition_nodes(
+        synthetic_dataset, remaining_idx, num_nodes=2, strategy="by_crop", dirichlet_alpha=0.3, seed=6
+    )
+    probe_loader = DataLoader(make_subset(synthetic_dataset, probe_idx), batch_size=4, shuffle=False)
+    num_crop = len(synthetic_dataset.labels.crop_classes)
+    num_disease = len(synthetic_dataset.labels.disease_classes)
+
+    baseline_nodes = build_nodes(synthetic_dataset, shards, num_crop, num_disease)
+    mesh_nodes = build_nodes(synthetic_dataset, shards, num_crop, num_disease)
+    mesh = MeshSimulator(
+        mesh_nodes, probe_loader, aggregation_method="trimmed_mean", trim_fraction=0.0, krum_neighbors=1
+    )
+
+    hook = make_shift_hook("node_0", shift_round=1, corruption="brightness_blur_noise", severity=0.5, batch_size=4)
+    round_kwargs = {
+        "local_epochs": 1, "distill_epochs": 1, "lr": 1e-3, "distill_lr": 1e-3,
+        "proto_weight": 0.5, "kd_weight": 0.5, "temperature": 2.0,
+    }
+    records = run_scenario(baseline_nodes, mesh, num_rounds=2, perturbation_hook=hook, round_kwargs=round_kwargs)
+
+    report_path = write_scenario_report(
+        tmp_path, "distribution_shift", "node_0",
+        disruption_start_round=1, disruption_end_round=1,
+        config_snapshot={"target_node": "node_0", "shift_round": 1, "severity": 0.5},
+        records=records,
+    )
+    report = json.loads(report_path.read_text())
+    event_types = [e["event_type"] for r in report["rounds"] for e in r["events"]]
+    assert event_types == ["shift_applied"]
+    assert report["rounds"][1]["events"][0]["details"]["severity"] == 0.5
