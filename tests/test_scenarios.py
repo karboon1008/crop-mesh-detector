@@ -144,3 +144,54 @@ def test_recovery_round_returns_none_for_empty_records():
     # IndexError when looking up the pre-disruption round either.
     assert _recovery_round([], "node_0", disruption_start_round=0, disruption_end_round=1, eval_key="mesh_eval") is None
     assert _recovery_round([], "node_0", disruption_start_round=5, disruption_end_round=6, eval_key="mesh_eval") is None
+
+
+def test_disconnection_scenario_end_to_end_smoke(tmp_path, synthetic_dataset):
+    from src.scenarios.disconnection import make_disconnect_hook
+
+    # NOTE: deviates from the task-4 brief, which specified strategy="by_crop"
+    # here. Same root cause already documented above in
+    # test_inactive_node_excluded_from_broadcast_and_distill: with only 2 crop
+    # groups in the shared `synthetic_dataset` fixture, "by_crop" round-robin
+    # can never populate a 3rd node's shard for any seed, which crashes
+    # DataLoader(shuffle=True) on the empty shard before this scenario's code
+    # ever runs. Reusing the same probe_fraction=0.2/seed=2/"dirichlet"
+    # combination that test already verified empirically gives 3 non-empty,
+    # balanced shards (sizes [9, 8, 9]) whose per-node train splits (sizes
+    # [7, 6, 7]) are also clear of the batch_size=4 trailing-batch-of-1 trap
+    # that crashes MobileNetV3's BatchNorm.
+    probe_idx, remaining_idx = carve_public_probe_set(synthetic_dataset, 0.2, seed=2)
+    shards = partition_nodes(
+        synthetic_dataset, remaining_idx, num_nodes=3, strategy="dirichlet", dirichlet_alpha=0.3, seed=2
+    )
+    probe_loader = DataLoader(make_subset(synthetic_dataset, probe_idx), batch_size=4, shuffle=False)
+    num_crop = len(synthetic_dataset.labels.crop_classes)
+    num_disease = len(synthetic_dataset.labels.disease_classes)
+
+    baseline_nodes = build_nodes(synthetic_dataset, shards, num_crop, num_disease)
+    mesh_nodes = build_nodes(synthetic_dataset, shards, num_crop, num_disease)
+    mesh = MeshSimulator(
+        mesh_nodes, probe_loader, aggregation_method="trimmed_mean", trim_fraction=0.0, krum_neighbors=1
+    )
+
+    hook = make_disconnect_hook("node_1", disconnect_round=1, reconnect_round=2)
+    round_kwargs = {
+        "local_epochs": 1, "distill_epochs": 1, "lr": 1e-3, "distill_lr": 1e-3,
+        "proto_weight": 0.5, "kd_weight": 0.5, "temperature": 2.0,
+    }
+    records = run_scenario(baseline_nodes, mesh, num_rounds=3, perturbation_hook=hook, round_kwargs=round_kwargs)
+
+    report_path = write_scenario_report(
+        tmp_path, "disconnection", "node_1",
+        disruption_start_round=1, disruption_end_round=2,
+        config_snapshot={"target_node": "node_1", "disconnect_round": 1, "reconnect_round": 2},
+        records=records,
+    )
+    report = json.loads(report_path.read_text())
+
+    event_types = [e["event_type"] for r in report["rounds"] for e in r["events"]]
+    assert event_types == ["disconnect", "reconnect"]
+    # node_1 is evaluated every round, connected or not
+    assert all("node_1" in r["mesh_eval"] for r in report["rounds"])
+    assert "recovery_round_mesh" in report["summary"]
+    assert "recovery_round_baseline" in report["summary"]

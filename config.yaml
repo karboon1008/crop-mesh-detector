@@ -58,3 +58,20 @@ energy:
 output:
   dir: "outputs"
   save_plots: true
+
+scenarios:
+  rounds: 6
+  disconnection:
+    target_node: "node_1"
+    disconnect_round: 2
+    reconnect_round: 4
+  class_addition:
+    target_node: "node_0"
+    source_crop: "Tomato"       # must belong to a different node in manual_node_crops (currently node_2)
+    inject_round: 2
+    reserve_fraction: 0.3
+  distribution_shift:
+    target_node: "node_2"
+    shift_round: 2
+    corruption: "brightness_blur_noise"
+    severity: 0.5
