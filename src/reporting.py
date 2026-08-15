@@ -117,12 +117,6 @@ def write_csv(rows: list[dict], path: Path) -> None:
 
 
 def plot_training_curves(rows: list[dict], output_path: Path, title: str) -> None:
-    """One line per node per metric, over rounds: top panel accuracy-type
-    metrics, bottom panel loss-type metrics. Reads whichever "*_accuracy"/
-    "*_loss" columns are present, so the same function serves both the
-    main sweep's rows (pre_/post_ prefixes) and a scenario's rows
-    (mesh_/baseline_ prefixes) without change.
-    """
     if not rows:
         return
     import matplotlib
@@ -132,26 +126,38 @@ def plot_training_curves(rows: list[dict], output_path: Path, title: str) -> Non
     node_ids = sorted({r["node_id"] for r in rows})
     accuracy_keys = [k for k in rows[0] if k.endswith("_accuracy")]
     loss_keys = [k for k in rows[0] if k.endswith("_loss")]
+    color_cycle = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+    accuracy_colors = {k: color_cycle[i % len(color_cycle)] for i, k in enumerate(accuracy_keys)}
+    loss_colors = {k: color_cycle[i % len(color_cycle)] for i, k in enumerate(loss_keys)}
 
-    fig, axes = plt.subplots(2, 1, figsize=(9, 8), sharex=True)
-    for node_id in node_ids:
+    fig, axes = plt.subplots(
+        len(node_ids), 2, figsize=(11, 3 * len(node_ids)), sharex=True, squeeze=False,
+    )
+    for row_idx, node_id in enumerate(node_ids):
         node_rows = sorted((r for r in rows if r["node_id"] == node_id), key=lambda r: r["round_idx"])
         x = [r["round_idx"] for r in node_rows]
+
+        ax_acc, ax_loss = axes[row_idx]
         for key in accuracy_keys:
             y = [r.get(key) for r in node_rows]
             if any(v is not None for v in y):
-                axes[0].plot(x, y, marker="o", label=f"{node_id}: {key}")
+                ax_acc.plot(x, y, marker="o", color=accuracy_colors[key], label=key)
         for key in loss_keys:
             y = [r.get(key) for r in node_rows]
             if any(v is not None for v in y):
-                axes[1].plot(x, y, marker="o", label=f"{node_id}: {key}")
+                ax_loss.plot(x, y, marker="o", color=loss_colors[key], label=key)
 
-    axes[0].set_ylabel("accuracy")
-    axes[0].set_title(title)
-    axes[0].legend(fontsize=7, ncol=2)
-    axes[1].set_ylabel("loss")
-    axes[1].set_xlabel("round")
-    axes[1].legend(fontsize=7, ncol=2)
+        ax_acc.set_ylabel(f"{node_id}\naccuracy")
+        ax_loss.set_ylabel("loss")
+        ax_acc.legend(fontsize=6, loc="best")
+        ax_loss.legend(fontsize=6, loc="best")
+        if row_idx == 0:
+            ax_acc.set_title("accuracy")
+            ax_loss.set_title("loss")
+
+    axes[-1][0].set_xlabel("round")
+    axes[-1][1].set_xlabel("round")
+    fig.suptitle(title)
     fig.tight_layout()
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
