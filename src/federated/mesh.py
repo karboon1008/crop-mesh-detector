@@ -18,7 +18,7 @@ class RoundLog:
     round_idx: int
     per_node_train_loss: dict[str, float] = field(default_factory=dict)
     pre_distill_eval: dict[str, dict[str, float | dict]] = field(default_factory=dict)
-    # node_id -> {"kd_loss", "sup_loss", "proto_loss", "total_loss"}
+    # node_id -> {"kd_loss", "sup_loss", "proto_loss"}
     per_node_distill_loss: dict[str, dict[str, float]] = field(default_factory=dict)
     per_node_eval: dict[str, dict[str, float | dict]] = field(default_factory=dict)
     total_bytes_exchanged: int = 0

@@ -38,7 +38,7 @@ def pooled_gain(mesh_pooled: dict, baseline_pooled: dict) -> dict:
             "per_class": {
                 name: {
                     metric: mesh_head["per_class"][name][metric] - baseline_head["per_class"][name][metric]
-                    for metric in ("accuracy", "precision", "recall", "f1")
+                    for metric in ("precision", "recall", "f1")
                 }
                 for name in mesh_head["per_class"]
             },

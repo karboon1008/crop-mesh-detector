@@ -10,9 +10,12 @@ pure-simulation run.
 from __future__ import annotations
 
 import json
+import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
+
+_CODECARBON_MEASURED_CPU_MARKERS = ("rapl", "power gadget", "powermetrics")
 
 
 class ComputeEnergyTracker:
@@ -84,12 +87,28 @@ class ComputeEnergyTracker:
                 )
                 codecarbon_tracker.start()
                 record["method"] = "codecarbon"
+                hardware = codecarbon_tracker._conf.get("hardware", [])
+                record["hardware_sources"] = hardware
+                record["cpu_measured"] = any(
+                    marker in desc.lower()
+                    for desc in hardware
+                    if desc.upper().startswith("CPU")
+                    for marker in _CODECARBON_MEASURED_CPU_MARKERS
+                )
+                if not record["cpu_measured"]:
+                    print(
+                        f"[energy] WARNING: no RAPL/Power-Gadget/powermetrics access detected "
+                        f"for '{label}' — CPU energy is a constant-TDP estimate, not a measurement "
+                        f"(hardware: {hardware}).",
+                        file=sys.stderr,
+                    )
             except Exception:
                 self._codecarbon_available = False
                 codecarbon_tracker = None
 
         if codecarbon_tracker is None:
             record["method"] = "proxy_wall_power"
+            record["cpu_measured"] = False
 
         try:
             yield record
@@ -117,6 +136,7 @@ class ComputeEnergyTracker:
             "num_tracked_blocks": len(self.log),
             "total_compute_energy_kwh": total_energy,
             "total_duration_s": total_duration,
+            "all_blocks_cpu_measured": bool(self.log) and all(r.get("cpu_measured") for r in self.log),
         }
 
 
@@ -177,9 +197,20 @@ def write_sustainability_report(
     total_kwh = total_compute_kwh + comm_kwh
     comm_share_pct = (comm_kwh / total_kwh * 100) if total_kwh > 0 else 0.0
 
+    if compute_summary.get("num_tracked_blocks", 0) == 0:
+        measurement_note = "no compute blocks were tracked"
+    elif compute_summary.get("all_blocks_cpu_measured"):
+        measurement_note = "hardware-measured (RAPL/Power Gadget/powermetrics) for every tracked block"
+    else:
+        measurement_note = (
+            "**at least one block used a constant-TDP estimate, not a hardware measurement** "
+            "— see per-block `hardware_sources` in the JSON report"
+        )
+
     lines = [
         "# Sustainability report",
         "",
+        f"- Compute energy measurement basis: {measurement_note}",
         f"- Measured/estimated **compute energy**: {total_compute_kwh:.6f} kWh "
         f"({compute_co2_kg * 1000:.3f} g CO2e)",
         f"- Estimated **communication energy** (Wi-Fi, prototypes + probe logits only): "

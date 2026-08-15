@@ -40,7 +40,7 @@ class ScenarioRoundRecord:
     per_node_train_loss: dict[str, float] = dataclasses.field(default_factory=dict)
     # mesh side only, snapshot right after local_train, before distillation
     pre_distill_eval: dict[str, dict[str, float | dict]] = dataclasses.field(default_factory=dict)
-    # node_id -> {"kd_loss", "sup_loss", "proto_loss", "total_loss"}
+    # node_id -> {"kd_loss", "sup_loss", "proto_loss"}
     per_node_distill_loss: dict[str, dict[str, float]] = dataclasses.field(default_factory=dict)
 
 

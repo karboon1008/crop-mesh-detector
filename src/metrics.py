@@ -31,7 +31,6 @@ def head_metrics(y_true: list[int], y_pred: list[int], class_names: list[str]) -
 
     per_class = {
         name: {
-            "accuracy": cm[i, i] / row_totals[i] if row_totals[i] > 0 else 0.0,
             "precision": float(per_class_precision[i]),
             "recall": float(per_class_recall[i]),
             "f1": float(per_class_f1[i]),
@@ -66,7 +65,6 @@ def pool_confusion_matrices(confusion_matrices: list[dict]) -> dict:
         recall = true_positive / support if support > 0 else 0.0
         f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
         per_class[name] = {
-            "accuracy": recall,  # per-class accuracy == recall (true positives / that class's support)
             "precision": precision,
             "recall": recall,
             "f1": f1,

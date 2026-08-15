@@ -31,10 +31,10 @@ models:
   pretrained: true
 
 training:
-  local_epochs_per_round: 1       # local training epochs before each exchange round -- TEMP: reduced from 2 for smoke run
+  local_epochs_per_round: 2       # local training epochs before each exchange round
   distill_epochs_per_round: 1     # epochs spent distilling towards consensus knowledge
-  rounds: 1                       # number of mesh exchange rounds -- TEMP: reduced from 5 for smoke run
-  baseline_epochs: 1              # epochs for the local-only baseline (aligned compute budget) -- TEMP: reduced from 10 for smoke run
+  rounds: 5                       # number of mesh exchange rounds
+  baseline_epochs: 10             # epochs for the local-only baseline (aligned compute budget)
   batch_size: 32
   lr: 0.001
   distill_lr: 0.0005
@@ -48,9 +48,10 @@ federated:
   krum_neighbors: 2               # number of closest peers kept (krum only)
 
 energy:
-  track_with_codecarbon: false # set true if allow to track powermetrics
-  country_iso_code: "GBR"
+  track_with_codecarbon: true
+  country_iso_code: "GBR"          # Isambard is in Bristol, UK 
   grid_carbon_intensity_gco2_per_kwh: 125   # National Grid ESO 2024 GB average
+  fallback_power_watts: 15.0
   # Rough per-byte transmit energy budgets (Joules/byte), used ONLY for the
   # communication-energy estimate — swap for measured figures if available.
   radio_energy_j_per_byte:

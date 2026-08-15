@@ -76,7 +76,7 @@ def build_dataloaders(cfg: Config, dataset):
             shard, cfg.get("data.test_fraction", 0.15), cfg.get("data.seed", 42)
         )
         train_loader = DataLoader(
-            make_subset(dataset, train_idx), batch_size=batch_size, shuffle=True, drop_last=True
+            make_subset(dataset, train_idx), batch_size=batch_size, shuffle=True
         )
         test_loader = DataLoader(make_subset(dataset, test_idx), batch_size=batch_size, shuffle=False)
         node_loaders.append((train_loader, test_loader))
@@ -210,6 +210,7 @@ def main():
         enabled=cfg.get("energy.track_with_codecarbon", True),
         output_dir=output_dir,
         country_iso_code=cfg.get("energy.country_iso_code", "GBR"),
+        fallback_power_watts=cfg.get("energy.fallback_power_watts", 15.0),
     )
     comm_estimator = CommunicationCostEstimator(
         cfg.get("energy.radio_energy_j_per_byte", {}),

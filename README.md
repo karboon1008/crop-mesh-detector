@@ -57,7 +57,9 @@ crop-mesh-detector/
 │                                   # class addition, distribution shift) sharing
 │                                   # a common round-driver harness
 ├── scripts/
-│   └── download_plantvillage.py   # fetches PlantVillage into data/PlantVillage/
+│   ├── download_plantvillage.py   # fetches PlantVillage into data/PlantVillage/
+│   └── check_energy_measurement.py # pre-flight check: is CodeCarbon really
+│                                   # reading hardware counters on this machine?
 ├── tests/
 │   └── test_pipeline.py           # end-to-end smoke test on synthetic images
 └── outputs/                        # results, emissions.csv, sustainability_report.*
@@ -118,6 +120,16 @@ minutes — this is meant to be run once, ahead of training.
 
 ### Run
 
+On a new machine or cluster (e.g. a fresh Isambard/Slurm allocation), check
+CodeCarbon can actually measure hardware energy there before you rely on the
+numbers — run this inside the job allocation itself:
+
+```bash
+python scripts/check_energy_measurement.py
+```
+
+Then train:
+
 ```bash
 python -m src.train --config config.yaml
 .venv/bin/python -m src.train --config config.yaml
@@ -164,6 +176,35 @@ hardware-based **energy** figure (kWh, location-independent) and applies
 the grid factor you set in `config.yaml` (`energy.grid_carbon_intensity_gco2_per_kwh`),
 so the reported carbon figure is reproducible regardless of where you run
 this.
+
+### Verifying real energy measurement on a new machine (e.g. an HPC cluster)
+
+CodeCarbon needs access to real hardware power counters — RAPL for CPU,
+NVML for GPU — to actually *measure* energy. When it can't reach them (common
+on shared HPC nodes, containerised allocations, or restricted permissions) it
+silently degrades to its own constant-TDP-times-load estimate instead of
+failing loudly, and the pipeline's own log still tags that block `"method":
+"codecarbon"` — so the only way to tell measured from guessed is to check.
+
+Before a real run on a new machine or cluster partition (e.g. a Slurm
+allocation on a supercomputer such as Isambard), run this **inside the actual
+job allocation**, not the login node — power counters are per-node, and a
+login node's access often doesn't match what a compute node grants:
+
+```bash
+python scripts/check_energy_measurement.py
+```
+
+It prints what CodeCarbon detected and exits `0` only if CPU energy is
+genuinely hardware-measured; otherwise it exits `2` and explains why (e.g. no
+RAPL access), and separately flags if a GPU is visible to PyTorch but not to
+CodeCarbon (GPU energy would then be missing from the report entirely, not
+just estimated).
+
+If it comes back unmeasured, either chase RAPL/NVML permissions for that
+partition, or set `energy.fallback_power_watts` in `config.yaml` to a
+realistic figure for that node type — the default (15W) models a laptop CPU
+and will badly undercount a GPU-class HPC node.
 
 ## Design choices worth knowing about
 

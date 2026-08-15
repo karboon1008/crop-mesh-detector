@@ -68,9 +68,11 @@ def build_scenario_rows(records: list[dict]) -> list[dict]:
 
 def build_per_class_rows(rounds: list[dict], eval_specs: list[tuple[str, str]]) -> list[dict]:
     """One row per (round, node, phase, head, class), pulling per-class
-    accuracy/precision/recall/f1/support out of detail.{crop,disease}.per_class
-    -- the confusion matrix itself still isn't representable as flat rows,
-    but the derived per-class metrics it's built from are.
+    precision/recall/f1/support out of detail.{crop,disease}.per_class --
+    the confusion matrix itself still isn't representable as flat rows,
+    but the derived per-class metrics it's built from are. No "accuracy"
+    column: for one class in a multi-class confusion matrix, accuracy and
+    recall are the same number.
 
     eval_specs is a list of (phase_label, dict_key) pairs identifying which
     eval dict(s) in each round dict to pull from, e.g.
@@ -90,7 +92,6 @@ def build_per_class_rows(rounds: list[dict], eval_specs: list[tuple[str, str]]) 
                             "phase": phase,
                             "head": head,
                             "class_name": class_name,
-                            "accuracy": stats["accuracy"],
                             "precision": stats["precision"],
                             "recall": stats["recall"],
                             "f1": stats["f1"],

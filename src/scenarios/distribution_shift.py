@@ -61,7 +61,7 @@ def make_shift_hook(target_node: str, shift_round: int, corruption: str, severit
         target = next(n for n in nodes if n.node_id == target_node)
         target.train_loader = DataLoader(
             CorruptedDataset(target.train_loader.dataset, severity),
-            batch_size=batch_size, shuffle=True, drop_last=True,
+            batch_size=batch_size, shuffle=True,
         )
         target.test_loader = DataLoader(
             CorruptedDataset(target.test_loader.dataset, severity), batch_size=batch_size, shuffle=False

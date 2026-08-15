@@ -73,7 +73,7 @@ def make_class_addition_hook(
         target = next(n for n in nodes if n.node_id == target_node)
         target.train_loader = DataLoader(
             ConcatDataset([target.train_loader.dataset, make_subset(dataset, reserve_train_idx)]),
-            batch_size=batch_size, shuffle=True, drop_last=True,
+            batch_size=batch_size, shuffle=True,
         )
         target.test_loader = DataLoader(
             ConcatDataset([target.test_loader.dataset, make_subset(dataset, reserve_test_idx)]),
@@ -143,7 +143,7 @@ def main():
         cfg.get("data.test_fraction", 0.15),
     )
     node_loaders[source_idx] = (
-        DataLoader(make_subset(dataset, remaining_source), batch_size=batch_size, shuffle=True, drop_last=True),
+        DataLoader(make_subset(dataset, remaining_source), batch_size=batch_size, shuffle=True),
         source_test_loader,
     )
 

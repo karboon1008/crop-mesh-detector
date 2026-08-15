@@ -139,10 +139,6 @@ class Node:
         kd_weight: float,
         temperature: float,
     ) -> dict[str, float]:
-        """Returns per-component average losses (kd_loss, sup_loss, proto_loss,
-        total_loss) instead of one blended number, so kd_weight/proto_weight
-        tuning can be diagnosed from RoundLog rather than guessed at.
-        """
         self.model.train()
         optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
         consensus_crop_logits = consensus_crop_logits.to(self.device)
@@ -196,7 +192,6 @@ class Node:
             "kd_loss": kd_loss_sum / max(1, kd_batches),
             "sup_loss": sup_loss_sum / max(1, sup_batches),
             "proto_loss": proto_loss_sum / max(1, sup_batches),
-            "total_loss": (kd_loss_sum + sup_loss_sum + proto_loss_sum) / max(1, kd_batches + sup_batches),
         }
 
     # evaluation
