@@ -11,7 +11,7 @@ data:
   probe_set_min_samples_small_class: 8
   probe_set_max_fraction_small_class: 0.2
   test_fraction: 0.15             # per-node held-out test split (used for accuracy + collaboration gain)
-  non_iid_strategy: "manual"      # "by_crop" | "by_disease" | "dirichlet" | "manual"
+  non_iid_strategy: "dirichlet"   # "by_crop" | "by_disease" | "dirichlet" | "manual"
   dirichlet_alpha: 0.3            # only used when non_iid_strategy == "dirichlet"
   # Only used when non_iid_strategy == "manual" — thematically-coherent
   # farm-type split (volume-imbalanced by design: node_2 covers fewer,

@@ -9,6 +9,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
+from src.metrics import head_metrics
 
 Prototypes = dict[tuple[str, int], torch.Tensor]
 
@@ -39,6 +40,8 @@ class Node:
         test_loader: DataLoader,
         device: str = "cpu",
         active: bool = True,
+        crop_classes: list[str] | None = None,
+        disease_classes: list[str] | None = None,
     ):
         self.node_id = node_id
         self.model = model.to(device)
@@ -46,6 +49,10 @@ class Node:
         self.test_loader = test_loader
         self.device = device
         self.active = active
+        # class names for readable per-class metrics/confusion matrices in
+        # evaluate() — falls back to positional labels if not provided.
+        self.crop_classes = crop_classes or [f"crop_{i}" for i in range(model.crop_head.out_features)]
+        self.disease_classes = disease_classes or [f"disease_{i}" for i in range(model.disease_head.out_features)]
 
     # local supervised training (data never leaves this method)
     def local_train(self, epochs: int, lr: float) -> float:
@@ -194,20 +201,44 @@ class Node:
 
     # evaluation
     @torch.no_grad()
-    def evaluate(self) -> dict[str, float]:
+    def evaluate(self) -> dict:
         self.model.eval()
-        correct_crop, correct_disease, total = 0, 0, 0
+        crop_true, crop_pred, disease_true, disease_pred = [], [], [], []
         for images, crop_labels, disease_labels in self.test_loader:
             images = images.to(self.device)
-            crop_labels = crop_labels.to(self.device)
-            disease_labels = disease_labels.to(self.device)
             crop_logits, disease_logits = self.model(images)
-            
-            correct_crop += (crop_logits.argmax(dim=1) == crop_labels).sum().item()
-            correct_disease += (disease_logits.argmax(dim=1) == disease_labels).sum().item()
-            total += images.shape[0]
-        total = max(1, total)
-        return {"crop_accuracy": correct_crop / total, "disease_accuracy": correct_disease / total}
+            crop_true.extend(crop_labels.tolist())
+            crop_pred.extend(crop_logits.argmax(dim=1).cpu().tolist())
+            disease_true.extend(disease_labels.tolist())
+            disease_pred.extend(disease_logits.argmax(dim=1).cpu().tolist())
+
+        total = max(1, len(crop_true))
+        correct_crop = sum(t == p for t, p in zip(crop_true, crop_pred))
+        correct_disease = sum(t == p for t, p in zip(disease_true, disease_pred))
+
+        crop_metrics = head_metrics(crop_true, crop_pred, self.crop_classes)
+        disease_metrics = head_metrics(disease_true, disease_pred, self.disease_classes)
+
+        return {
+            "crop_accuracy": correct_crop / total,
+            "disease_accuracy": correct_disease / total,
+            "crop_macro_precision": crop_metrics["macro_precision"],
+            "crop_macro_recall": crop_metrics["macro_recall"],
+            "crop_macro_f1": crop_metrics["macro_f1"],
+            "disease_macro_precision": disease_metrics["macro_precision"],
+            "disease_macro_recall": disease_metrics["macro_recall"],
+            "disease_macro_f1": disease_metrics["macro_f1"],
+            "detail": {
+                "crop": {
+                    "per_class": crop_metrics["per_class"],
+                    "confusion_matrix": crop_metrics["confusion_matrix"],
+                },
+                "disease": {
+                    "per_class": disease_metrics["per_class"],
+                    "confusion_matrix": disease_metrics["confusion_matrix"],
+                },
+            },
+        }
 
 
 # compute kl divergence loss

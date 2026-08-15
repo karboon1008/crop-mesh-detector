@@ -46,6 +46,7 @@ from src.evaluate import compute_collaboration_gain
 from src.federated.mesh import MeshSimulator
 from src.federated.node import Node
 from src.models.factory import build_model, count_parameters, model_size_mb
+from src.reporting import build_per_class_rows, build_round_log_rows, plot_training_curves, write_csv
 
 
 def build_dataloaders(cfg: Config, dataset):
@@ -74,32 +75,44 @@ def build_dataloaders(cfg: Config, dataset):
         train_idx, test_idx = train_test_split_indices(
             shard, cfg.get("data.test_fraction", 0.15), cfg.get("data.seed", 42)
         )
-        train_loader = DataLoader(make_subset(dataset, train_idx), batch_size=batch_size, shuffle=True)
+        train_loader = DataLoader(
+            make_subset(dataset, train_idx), batch_size=batch_size, shuffle=True, drop_last=True
+        )
         test_loader = DataLoader(make_subset(dataset, test_idx), batch_size=batch_size, shuffle=False)
         node_loaders.append((train_loader, test_loader))
     return probe_loader, node_loaders
 
 
-def run_baseline(cfg, arch, node_loaders, num_crop, num_disease, tracker, device):
+def run_baseline(cfg, arch, node_loaders, crop_classes, disease_classes, tracker, device):
     """Local-only training, no exchange at all — the comparison point
     the collaboration gain is measured against.
     """
     evals = {}
     for i, (train_loader, test_loader) in enumerate(node_loaders):
         node_id = f"node_{i}"
-        model = build_model(arch, num_crop, num_disease, pretrained=cfg.get("models.pretrained", True))
-        node = Node(node_id, model, train_loader, test_loader, device=device)
+        model = build_model(
+            arch, len(crop_classes), len(disease_classes), pretrained=cfg.get("models.pretrained", True)
+        )
+        node = Node(
+            node_id, model, train_loader, test_loader, device=device,
+            crop_classes=crop_classes, disease_classes=disease_classes,
+        )
         with tracker.track(f"{arch}_baseline_{node_id}"):
             node.local_train(cfg.get("training.baseline_epochs", 10), cfg.get("training.lr", 0.001))
         evals[node_id] = node.evaluate()
     return evals
 
 
-def run_mesh(cfg, arch, node_loaders, probe_loader, num_crop, num_disease, tracker, device, output_dir):
+def run_mesh(cfg, arch, node_loaders, probe_loader, crop_classes, disease_classes, tracker, device, output_dir):
     nodes = []
     for i, (train_loader, test_loader) in enumerate(node_loaders):
-        model = build_model(arch, num_crop, num_disease, pretrained=cfg.get("models.pretrained", True))
-        nodes.append(Node(f"node_{i}", model, train_loader, test_loader, device=device))
+        model = build_model(
+            arch, len(crop_classes), len(disease_classes), pretrained=cfg.get("models.pretrained", True)
+        )
+        nodes.append(Node(
+            f"node_{i}", model, train_loader, test_loader, device=device,
+            crop_classes=crop_classes, disease_classes=disease_classes,
+        ))
 
     mesh = MeshSimulator(
         nodes,
@@ -127,9 +140,21 @@ def run_mesh(cfg, arch, node_loaders, probe_loader, num_crop, num_disease, track
         round_logs.append(round_log)
         print(f"  round {r}: {round_log.total_bytes_exchanged} bytes exchanged")
 
-    (output_dir / f"round_logs_{arch}.json").write_text(
-        json.dumps([dataclasses.asdict(rl) for rl in round_logs], indent=2)
+    round_log_dicts = [dataclasses.asdict(rl) for rl in round_logs]
+    trend_rows = build_round_log_rows(round_log_dicts)
+    per_class_rows = build_per_class_rows(
+        round_log_dicts, [("pre", "pre_distill_eval"), ("post", "per_node_eval")]
     )
+    (output_dir / f"round_logs_{arch}.json").write_text(
+        json.dumps({"rounds": round_log_dicts, "trend": trend_rows, "per_class_trend": per_class_rows}, indent=2)
+    )
+    if cfg.get("output.save_plots", True):
+        write_csv(trend_rows, output_dir / f"trend_{arch}.csv")
+        write_csv(per_class_rows, output_dir / f"trend_{arch}_per_class.csv")
+        plot_training_curves(
+            trend_rows, output_dir / "plots" / f"{arch}_mesh_training_curves.png",
+            f"{arch}: mesh training curves",
+        )
 
     final_evals = {node.node_id: node.evaluate() for node in nodes}
 
@@ -209,10 +234,13 @@ def main():
     for arch in architectures:
         print(f"\n=== Architecture: {arch} ===")
         print("-- baseline (local-only) --")
-        baseline_evals = run_baseline(cfg, arch, node_loaders, num_crop, num_disease, tracker, device)
+        baseline_evals = run_baseline(
+            cfg, arch, node_loaders, dataset.labels.crop_classes, dataset.labels.disease_classes, tracker, device
+        )
         print("-- mesh (prototype + logit exchange) --")
         mesh_evals, total_bytes = run_mesh(
-            cfg, arch, node_loaders, probe_loader, num_crop, num_disease, tracker, device, output_dir
+            cfg, arch, node_loaders, probe_loader,
+            dataset.labels.crop_classes, dataset.labels.disease_classes, tracker, device, output_dir
         )
         grand_total_bytes += total_bytes
         gain = compute_collaboration_gain(mesh_evals, baseline_evals)

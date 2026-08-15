@@ -126,8 +126,6 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     output_dir = Path(cfg.get("output.dir", "outputs"))
     dataset = load_full_dataset(cfg.get("data.root"), cfg.get("data.image_size", 160))
-    num_crop = len(dataset.labels.crop_classes)
-    num_disease = len(dataset.labels.disease_classes)
     if source_crop not in dataset.labels.crop_classes:
         raise ValueError(f"source_crop '{source_crop}' is not a known crop: {dataset.labels.crop_classes}")
 
@@ -149,8 +147,12 @@ def main():
         source_test_loader,
     )
 
-    baseline_nodes = build_node_set(cfg, arch, node_loaders, num_crop, num_disease, device)
-    mesh_nodes = build_node_set(cfg, arch, node_loaders, num_crop, num_disease, device)
+    baseline_nodes = build_node_set(
+        cfg, arch, node_loaders, dataset.labels.crop_classes, dataset.labels.disease_classes, device
+    )
+    mesh_nodes = build_node_set(
+        cfg, arch, node_loaders, dataset.labels.crop_classes, dataset.labels.disease_classes, device
+    )
     mesh = MeshSimulator(
         mesh_nodes,
         probe_loader,
@@ -177,7 +179,7 @@ def main():
     report_path = write_scenario_report(
         output_dir, "class_addition", target_node,
         disruption_start_round=inject_round, disruption_end_round=inject_round,
-        config_snapshot=scfg, records=records,
+        config_snapshot=scfg, records=records, save_plots=cfg.get("output.save_plots", True),
     )
     print(f"Wrote {report_path}")
 

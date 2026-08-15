@@ -11,10 +11,11 @@ import json
 from pathlib import Path
 from typing import Callable, Optional
 
-from src.evaluate import compute_collaboration_gain
+from src.evaluate import compute_collaboration_gain, scalar_metrics
 from src.federated.mesh import MeshSimulator
 from src.federated.node import Node
 from src.models.factory import build_model
+from src.reporting import build_per_class_rows, build_scenario_rows, plot_training_curves, write_csv
 
 RECOVERY_TOLERANCE = 0.05  # accuracy points a node must be within to count as "recovered"
 
@@ -36,6 +37,11 @@ class ScenarioRoundRecord:
     events: list[ScenarioEvent] = dataclasses.field(default_factory=list)
     active_nodes: list[str] = dataclasses.field(default_factory=list)
     total_bytes_exchanged: int = 0
+    per_node_train_loss: dict[str, float] = dataclasses.field(default_factory=dict)
+    # mesh side only, snapshot right after local_train, before distillation
+    pre_distill_eval: dict[str, dict[str, float | dict]] = dataclasses.field(default_factory=dict)
+    # node_id -> {"kd_loss", "sup_loss", "proto_loss", "total_loss"}
+    per_node_distill_loss: dict[str, dict[str, float]] = dataclasses.field(default_factory=dict)
 
 
 PerturbationHook = Callable[[int, "list[Node]", Optional[MeshSimulator]], "list[ScenarioEvent]"]
@@ -51,7 +57,9 @@ def require_target_node(target_node: str, node_loaders) -> None:
         raise ValueError(f"target_node '{target_node}' is not one of {ids}")
 
 
-def build_node_set(cfg, arch: str, node_loaders, num_crop: int, num_disease: int, device: str) -> list[Node]:
+def build_node_set(
+    cfg, arch: str, node_loaders, crop_classes: list[str], disease_classes: list[str], device: str
+) -> list[Node]:
     """Builds one fresh, independent Node per shard in `node_loaders` — used
     to construct both the no-exchange baseline set and the mesh set from
     the same starting shards.
@@ -66,8 +74,13 @@ def build_node_set(cfg, arch: str, node_loaders, num_crop: int, num_disease: int
     """
     nodes = []
     for i, (train_loader, test_loader) in enumerate(node_loaders):
-        model = build_model(arch, num_crop, num_disease, pretrained=cfg.get("models.pretrained", True))
-        nodes.append(Node(f"node_{i}", model, train_loader, test_loader, device=device))
+        model = build_model(
+            arch, len(crop_classes), len(disease_classes), pretrained=cfg.get("models.pretrained", True)
+        )
+        nodes.append(Node(
+            f"node_{i}", model, train_loader, test_loader, device=device,
+            crop_classes=crop_classes, disease_classes=disease_classes,
+        ))
     return nodes
 
 
@@ -115,6 +128,9 @@ def run_scenario(
             round_idx, baseline_eval, mesh_eval, gain, events,
             active_nodes=round_log.active_nodes,
             total_bytes_exchanged=round_log.total_bytes_exchanged,
+            per_node_train_loss=round_log.per_node_train_loss,
+            pre_distill_eval=round_log.pre_distill_eval,
+            per_node_distill_loss=round_log.per_node_distill_loss,
         ))
         print(f"  round {round_idx}: {len(events)} event(s), macro_gain={gain['macro_gain']}")
     return records
@@ -137,15 +153,17 @@ def _recovery_round(
     pre_round = max(0, disruption_start_round - 1)
     if pre_round >= len(records):
         return None
-    pre_eval = getattr(records[pre_round], eval_key).get(node_id)
-    if pre_eval is None:
+    raw_pre_eval = getattr(records[pre_round], eval_key).get(node_id)
+    if raw_pre_eval is None:
         return None
+    pre_eval = scalar_metrics(raw_pre_eval)
     for record in records:
         if record.round_idx < disruption_end_round:
             continue
         current = getattr(record, eval_key).get(node_id)
         if current is None:
             continue
+        current = scalar_metrics(current)
         if all(current[m] >= pre_eval[m] - RECOVERY_TOLERANCE for m in pre_eval):
             return record.round_idx
     return None
@@ -159,16 +177,24 @@ def write_scenario_report(
     disruption_end_round: int,
     config_snapshot: dict,
     records: list[ScenarioRoundRecord],
+    save_plots: bool = True,
 ) -> Path:
-    """Writes outputs/scenarios/{scenario_name}.json and returns its path."""
+    """Writes outputs/scenarios/{scenario_name}.json (plus a matching .csv
+    and .png when save_plots is set) and returns the .json path.
+    """
     scenarios_dir = output_dir / "scenarios"
     scenarios_dir.mkdir(parents=True, exist_ok=True)
 
+    round_dicts = [dataclasses.asdict(r) for r in records]
+    trend_rows = build_scenario_rows(round_dicts)
+    per_class_rows = build_per_class_rows(round_dicts, [("mesh", "mesh_eval"), ("baseline", "baseline_eval")])
     report = {
         "scenario": scenario_name,
         "target_node": target_node_id,
         "config": config_snapshot,
-        "rounds": [dataclasses.asdict(r) for r in records],
+        "rounds": round_dicts,
+        "trend": trend_rows,
+        "per_class_trend": per_class_rows,
         "summary": {
             "recovery_round_mesh": _recovery_round(
                 records, target_node_id, disruption_start_round, disruption_end_round, "mesh_eval"
@@ -180,4 +206,10 @@ def write_scenario_report(
     }
     path = scenarios_dir / f"{scenario_name}.json"
     path.write_text(json.dumps(report, indent=2))
+
+    if save_plots:
+        write_csv(trend_rows, scenarios_dir / f"{scenario_name}.csv")
+        write_csv(per_class_rows, scenarios_dir / f"{scenario_name}_per_class.csv")
+        plot_training_curves(trend_rows, scenarios_dir / f"{scenario_name}.png", f"{scenario_name} scenario")
+
     return path

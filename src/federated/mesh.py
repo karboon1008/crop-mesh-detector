@@ -17,9 +17,10 @@ from src.federated.node import KnowledgePayload, Node
 class RoundLog:
     round_idx: int
     per_node_train_loss: dict[str, float] = field(default_factory=dict)
+    pre_distill_eval: dict[str, dict[str, float | dict]] = field(default_factory=dict)
     # node_id -> {"kd_loss", "sup_loss", "proto_loss", "total_loss"}
     per_node_distill_loss: dict[str, dict[str, float]] = field(default_factory=dict)
-    per_node_eval: dict[str, dict[str, float]] = field(default_factory=dict)
+    per_node_eval: dict[str, dict[str, float | dict]] = field(default_factory=dict)
     total_bytes_exchanged: int = 0
     active_nodes: list[str] = field(default_factory=list)
 
@@ -58,6 +59,12 @@ class MeshSimulator:
         # not frozen.
         for node in self.nodes:
             log.per_node_train_loss[node.node_id] = node.local_train(local_epochs, lr)
+
+        # 1b) snapshot every node's metrics right here, before any peer
+        # knowledge is applied, so the pre- vs. post-distill comparison
+        # isolates what distillation itself changed this round.
+        for node in self.nodes:
+            log.pre_distill_eval[node.node_id] = node.evaluate()
 
         # 2) each ACTIVE node computes its small, non-invertible knowledge
         # payload. A disconnected node's payload never enters the pool.

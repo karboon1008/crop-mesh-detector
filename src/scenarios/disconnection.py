@@ -67,15 +67,17 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     output_dir = Path(cfg.get("output.dir", "outputs"))
     dataset = load_full_dataset(cfg.get("data.root"), cfg.get("data.image_size", 160))
-    num_crop = len(dataset.labels.crop_classes)
-    num_disease = len(dataset.labels.disease_classes)
     probe_loader, node_loaders = build_dataloaders(cfg, dataset)
     arch = args.arch or cfg.get("models.architectures", ["mobilenet_v3_small"])[0]
 
     require_target_node(target_node, node_loaders)
 
-    baseline_nodes = build_node_set(cfg, arch, node_loaders, num_crop, num_disease, device)
-    mesh_nodes = build_node_set(cfg, arch, node_loaders, num_crop, num_disease, device)
+    baseline_nodes = build_node_set(
+        cfg, arch, node_loaders, dataset.labels.crop_classes, dataset.labels.disease_classes, device
+    )
+    mesh_nodes = build_node_set(
+        cfg, arch, node_loaders, dataset.labels.crop_classes, dataset.labels.disease_classes, device
+    )
     mesh = MeshSimulator(
         mesh_nodes,
         probe_loader,
@@ -103,7 +105,7 @@ def main():
     report_path = write_scenario_report(
         output_dir, "disconnection", target_node,
         disruption_start_round=disconnect_round, disruption_end_round=reconnect_round,
-        config_snapshot=scfg, records=records,
+        config_snapshot=scfg, records=records, save_plots=cfg.get("output.save_plots", True),
     )
     print(f"Wrote {report_path}")
 

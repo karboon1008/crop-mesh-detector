@@ -77,8 +77,11 @@ def test_inactive_node_excluded_from_broadcast_and_distill(synthetic_dataset):
     )
 
     assert round_log.active_nodes == ["node_1", "node_2"]
-    # the disconnected node still trained locally and was evaluated...
+    # the disconnected node still trained locally and was evaluated, both
+    # pre- and post-distill (post-distill is a no-op for it since it never
+    # distills, but the snapshot is still taken)...
     assert "node_0" in round_log.per_node_train_loss
+    assert "node_0" in round_log.pre_distill_eval
     assert "node_0" in round_log.per_node_eval
     # ...but never distilled towards a peer consensus this round.
     assert "node_0" not in round_log.per_node_distill_loss
@@ -150,16 +153,9 @@ def test_disconnection_scenario_end_to_end_smoke(tmp_path, synthetic_dataset):
     from src.scenarios.disconnection import make_disconnect_hook
 
     # NOTE: deviates from the task-4 brief, which specified strategy="by_crop"
-    # here. Same root cause already documented above in
-    # test_inactive_node_excluded_from_broadcast_and_distill: with only 2 crop
-    # groups in the shared `synthetic_dataset` fixture, "by_crop" round-robin
-    # can never populate a 3rd node's shard for any seed, which crashes
-    # DataLoader(shuffle=True) on the empty shard before this scenario's code
-    # ever runs. Reusing the same probe_fraction=0.2/seed=2/"dirichlet"
-    # combination that test already verified empirically gives 3 non-empty,
-    # balanced shards (sizes [9, 8, 9]) whose per-node train splits (sizes
-    # [7, 6, 7]) are also clear of the batch_size=4 trailing-batch-of-1 trap
-    # that crashes MobileNetV3's BatchNorm.
+    # here. Same reason as test_inactive_node_excluded_from_broadcast_and_distill
+    # above: with only 2 crop groups in the shared `synthetic_dataset` fixture,
+    # "by_crop" round-robin can never populate a 3rd node's shard for any seed.
     probe_idx, remaining_idx = carve_public_probe_set(synthetic_dataset, 0.2, seed=2)
     shards = partition_nodes(
         synthetic_dataset, remaining_idx, num_nodes=3, strategy="dirichlet", dirichlet_alpha=0.3, seed=2
@@ -259,7 +255,7 @@ def test_class_addition_scenario_end_to_end_smoke(tmp_path, synthetic_dataset):
 
     def make_loaders(train_idx, test_idx):
         return (
-            DataLoader(make_subset(synthetic_dataset, train_idx), batch_size=4, shuffle=True),
+            DataLoader(make_subset(synthetic_dataset, train_idx), batch_size=4, shuffle=True, drop_last=True),
             DataLoader(make_subset(synthetic_dataset, test_idx), batch_size=4, shuffle=False),
         )
 
@@ -269,11 +265,19 @@ def test_class_addition_scenario_end_to_end_smoke(tmp_path, synthetic_dataset):
     ]
 
     baseline_nodes = [
-        Node(f"node_{i}", build_model("mobilenet_v3_small", num_crop, num_disease, pretrained=False), tl, sl, device="cpu")
+        Node(
+            f"node_{i}", build_model("mobilenet_v3_small", num_crop, num_disease, pretrained=False), tl, sl,
+            device="cpu", crop_classes=synthetic_dataset.labels.crop_classes,
+            disease_classes=synthetic_dataset.labels.disease_classes,
+        )
         for i, (tl, sl) in enumerate(node_loaders)
     ]
     mesh_nodes = [
-        Node(f"node_{i}", build_model("mobilenet_v3_small", num_crop, num_disease, pretrained=False), tl, sl, device="cpu")
+        Node(
+            f"node_{i}", build_model("mobilenet_v3_small", num_crop, num_disease, pretrained=False), tl, sl,
+            device="cpu", crop_classes=synthetic_dataset.labels.crop_classes,
+            disease_classes=synthetic_dataset.labels.disease_classes,
+        )
         for i, (tl, sl) in enumerate(node_loaders)
     ]
     mesh = MeshSimulator(
