@@ -40,6 +40,7 @@ from src.data.plantvillage import (
 from src.energy.tracker import (
     CommunicationCostEstimator,
     ComputeEnergyTracker,
+    sweep_totals_from_emissions_csv,
     write_sustainability_report,
 )
 from src.evaluate import compute_collaboration_gain
@@ -126,9 +127,13 @@ def run_mesh(cfg, arch, node_loaders, probe_loader, crop_classes, disease_classe
     round_logs = []
     for r in range(cfg.get("training.rounds", 5)):
         with tracker.track(f"{arch}_mesh_round_{r}"):
+            local_epochs = cfg.get(
+                f"training.local_epochs_per_round_overrides.{arch}",
+                cfg.get("training.local_epochs_per_round", 2),
+            )
             round_log = mesh.run_round(
                 r,
-                local_epochs=cfg.get("training.local_epochs_per_round", 2),
+                local_epochs=local_epochs,
                 distill_epochs=cfg.get("training.distill_epochs_per_round", 1),
                 lr=cfg.get("training.lr", 0.001),
                 distill_lr=cfg.get("training.distill_lr", 0.0005),
@@ -282,6 +287,7 @@ def main():
         comm_estimate,
         overall_gain,
         cfg.get("energy.grid_carbon_intensity_gco2_per_kwh", 125),
+        emissions_csv_totals=sweep_totals_from_emissions_csv(output_dir),
     )
     print(f"\nDone. Results and sustainability report written to {output_dir}/ "
           f"(now covering {len(all_results)} architecture(s): {list(all_results.keys())})")

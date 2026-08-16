@@ -9,6 +9,7 @@ pure-simulation run.
 
 from __future__ import annotations
 
+import csv
 import json
 import sys
 import time
@@ -140,6 +141,31 @@ class ComputeEnergyTracker:
         }
 
 
+def sweep_totals_from_emissions_csv(output_dir: str | Path) -> dict | None:
+    """Summing total to give the real sweep cost regardless of how the
+    run was split across processes/jobs.
+    """
+    path = Path(output_dir) / "emissions.csv"
+    if not path.exists():
+        return None
+    total_duration_s = 0.0
+    total_energy_kwh = 0.0
+    total_co2_kg = 0.0
+    num_rows = 0
+    with open(path, newline="") as f:
+        for row in csv.DictReader(f):
+            total_duration_s += float(row["duration"])
+            total_energy_kwh += float(row["energy_consumed"])
+            total_co2_kg += float(row["emissions"])
+            num_rows += 1
+    return {
+        "num_rows": num_rows,
+        "total_duration_s": total_duration_s,
+        "total_compute_energy_kwh": total_energy_kwh,
+        "total_co2_kg": total_co2_kg,
+    }
+
+
 class CommunicationCostEstimator:
     """Converts a byte count (from KnowledgePayload.size_bytes()) into an
     estimated transmit energy and CO2e, using published per-byte radio
@@ -174,6 +200,7 @@ def write_sustainability_report(
     communication_estimate: dict,
     collaboration_gain: dict,
     grid_carbon_intensity_gco2_per_kwh: float,
+    emissions_csv_totals: dict | None = None,
 ) -> None:
     """Writes both a machine-readable JSON and a short human-readable
     markdown narrative summarising the energy/carbon picture and whether
@@ -185,6 +212,7 @@ def write_sustainability_report(
 
     payload = {
         "compute": {**compute_summary, "co2_kg": compute_co2_kg},
+        "compute_from_emissions_csv": emissions_csv_totals,
         "communication": communication_estimate,
         "collaboration_gain": collaboration_gain,
         "grid_carbon_intensity_gco2_per_kwh": grid_carbon_intensity_gco2_per_kwh,
@@ -218,6 +246,30 @@ def write_sustainability_report(
         f"- Communication is **{comm_share_pct:.2f}%** of total energy — "
         f"{'well within' if comm_share_pct < 10 else 'a significant share of'} "
         f"the 'communication should not erase compute savings' target.",
+    ]
+
+    if emissions_csv_totals is not None:
+        csv_kwh = emissions_csv_totals["total_compute_energy_kwh"]
+        csv_co2_kg = emissions_csv_totals["total_co2_kg"]
+        csv_rows = emissions_csv_totals["num_rows"]
+        discrepancy_pct = (
+            abs(csv_kwh - total_compute_kwh) / csv_kwh * 100 if csv_kwh > 0 else 0.0
+        )
+        lines.append(
+            f"- **Real sweep total from emissions.csv** ({csv_rows} tracked blocks, all "
+            f"invocations): {csv_kwh:.6f} kWh ({csv_co2_kg * 1000:.3f} g CO2e), "
+            f"{emissions_csv_totals['total_duration_s'] / 60:.1f} min."
+        )
+        if discrepancy_pct > 1.0:
+            lines.append(
+                f"  - **WARNING**: this is {discrepancy_pct:.1f}% different from the "
+                f"`total_compute_energy_kwh` figure above ({compute_summary.get('num_tracked_blocks', 0)} "
+                f"blocks) — run_state.json's cross-invocation accumulator likely missed one or more "
+                f"earlier invocations (e.g. a separate job per --arch, or a run with --fresh). "
+                f"Treat the emissions.csv-derived total as the authoritative one."
+            )
+
+    lines += [
         "",
         "## Collaboration gain vs. energy spent",
         "",

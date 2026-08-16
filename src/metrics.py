@@ -20,28 +20,33 @@ def _top_confusions(cm: np.ndarray, labels: list[str]) -> list[dict]:
 
 def head_metrics(y_true: list[int], y_pred: list[int], class_names: list[str]) -> dict:
     labels = list(range(len(class_names)))
-    per_class_precision, per_class_recall, per_class_f1, _ = precision_recall_fscore_support(
+    per_class_precision, per_class_recall, per_class_f1, support = precision_recall_fscore_support(
         y_true, y_pred, labels=labels, average=None, zero_division=0
     )
-    macro_precision, macro_recall, macro_f1, _ = precision_recall_fscore_support(
-        y_true, y_pred, labels=labels, average="macro", zero_division=0
-    )
     cm = confusion_matrix(y_true, y_pred, labels=labels)
-    row_totals = cm.sum(axis=1)
+    present = support > 0
+    if present.any():
+        macro_precision = float(per_class_precision[present].mean())
+        macro_recall = float(per_class_recall[present].mean())
+        macro_f1 = float(per_class_f1[present].mean())
+    else:
+        macro_precision = macro_recall = macro_f1 = 0.0
 
     per_class = {
         name: {
             "precision": float(per_class_precision[i]),
             "recall": float(per_class_recall[i]),
             "f1": float(per_class_f1[i]),
-            "support": int(row_totals[i]),
+            "support": int(support[i]),
         }
         for i, name in enumerate(class_names)
     }
     return {
-        "macro_precision": float(macro_precision),
-        "macro_recall": float(macro_recall),
-        "macro_f1": float(macro_f1),
+        "macro_precision": macro_precision,
+        "macro_recall": macro_recall,
+        "macro_f1": macro_f1,
+        "num_classes_present": int(present.sum()),
+        "num_classes_total": len(class_names),
         "per_class": per_class,
         "confusion_matrix": {
             "labels": class_names, "matrix": cm.tolist(), "top_confusions": _top_confusions(cm, class_names)
@@ -72,11 +77,17 @@ def pool_confusion_matrices(confusion_matrices: list[dict]) -> dict:
         }
 
     total = int(cm.sum())
+    present = [c for c in per_class.values() if c["support"] > 0]
+    macro_precision = sum(c["precision"] for c in present) / len(present) if present else 0.0
+    macro_recall = sum(c["recall"] for c in present) / len(present) if present else 0.0
+    macro_f1 = sum(c["f1"] for c in present) / len(present) if present else 0.0
     return {
         "accuracy": float(np.trace(cm) / total) if total > 0 else 0.0,
-        "macro_precision": sum(c["precision"] for c in per_class.values()) / len(per_class),
-        "macro_recall": sum(c["recall"] for c in per_class.values()) / len(per_class),
-        "macro_f1": sum(c["f1"] for c in per_class.values()) / len(per_class),
+        "macro_precision": macro_precision,
+        "macro_recall": macro_recall,
+        "macro_f1": macro_f1,
+        "num_classes_present": len(present),
+        "num_classes_total": len(per_class),
         "per_class": per_class,
         "confusion_matrix": {"labels": labels, "matrix": cm.tolist(), "top_confusions": _top_confusions(cm, labels)},
     }
