@@ -51,9 +51,15 @@ class NodeRunner:
     _last_knowledge_bytes: bytes | None = field(default=None, init=False)
 
     def handle_round_start(self, round_idx: int) -> dict:
+        # compute_knowledge runs INSIDE the tracked scope: it is a full
+        # forward pass over the probe set, a real compute cost belonging to
+        # this round. The in-process pipeline (src/train.py) tracks the whole
+        # round, so keeping it outside would understate energy here relative
+        # to that baseline -- especially under the proxy_wall_power fallback,
+        # which is linear in tracked wall time.
         with self.tracker.track(f"{self.node_id}_round_{round_idx}") as energy_record:
             self.node.local_train(self.local_epochs, self.lr)
-        knowledge = self.node.compute_knowledge(self.probe_loader)
+            knowledge = self.node.compute_knowledge(self.probe_loader)
         data = encode_knowledge(round_idx, knowledge)
         self._last_round_idx = round_idx
         self._last_knowledge_bytes = data
@@ -114,6 +120,23 @@ class NodeRunner:
                 trim_fraction=self.trim_fraction,
                 krum_neighbors=self.krum_neighbors,
             )
+            # ENERGY SCOPE CAVEAT -- read before comparing a Docker-mesh
+            # energy_kwh figure to an in-process one:
+            # this round's reported energy_kwh (written by handle_round_start)
+            # covers local_train + compute_knowledge ONLY. The distill() call
+            # below, and the evaluate() call after it, are NOT included in
+            # energy_kwh. The in-process pipeline (src/train.py, `with
+            # tracker.track(...): mesh.run_round(...)`) tracks the ENTIRE
+            # round -- train + knowledge + distill + evaluate -- so a
+            # Docker-mesh energy_kwh is a strict UNDER-count relative to an
+            # in-process one for the same work.
+            # Why not just add a second tracked block here? Because
+            # sqlite_store.upsert_row's ON CONFLICT DO UPDATE SET would
+            # OVERWRITE (not add to) the energy_kwh already written for this
+            # (node_id, round_idx) in handle_round_start, silently discarding
+            # the local_train + compute_knowledge figure entirely. Closing
+            # this gap properly needs accumulating upsert semantics (or a
+            # per-phase energy column), which is a schema change.
             self.node.distill(
                 consensus_prototypes,
                 consensus_crop_logits,
