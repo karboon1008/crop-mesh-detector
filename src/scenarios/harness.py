@@ -40,6 +40,7 @@ class ScenarioRoundRecord:
     baseline_compute_energy_kwh: float = 0.0
     mesh_compute_energy_kwh: float = 0.0
     communication_energy_j: float = 0.0
+    compute_energy_method: str = ""
 
 
 PerturbationHook = Callable[[int, "list[Node]", Optional[MeshSimulator]], "list[ScenarioEvent]"]
@@ -99,6 +100,7 @@ def run_scenario(
     applied identically to both parallel simulations.
     """
     records: list[ScenarioRoundRecord] = []
+    compute_energy_method: Optional[str] = None
     for round_idx in range(num_rounds):
         events = perturbation_hook(round_idx, baseline_nodes, None)
         events = events + perturbation_hook(round_idx, mesh.nodes, mesh)
@@ -106,10 +108,19 @@ def run_scenario(
         baseline_eval = {}
         baseline_compute_energy_kwh = 0.0
         for node in baseline_nodes:
+            # evaluate() is intentionally tracked *inside* this block (not
+            # after it) so the baseline's compute-energy figure covers the
+            # same operation boundary as the mesh arm's: mesh.run_round()
+            # (below) evaluates every node as part of its own tracked
+            # block. Evaluating outside would exclude that pass on the
+            # baseline side only, biasing the mesh:baseline compute-energy
+            # ratio in the mesh's favour.
             with tracker.track(f"baseline_{node.node_id}_round_{round_idx}") as energy_record:
                 node.local_train(round_kwargs["local_epochs"], round_kwargs["lr"])
+                baseline_eval[node.node_id] = node.evaluate()
             baseline_compute_energy_kwh += energy_record["energy_kwh"]
-            baseline_eval[node.node_id] = node.evaluate()
+            if compute_energy_method is None:
+                compute_energy_method = energy_record["method"]
 
         with tracker.track(f"mesh_round_{round_idx}") as mesh_energy_record:
             round_log = mesh.run_round(
@@ -136,6 +147,7 @@ def run_scenario(
             baseline_compute_energy_kwh=baseline_compute_energy_kwh,
             mesh_compute_energy_kwh=mesh_compute_energy_kwh,
             communication_energy_j=communication_energy_j,
+            compute_energy_method=compute_energy_method or mesh_energy_record["method"],
         ))
         print(f"  round {round_idx}: {len(events)} event(s), macro_gain={gain['macro_gain']}")
     return records
@@ -225,6 +237,7 @@ def write_scenario_report(
                 "total_mesh_compute_energy_kwh": sum(r.mesh_compute_energy_kwh for r in records),
                 "total_communication_energy_j": sum(r.communication_energy_j for r in records),
                 "gain_per_joule": _gain_per_joule(records),
+                "compute_energy_method": records[0].compute_energy_method if records else None,
             },
         },
     }

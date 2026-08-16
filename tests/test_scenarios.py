@@ -171,6 +171,55 @@ def test_run_scenario_and_write_report(tmp_path, synthetic_dataset, energy_track
     assert "recovery_round_baseline" in written["summary"]
 
 
+def test_run_scenario_and_report_record_compute_energy_method(
+    tmp_path, synthetic_dataset, energy_tracker, wifi_comm_estimator
+):
+    # energy_tracker (tests/conftest.py) is built with enabled=False, so
+    # ComputeEnergyTracker never attempts CodeCarbon and every tracked
+    # block falls back to the wall-clock * fallback_power_watts proxy —
+    # exactly the situation this project's real scenario runs are in
+    # (config.yaml's energy.track_with_codecarbon is false). Each round's
+    # record, and the report's summary.sustainability block, should say so
+    # explicitly rather than silently reporting a number with no attached
+    # method.
+    probe_idx, remaining_idx = carve_public_probe_set(synthetic_dataset, 0.2, seed=2)
+    shards = partition_nodes(
+        synthetic_dataset, remaining_idx, num_nodes=2, strategy="by_crop", dirichlet_alpha=0.3, seed=2
+    )
+    probe_loader = DataLoader(make_subset(synthetic_dataset, probe_idx), batch_size=4, shuffle=False)
+    num_crop = len(synthetic_dataset.labels.crop_classes)
+    num_disease = len(synthetic_dataset.labels.disease_classes)
+
+    baseline_nodes = build_nodes(synthetic_dataset, shards, num_crop, num_disease)
+    mesh_nodes = build_nodes(synthetic_dataset, shards, num_crop, num_disease)
+    mesh = MeshSimulator(
+        mesh_nodes, probe_loader, aggregation_method="trimmed_mean", trim_fraction=0.0, krum_neighbors=1
+    )
+
+    def no_op_hook(round_idx, nodes, mesh_or_none):
+        return []
+
+    round_kwargs = {
+        "local_epochs": 1, "distill_epochs": 1, "lr": 1e-3, "distill_lr": 1e-3,
+        "proto_weight": 0.5, "kd_weight": 0.5, "temperature": 2.0,
+    }
+    records = run_scenario(
+        baseline_nodes, mesh, num_rounds=2, perturbation_hook=no_op_hook, round_kwargs=round_kwargs,
+        tracker=energy_tracker, comm_estimator=wifi_comm_estimator, radio="wifi",
+    )
+
+    for record in records:
+        assert record.compute_energy_method == "proxy_wall_power"
+
+    report_path = write_scenario_report(
+        tmp_path, "unit_test_method", "node_0",
+        disruption_start_round=1, disruption_end_round=1,
+        config_snapshot={}, records=records,
+    )
+    report = json.loads(report_path.read_text())
+    assert report["summary"]["sustainability"]["compute_energy_method"] == "proxy_wall_power"
+
+
 def test_recovery_round_returns_none_for_out_of_range_disruption_start():
     # disruption_start_round is far beyond the available records, so
     # pre_round (disruption_start_round - 1) indexes past the end of the
