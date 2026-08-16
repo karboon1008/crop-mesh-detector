@@ -196,10 +196,14 @@ class Node:
 
     # evaluation
     @torch.no_grad()
-    def evaluate(self) -> dict:
+    def evaluate(self, loader: DataLoader | None = None) -> dict:
+        """To measure whether this node actually gained knowledge of
+        classes outside its own shard via the mesh
+        """
         self.model.eval()
+        loader = loader if loader is not None else self.test_loader
         crop_true, crop_pred, disease_true, disease_pred = [], [], [], []
-        for images, crop_labels, disease_labels in self.test_loader:
+        for images, crop_labels, disease_labels in loader:
             images = images.to(self.device)
             crop_logits, disease_logits = self.model(images)
             crop_true.extend(crop_labels.tolist())

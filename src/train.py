@@ -31,6 +31,7 @@ from torch.utils.data import DataLoader
 
 from src.config import Config
 from src.data.plantvillage import (
+    carve_global_test_set,
     carve_public_probe_set,
     load_full_dataset,
     make_subset,
@@ -59,6 +60,16 @@ def build_dataloaders(cfg: Config, dataset):
         min_samples_small_class=cfg.get("data.probe_set_min_samples_small_class", 8),
         max_fraction_small_class=cfg.get("data.probe_set_max_fraction_small_class", 0.2),
     )
+    # measure of whether a node's model actually generalizes.
+    global_test_idx, remaining_idx = carve_global_test_set(
+        dataset,
+        remaining_idx,
+        cfg.get("data.global_test_fraction", 0.05),
+        cfg.get("data.seed", 42),
+        large_class_threshold=cfg.get("data.probe_set_large_class_threshold", 200),
+        min_samples_small_class=cfg.get("data.probe_set_min_samples_small_class", 8),
+        max_fraction_small_class=cfg.get("data.probe_set_max_fraction_small_class", 0.2),
+    )
     shards = partition_nodes(
         dataset,
         remaining_idx,
@@ -70,6 +81,7 @@ def build_dataloaders(cfg: Config, dataset):
     )
     batch_size = cfg.get("training.batch_size", 32)
     probe_loader = DataLoader(make_subset(dataset, probe_idx), batch_size=batch_size, shuffle=False)
+    global_test_loader = DataLoader(make_subset(dataset, global_test_idx), batch_size=batch_size, shuffle=False)
 
     node_loaders = []
     for shard in shards:
@@ -81,10 +93,10 @@ def build_dataloaders(cfg: Config, dataset):
         )
         test_loader = DataLoader(make_subset(dataset, test_idx), batch_size=batch_size, shuffle=False)
         node_loaders.append((train_loader, test_loader))
-    return probe_loader, node_loaders
+    return probe_loader, global_test_loader, node_loaders
 
 
-def run_baseline(cfg, arch, node_loaders, crop_classes, disease_classes, tracker, device):
+def run_baseline(cfg, arch, node_loaders, global_test_loader, crop_classes, disease_classes, tracker, device):
     """Local-only training, no exchange at all — the comparison point
     the collaboration gain is measured against.
     """
@@ -100,11 +112,18 @@ def run_baseline(cfg, arch, node_loaders, crop_classes, disease_classes, tracker
         )
         with tracker.track(f"{arch}_baseline_{node_id}"):
             node.local_train(cfg.get("training.baseline_epochs", 10), cfg.get("training.lr", 0.001))
-        evals[node_id] = node.evaluate()
+        # top-level metrics: this node's own (skewed) local test split.
+        # "global": the untouched global_test_loader — the only number
+        # that reflects whether this node can classify the full catalogue.
+        node_eval = node.evaluate()
+        node_eval["global"] = node.evaluate(global_test_loader)
+        evals[node_id] = node_eval
     return evals
 
 
-def run_mesh(cfg, arch, node_loaders, probe_loader, crop_classes, disease_classes, tracker, device, output_dir):
+def run_mesh(
+    cfg, arch, node_loaders, probe_loader, global_test_loader, crop_classes, disease_classes, tracker, device, output_dir
+):
     nodes = []
     for i, (train_loader, test_loader) in enumerate(node_loaders):
         model = build_model(
@@ -161,7 +180,11 @@ def run_mesh(cfg, arch, node_loaders, probe_loader, crop_classes, disease_classe
             f"{arch}: mesh training curves",
         )
 
-    final_evals = {node.node_id: node.evaluate() for node in nodes}
+    final_evals = {}
+    for node in nodes:
+        node_eval = node.evaluate()
+        node_eval["global"] = node.evaluate(global_test_loader)
+        final_evals[node.node_id] = node_eval
 
     checkpoint_dir = output_dir / "checkpoints" / arch
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -209,7 +232,7 @@ def main():
         )
     )
 
-    probe_loader, node_loaders = build_dataloaders(cfg, dataset)
+    probe_loader, global_test_loader, node_loaders = build_dataloaders(cfg, dataset)
 
     tracker = ComputeEnergyTracker(
         enabled=cfg.get("energy.track_with_codecarbon", True),
@@ -241,11 +264,12 @@ def main():
         print(f"\n=== Architecture: {arch} ===")
         print("-- baseline (local-only) --")
         baseline_evals = run_baseline(
-            cfg, arch, node_loaders, dataset.labels.crop_classes, dataset.labels.disease_classes, tracker, device
+            cfg, arch, node_loaders, global_test_loader,
+            dataset.labels.crop_classes, dataset.labels.disease_classes, tracker, device
         )
         print("-- mesh (prototype + logit exchange) --")
         mesh_evals, total_bytes = run_mesh(
-            cfg, arch, node_loaders, probe_loader,
+            cfg, arch, node_loaders, probe_loader, global_test_loader,
             dataset.labels.crop_classes, dataset.labels.disease_classes, tracker, device, output_dir
         )
         grand_total_bytes += total_bytes
@@ -265,6 +289,9 @@ def main():
         (output_dir / f"results_{arch}.json").write_text(json.dumps(arch_result, indent=2))
         print(f"macro_gain: {gain['macro_gain']}")
         print(f"worst_node_gain: {gain['worst_node_gain']}")
+        if "global_macro_gain" in gain:
+            print(f"global_macro_gain: {gain['global_macro_gain']}")
+            print(f"global_worst_node_gain: {gain['global_worst_node_gain']}")
 
     results_summary_path.write_text(json.dumps(all_results, indent=2))
 

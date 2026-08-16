@@ -11,7 +11,8 @@ from pathlib import Path
 
 
 def _score(eval_: dict) -> float:
-    return (eval_["crop_accuracy"] + eval_["disease_accuracy"]) / 2
+    metrics = eval_.get("global", eval_)
+    return (metrics["crop_accuracy"] + metrics["disease_accuracy"]) / 2
 
 
 def list_architectures(results_summary_path: Path) -> list[str]:

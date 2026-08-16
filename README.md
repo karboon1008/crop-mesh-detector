@@ -144,6 +144,28 @@ python -m src.scenarios.class_addition [--config path] [--arch name]
 python -m src.scenarios.distribution_shift [--config path] [--arch name]
 ```
 
+### Try it out: classify an image or use your laptop's camera
+
+Once a checkpoint exists in `outputs/checkpoints/` (from `python -m src.train`),
+`src/infer.py` gives quick, ad-hoc predictions — crop type, disease, and each
+one's confidence — without needing a labeled folder like `src/predict.py`
+expects:
+
+```bash
+# Classify one or more specific image files
+python -m src.infer --images path/to/leaf1.jpg path/to/leaf2.jpg
+
+# Take a snapshot with the laptop's webcam and classify it
+# (opens a preview window — press SPACE to capture, 'q' to cancel)
+python -m src.infer --camera
+
+# Continuously classify the webcam feed (prediction overlaid live, 'q' to quit)
+python -m src.infer --camera --live
+```
+
+Add `--output path/to/results.csv` to any of the above to also save the
+predictions to disk.
+
 Everything — which architectures to run, node count, non-IID strategy,
 epochs/rounds, aggregation rule, radio energy assumptions, grid carbon
 intensity — is controlled from `config.yaml`. Results land in `outputs/`:

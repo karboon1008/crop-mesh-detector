@@ -114,6 +114,36 @@ def load_full_dataset(root: str | Path, image_size: int = 160) -> PlantVillageDa
     return PlantVillageDataset(root, image_size=image_size)
 
 
+def _stratified_carve(
+    dataset: PlantVillageDataset,
+    indices: list[int],
+    fraction: float,
+    seed: int,
+    large_class_threshold: int,
+    min_samples_small_class: int,
+    max_fraction_small_class: float,
+) -> tuple[list[int], list[int]]:
+    all_targets = np.array(dataset.targets)
+    targets = all_targets[indices]
+    rng = random.Random(seed)
+    carved: list[int] = []
+    remaining: list[int] = []
+    for cls in sorted(set(targets.tolist())):
+        cls_indices = [indices[i] for i in range(len(indices)) if targets[i] == cls]
+        rng.shuffle(cls_indices)
+        count = len(cls_indices)
+        if count >= large_class_threshold:
+            n_cls = max(1, round(count * fraction))
+        else:
+            target_n = max(min_samples_small_class, round(count * fraction))
+            n_cls = min(target_n, int(count * max_fraction_small_class), count)
+        carved.extend(cls_indices[:n_cls])
+        remaining.extend(cls_indices[n_cls:])
+    rng.shuffle(carved)
+    rng.shuffle(remaining)
+    return carved, remaining
+
+
 def carve_public_probe_set(
     dataset: PlantVillageDataset,
     probe_fraction: float,
@@ -130,24 +160,26 @@ def carve_public_probe_set(
     DS-FL), never for local training, so it carries no per-farm private
     information.
     """
-    targets = np.array(dataset.targets)
-    rng = random.Random(seed)
-    probe_idx: list[int] = []
-    remaining_idx: list[int] = []
-    for cls in sorted(set(targets.tolist())):
-        cls_indices = np.flatnonzero(targets == cls).tolist()
-        rng.shuffle(cls_indices)
-        count = len(cls_indices)
-        if count >= large_class_threshold:
-            n_probe_cls = max(1, round(count * probe_fraction))
-        else:
-            target_n = max(min_samples_small_class, round(count * probe_fraction))
-            n_probe_cls = min(target_n, int(count * max_fraction_small_class), count)
-        probe_idx.extend(cls_indices[:n_probe_cls])
-        remaining_idx.extend(cls_indices[n_probe_cls:])
-    rng.shuffle(probe_idx)
-    rng.shuffle(remaining_idx)
-    return probe_idx, remaining_idx
+    all_indices = list(range(len(dataset)))
+    return _stratified_carve(
+        dataset, all_indices, probe_fraction, seed,
+        large_class_threshold, min_samples_small_class, max_fraction_small_class,
+    )
+
+
+def carve_global_test_set(
+    dataset: PlantVillageDataset,
+    indices: list[int],
+    test_fraction: float,
+    seed: int,
+    large_class_threshold: int = 200,
+    min_samples_small_class: int = 8,
+    max_fraction_small_class: float = 0.2,
+) -> tuple[list[int], list[int]]:
+    return _stratified_carve(
+        dataset, indices, test_fraction, seed,
+        large_class_threshold, min_samples_small_class, max_fraction_small_class,
+    )
 
 
 def partition_nodes(

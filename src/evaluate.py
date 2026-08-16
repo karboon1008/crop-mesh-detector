@@ -62,6 +62,10 @@ def worst_node(evals: dict[str, dict[str, float]]) -> dict[str, float]:
     return {m: min(e[m] for e in scalar_evals.values()) for m in metrics}
 
 
+def extract_global(evals: dict[str, dict]) -> dict[str, dict]:
+    return {node_id: e["global"] for node_id, e in evals.items() if "global" in e}
+
+
 def compute_collaboration_gain(
     mesh_evals: dict[str, dict[str, float]],
     baseline_evals: dict[str, dict[str, float]],
@@ -73,7 +77,7 @@ def compute_collaboration_gain(
     mesh_pooled = pooled_metrics(mesh_evals)
     baseline_pooled = pooled_metrics(baseline_evals)
 
-    return {
+    result = {
         "mesh_macro": mesh_macro,
         "baseline_macro": baseline_macro,
         "macro_gain": {m: mesh_macro[m] - baseline_macro[m] for m in mesh_macro},
@@ -91,3 +95,30 @@ def compute_collaboration_gain(
             for node_id in mesh_evals
         },
     }
+
+    # Same gain math, but on the global_test_loader eval instead of each
+    # node's own skewed local split — this is the number that actually
+    # answers "did mesh consensus (prototypes + soft logits, no raw data
+    # exchanged) give nodes real knowledge of classes their non-IID shard
+    # barely covered, more than local-only training would have?"
+    mesh_global = extract_global(mesh_evals)
+    baseline_global = extract_global(baseline_evals)
+    if mesh_global and baseline_global:
+        global_mesh_macro = macro_average(mesh_global)
+        global_baseline_macro = macro_average(baseline_global)
+        global_mesh_worst = worst_node(mesh_global)
+        global_baseline_worst = worst_node(baseline_global)
+        global_mesh_pooled = pooled_metrics(mesh_global)
+        global_baseline_pooled = pooled_metrics(baseline_global)
+        result.update(
+            global_mesh_macro=global_mesh_macro,
+            global_baseline_macro=global_baseline_macro,
+            global_macro_gain={m: global_mesh_macro[m] - global_baseline_macro[m] for m in global_mesh_macro},
+            global_mesh_worst_node=global_mesh_worst,
+            global_baseline_worst_node=global_baseline_worst,
+            global_worst_node_gain={m: global_mesh_worst[m] - global_baseline_worst[m] for m in global_mesh_worst},
+            global_mesh_pooled=global_mesh_pooled,
+            global_baseline_pooled=global_baseline_pooled,
+            global_pooled_gain=pooled_gain(global_mesh_pooled, global_baseline_pooled),
+        )
+    return result
