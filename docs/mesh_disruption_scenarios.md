@@ -30,6 +30,26 @@ pattern: load the real dataset → build two nodesets (baseline, mesh) →
 run N rounds, applying the scenario's disruption at a configured round →
 write `outputs/scenarios/{scenario_name}.json`.
 
+**Methodology note — compute-energy figures are a wall-clock proxy, not a
+CodeCarbon measurement.** This environment does not run CodeCarbon
+(`config.yaml`'s `energy.track_with_codecarbon` is `false`, and
+`codecarbon` isn't installed), so every `*_compute_energy_kwh` figure in
+this document and in `outputs/scenarios/*.json` comes from
+`ComputeEnergyTracker`'s (`src/energy/tracker.py`) fallback estimator:
+wall-clock duration of each tracked training/evaluation block × a fixed
+15 W (`fallback_power_watts`, the class default) assumed average power —
+`energy_kwh = 15.0 * duration_s / 3.6e6`. That is a real measurement of
+real wall-clock time spent on real training/evaluation work, so it is a
+legitimate estimate, but it is **not** a CodeCarbon-measured joules
+figure, and it inherits wall-clock's weakness: anything else competing
+for the CPU during a tracked block inflates that block's figure (see the
+Disconnection section's caveat below for a concrete case). The tracker
+records which method produced a figure as `"proxy_wall_power"` (vs.
+`"codecarbon"`) per tracked block; a future run with CodeCarbon enabled
+would report the same field as `"codecarbon"` instead. See
+[`docs/sustainability_energy_plan.md`](sustainability_energy_plan.md) §2
+and §7 for more on this distinction.
+
 ---
 
 ## 1. Disconnection
@@ -89,13 +109,63 @@ that the mesh's communication spend is automatically suspended in
 lockstep with the disruption (not a fixed tax paid regardless of who can
 benefit from it) and that exclusion/re-inclusion is clean — no crash, no
 corrupted state — even though this particular run doesn't show a faster
-mesh recovery. This run's `summary.sustainability.gain_per_joule` =
-{crop_accuracy: 2.52e-08, disease_accuracy: 4.91e-08} — the smallest of
-the three scenarios, for two compounding reasons: this run's final-round
-macro gain is itself the smallest of the three (0.60 points crop / 1.17
-points disease, versus roughly 2–4 points for the other two scenarios),
-and this run's total mesh energy spend (≈237 kJ, dominated by
-≈0.0658 kWh of compute) is roughly 2.7x either other scenario's total.
+mesh recovery.
+
+`gain_per_joule` (formula: each scenario's final-round macro
+collaboration gain, per metric, divided by the total energy — compute
+plus communication, converted to Joules — the mesh nodeset spent across
+the whole run; see [`docs/sustainability_energy_plan.md`](sustainability_energy_plan.md)
+§1 for why Baseline B is the comparison point) for this run, as measured,
+is `{crop_accuracy: 2.52e-08, disease_accuracy: 4.91e-08}` — the smallest
+of the three scenarios, for two compounding reasons: this run's
+final-round macro gain is itself the smallest of the three (0.60 points
+crop / 1.17 points disease, versus roughly 2–4 points for the other two
+scenarios), and this run's total mesh energy spend (≈237 kJ, dominated
+by ≈0.0658 kWh of compute) is roughly 2.7x either other scenario's total,
+as measured.
+
+**Measurement caveat — round 3's compute-energy figure is a contention
+artifact, not a scenario effect.** That 2.7x figure is inflated by one
+outlier. Reading `outputs/scenarios/disconnection.json` directly: every
+mesh round's `mesh_compute_energy_kwh` sits in a ~0.0048–0.0090 kWh band
+(rounds 0, 1, 2, 4, 5) *except* round 3, at 0.0337 kWh — 4–7x every other
+round, in every one of the three scenario JSON files. Round 3's own
+*baseline* block for the same round (0.0033 kWh) shows no equivalent
+spike, and round 2 — also during `node_1`'s disconnection window — is
+itself unremarkable (0.0048 kWh), so the spike tracks neither the
+disconnection scenario nor the disruption window; it lines up with
+unrelated Docker/MQTT feature-work being committed concurrently on the
+same machine during this run's multi-hour, CPU-only training window,
+which is exactly the kind of contention the 15 W wall-clock proxy (see
+the methodology note above) cannot distinguish from real training cost.
+**No re-run was performed to resolve this** — instead, replacing round
+3's figure with the mean of its neighbouring rounds
+((0.004769 + 0.006248) / 2 = 0.005509 kWh) gives a corrected total mesh
+compute energy of ≈0.0377 kWh (vs. ≈0.0658 kWh as-measured) and a
+corrected total mesh energy of ≈136 kJ (vs. ≈237 kJ as-measured) — about
+**1.5x** either other scenario's total, not 2.7x, and a corrected
+`gain_per_joule` of `{crop_accuracy: 4.39e-08, disease_accuracy: 8.58e-08}`.
+The raw, as-measured figures are kept above for transparency; the
+corrected figures are the more representative read of this scenario's
+actual energy cost, and are what the Overall summary table's footnote
+below reports. This is a same-data recomputation to remove one known
+measurement artifact, not a re-derivation of a cleaner narrative — it
+does not change any of this section's accuracy/recovery findings, and it
+does not claim to know precisely how much of round 3's inflation the
+concurrent load caused beyond "enough to be the only outlier in the
+dataset."
+
+Separately, this run's total mesh compute energy (≈0.0658 kWh
+as-measured; ≈0.0377 kWh corrected) is roughly **3.1x** (as-measured) or
+**1.8x** (corrected) this run's total *baseline* compute energy
+(0.0214 kWh) — the compute cost `docs/sustainability_energy_plan.md` §5
+asks to be quantified, on top of the ≈368 J of communication energy
+across the run. Both the as-measured and corrected figures above were
+produced under the pre-fix evaluate() boundary described in the note at
+the end of this document (§"Measurement-boundary note") — a future
+re-run under the fixed boundary would count an equivalent evaluation
+pass on the baseline side too, which would move this ratio somewhat
+(direction not derived here, since it wasn't re-run).
 
 ---
 
@@ -160,7 +230,15 @@ recovers **3 rounds faster** than the baseline in this run — a direct,
 quantified demonstration of the mesh's collaborative benefit, and a
 larger one than the previous run showed.
 `summary.sustainability.gain_per_joule` = {crop_accuracy: 2.16e-07,
-disease_accuracy: 4.13e-07}.
+disease_accuracy: 4.13e-07}. This run's total mesh compute energy
+(0.02463 kWh) is roughly **2.6x** this run's total baseline compute
+energy (0.00932 kWh) — the compute cost of collaboration itself, on top
+of the 481 J of communication energy across the run. As with every
+compute-energy figure in this document, this ratio was measured under
+the pre-fix `evaluate()` boundary described in the
+"Measurement-boundary note" near the end of this document; it was not
+affected by the round-3 contention artifact described in the
+Disconnection section (no round in this scenario's JSON is an outlier).
 
 ---
 
@@ -230,7 +308,12 @@ is the wrong lens for seeing this disruption's effect, because the
 corruption never creates a clean/dirty split for `node_2` to recover
 from — the mesh's real, measurable benefit here only shows up once you
 compare macro accuracy across the whole node set, not the disrupted
-node in isolation. The run still proves the pipeline functions correctly
+node in isolation. This run's total mesh compute energy (0.02399 kWh) is
+roughly **2.7x** this run's total baseline compute energy (0.00891 kWh)
+— comparable to Class Addition's ratio, and, like that section, measured
+under the pre-fix `evaluate()` boundary (see "Measurement-boundary note"
+below); no round in this scenario's JSON is a contention outlier either.
+The run still proves the pipeline functions correctly
 end-to-end: the corruption is applied exactly once, at the configured
 round, to the configured node, with no crash.
 
@@ -240,16 +323,52 @@ round, to the configured node, with no crash.
 
 | Scenario | Target node | Disruption | Recovery — mesh | Recovery — baseline | Mesh advantage | gain_per_joule (crop / disease) |
 |---|---|---|---|---|---|---|
-| Disconnection | node_1 | Offline rounds 2–3, reconnects round 4 | round 4 | round 4 | Tolerates cleanly; no recovery-speed advantage shown this run | 2.52e-08 / 4.91e-08 |
+| Disconnection | node_1 | Offline rounds 2–3, reconnects round 4 | round 4 | round 4 | Tolerates cleanly; no recovery-speed advantage shown this run | 2.52e-08 / 4.91e-08 (as measured)\* |
 | Class Addition | node_0 | New crop (Tomato) appears round 2 | **round 2** | round 5 | **3 rounds faster** | 2.16e-07 / 4.13e-07 |
 | Distribution Shift | node_2 | Image corruption from round 2 | round 2 | round 2 | No recovery-speed gap at the node level (train+test corrupted together); real macro-level gain (+1.97pp crop / +3.62pp disease at the final round) | 2.27e-07 / 4.16e-07 |
 
-`gain_per_joule` is each scenario's final-round macro collaboration gain
-divided by the total energy (compute + communication) the mesh nodeset
-spent across the whole run — see
+\* Disconnection's as-measured `gain_per_joule` is depressed by one
+contaminated round (round 3's compute-energy figure — see the
+Disconnection section's "Measurement caveat" above). Correcting for it
+gives `gain_per_joule` = **4.39e-08 / 8.58e-08** — still the smallest of
+the three scenarios, but roughly 1.7x higher than the as-measured figure
+in this table. Both numbers are reported here deliberately: the
+as-measured one because it's what the raw JSON contains, the corrected
+one because it's the more representative estimate of this scenario's
+actual energy cost.
+
+`gain_per_joule` is each scenario's final-round macro collaboration gain,
+per metric, divided by the total energy (compute + communication,
+converted to Joules) the mesh nodeset spent across the whole run — see
 [`docs/sustainability_energy_plan.md`](sustainability_energy_plan.md) §1
-and §4 for how this metric is defined and why Baseline B (local-only, zero
-exchange) is the comparison point.
+and §4 for why Baseline B (local-only, zero exchange) is the comparison
+point.
+
+### Measurement-boundary note (evaluate() inside vs. outside the tracked block)
+
+The per-round `mesh_compute_energy_kwh` figures in `outputs/scenarios/*.json`
+(and everywhere they're quoted in this document) were produced by an
+earlier version of `src/scenarios/harness.py`'s `run_scenario()` in which
+the baseline arm's `node.evaluate()` call sat *outside* its
+`tracker.track(...)` block, while the mesh arm's evaluation (inside
+`MeshSimulator.run_round`) was tracked. That meant the mesh's tracked
+compute-energy figure included an evaluation pass that the baseline's
+did not — biasing every mesh:baseline compute-energy ratio reported in
+this document (e.g. Class Addition's ≈2.6x, Distribution Shift's ≈2.7x,
+Disconnection's ≈3.1x as-measured / ≈1.8x corrected) somewhat in the
+mesh's favour. This has since been fixed in the code (`baseline_eval`
+now happens inside the tracked block, matching the mesh arm's boundary),
+but the three JSON files above were **not regenerated** — re-running
+them would take several more hours each and was out of scope for this
+fix. Treat every mesh:baseline compute-energy ratio in this document as
+measured under the old (pre-fix) boundary; a future re-run under the
+fixed boundary would likely narrow these ratios somewhat, since the
+baseline side would then also be charged for its evaluation pass. This
+does not affect `gain_per_joule` itself (which uses only the mesh
+nodeset's own energy, not a baseline comparison) or any accuracy/recovery
+finding in this document — only the mesh-vs-baseline compute-energy
+comparison sentences added alongside `gain_per_joule` in each section
+above.
 
 ## Output files
 
@@ -269,11 +388,16 @@ each round's `communication_energy_j` plus `baseline_compute_energy_kwh` /
 at/after the disruption where that node's accuracy is back within 5
 points of its pre-disruption value, or `null` if it never recovers within
 the run) and a `sustainability` sub-block (`total_baseline_compute_energy_kwh`,
-`total_mesh_compute_energy_kwh`, `total_communication_energy_j`, and
+`total_mesh_compute_energy_kwh`, `total_communication_energy_j`,
 `gain_per_joule` — the per-metric figures reported in each section above
-and in the Overall summary table). This directory is git-ignored,
-matching the rest of `outputs/` — re-run the commands above to regenerate
-it.
+and in the Overall summary table — and `compute_energy_method`, either
+`"proxy_wall_power"` or `"codecarbon"`, per the methodology note near the
+top of this document). This directory is git-ignored, matching the rest
+of `outputs/` — re-run the commands above to regenerate it.
+`compute_energy_method` was added after the three JSON files above were
+generated, so those specific files don't contain that key yet; a future
+re-run (under the current code) would include it, always as
+`"proxy_wall_power"` in this environment.
 
 All three runs above used a single architecture (`mobilenet_v3_small`,
 the default) rather than the full 3-architecture sweep `src/train.py`
