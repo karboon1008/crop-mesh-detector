@@ -28,10 +28,10 @@ models:
   pretrained: true
 
 training:
-  local_epochs_per_round: 1       # local training epochs before each exchange round -- TEMP: reduced from 2 for smoke run
+  local_epochs_per_round: 2       # local training epochs before each exchange round
   distill_epochs_per_round: 1     # epochs spent distilling towards consensus knowledge
-  rounds: 1                       # number of mesh exchange rounds -- TEMP: reduced from 5 for smoke run
-  baseline_epochs: 1              # epochs for the local-only baseline (aligned compute budget) -- TEMP: reduced from 10 for smoke run
+  rounds: 5                       # number of mesh exchange rounds
+  baseline_epochs: 10             # epochs for the local-only baseline (aligned compute budget)
   batch_size: 32
   lr: 0.001
   distill_lr: 0.0005
@@ -75,3 +75,9 @@ scenarios:
     shift_round: 2
     corruption: "brightness_blur_noise"
     severity: 0.5
+
+docker_mesh:
+  round_timeout_s: 300
+  data_dir: "data/docker_mesh"
+  energy_db_dir: "outputs/docker_mesh/energy"
+  dashboard_refresh_s: 3
