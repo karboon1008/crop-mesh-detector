@@ -15,6 +15,7 @@ import torch
 
 from src.config import Config
 from src.data.plantvillage import load_full_dataset
+from src.energy.tracker import CommunicationCostEstimator, ComputeEnergyTracker
 from src.federated.mesh import MeshSimulator
 from src.scenarios.harness import (
     ScenarioEvent,
@@ -84,6 +85,16 @@ def main():
         krum_neighbors=cfg.get("federated.krum_neighbors", 2),
     )
 
+    tracker = ComputeEnergyTracker(
+        enabled=cfg.get("energy.track_with_codecarbon", True),
+        output_dir=output_dir,
+        country_iso_code=cfg.get("energy.country_iso_code", "GBR"),
+    )
+    comm_estimator = CommunicationCostEstimator(
+        cfg.get("energy.radio_energy_j_per_byte", {}),
+        cfg.get("energy.grid_carbon_intensity_gco2_per_kwh", 125),
+    )
+
     round_kwargs = {
         "local_epochs": cfg.get("training.local_epochs_per_round", 2),
         "distill_epochs": cfg.get("training.distill_epochs_per_round", 1),
@@ -97,6 +108,7 @@ def main():
         baseline_nodes, mesh, num_rounds,
         make_disconnect_hook(target_node, disconnect_round, reconnect_round),
         round_kwargs,
+        tracker=tracker, comm_estimator=comm_estimator,
     )
 
     output_dir.mkdir(parents=True, exist_ok=True)

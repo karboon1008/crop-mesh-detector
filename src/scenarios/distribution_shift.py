@@ -18,6 +18,7 @@ from torchvision.transforms import functional as TF
 
 from src.config import Config
 from src.data.plantvillage import load_full_dataset
+from src.energy.tracker import CommunicationCostEstimator, ComputeEnergyTracker
 from src.federated.mesh import MeshSimulator
 from src.scenarios.harness import (
     ScenarioEvent,
@@ -120,6 +121,16 @@ def main():
         krum_neighbors=cfg.get("federated.krum_neighbors", 2),
     )
 
+    tracker = ComputeEnergyTracker(
+        enabled=cfg.get("energy.track_with_codecarbon", True),
+        output_dir=output_dir,
+        country_iso_code=cfg.get("energy.country_iso_code", "GBR"),
+    )
+    comm_estimator = CommunicationCostEstimator(
+        cfg.get("energy.radio_energy_j_per_byte", {}),
+        cfg.get("energy.grid_carbon_intensity_gco2_per_kwh", 125),
+    )
+
     hook = make_shift_hook(target_node, shift_round, corruption, severity, batch_size)
     round_kwargs = {
         "local_epochs": cfg.get("training.local_epochs_per_round", 2),
@@ -130,7 +141,10 @@ def main():
         "kd_weight": cfg.get("training.kd_weight", 0.5),
         "temperature": cfg.get("training.kd_temperature", 2.0),
     }
-    records = run_scenario(baseline_nodes, mesh, num_rounds, hook, round_kwargs)
+    records = run_scenario(
+        baseline_nodes, mesh, num_rounds, hook, round_kwargs,
+        tracker=tracker, comm_estimator=comm_estimator,
+    )
 
     output_dir.mkdir(parents=True, exist_ok=True)
     report_path = write_scenario_report(
