@@ -408,11 +408,13 @@ def test_distribution_shift_scenario_end_to_end_smoke(tmp_path, synthetic_datase
 def test_write_scenario_report_includes_sustainability_summary(tmp_path):
     records = [
         ScenarioRoundRecord(
-            0, {"node_0": {"crop_accuracy": 0.5}}, {"node_0": {"crop_accuracy": 0.6}}, {"macro_gain": 0.1},
+            0, {"node_0": {"crop_accuracy": 0.5}}, {"node_0": {"crop_accuracy": 0.6}},
+            {"macro_gain": {"crop_accuracy": 0.1, "disease_accuracy": 0.05}},
             baseline_compute_energy_kwh=0.0001, mesh_compute_energy_kwh=0.0002, communication_energy_j=50.0,
         ),
         ScenarioRoundRecord(
-            1, {"node_0": {"crop_accuracy": 0.55}}, {"node_0": {"crop_accuracy": 0.7}}, {"macro_gain": 0.15},
+            1, {"node_0": {"crop_accuracy": 0.55}}, {"node_0": {"crop_accuracy": 0.7}},
+            {"macro_gain": {"crop_accuracy": 0.15, "disease_accuracy": 0.08}},
             baseline_compute_energy_kwh=0.0001, mesh_compute_energy_kwh=0.0002, communication_energy_j=50.0,
         ),
     ]
@@ -427,14 +429,17 @@ def test_write_scenario_report_includes_sustainability_summary(tmp_path):
     assert sustainability["total_mesh_compute_energy_kwh"] == pytest.approx(0.0004)
     assert sustainability["total_communication_energy_j"] == pytest.approx(100.0)
     expected_total_mesh_j = 0.0004 * 3_600_000 + 100.0
-    assert sustainability["gain_per_joule"] == pytest.approx(0.15 / expected_total_mesh_j)
+    assert sustainability["gain_per_joule"] == pytest.approx({
+        "crop_accuracy": 0.15 / expected_total_mesh_j,
+        "disease_accuracy": 0.08 / expected_total_mesh_j,
+    })
 
 
 def test_gain_per_joule_is_none_when_no_energy_recorded():
     from src.scenarios.harness import _gain_per_joule
 
     records = [
-        ScenarioRoundRecord(0, {"node_0": {"crop_accuracy": 0.5}}, {"node_0": {"crop_accuracy": 0.6}}, {"macro_gain": 0.1}),
+        ScenarioRoundRecord(0, {"node_0": {"crop_accuracy": 0.5}}, {"node_0": {"crop_accuracy": 0.6}}, {"macro_gain": {"crop_accuracy": 0.1}}),
     ]
     assert _gain_per_joule(records) is None
     assert _gain_per_joule([]) is None

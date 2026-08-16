@@ -172,12 +172,16 @@ def _recovery_round(
     return None
 
 
-def _gain_per_joule(records: list[ScenarioRoundRecord]) -> Optional[float]:
-    """The final round's macro collaboration gain divided by the total
-    energy (compute + communication) the mesh spent across the whole run —
-    Appendix A's gain_per_joule metric. Returns None when no energy was
-    recorded at all, to avoid a divide-by-zero silently reporting 0.0 as if
-    it were a measured (rather than absent) figure.
+def _gain_per_joule(records: list[ScenarioRoundRecord]) -> Optional[dict[str, float]]:
+    """Per-metric mapping of the final round's macro collaboration gain
+    (e.g. {"crop_accuracy": ..., "disease_accuracy": ...}) divided by the
+    total energy (compute + communication) the mesh spent across the whole
+    run — Appendix A's gain_per_joule metric. Kept as a dict per metric to
+    match how macro_gain itself is represented everywhere else in this
+    codebase, rather than collapsing multiple metrics into one scalar.
+    Returns None when no energy was recorded at all, to avoid a
+    divide-by-zero silently reporting 0.0/an empty dict as if it were a
+    measured (rather than absent) figure.
     """
     if not records:
         return None
@@ -187,15 +191,8 @@ def _gain_per_joule(records: list[ScenarioRoundRecord]) -> Optional[float]:
     )
     if total_mesh_energy_j <= 0:
         return None
-    final_gain = records[-1].collaboration_gain.get("macro_gain", 0.0)
-    # Handle case where macro_gain is a dict (from compute_collaboration_gain)
-    # by averaging its values; otherwise it's already a scalar
-    if isinstance(final_gain, dict):
-        values = list(final_gain.values())
-        if not values:
-            return None
-        final_gain = sum(values) / len(values)
-    return final_gain / total_mesh_energy_j
+    final_macro_gain = records[-1].collaboration_gain.get("macro_gain", {})
+    return {metric: value / total_mesh_energy_j for metric, value in final_macro_gain.items()}
 
 
 def write_scenario_report(
