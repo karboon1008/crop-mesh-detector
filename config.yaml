@@ -28,10 +28,10 @@ models:
   pretrained: true
 
 training:
-  local_epochs_per_round: 2       # local training epochs before each exchange round
+  local_epochs_per_round: 1       # local training epochs before each exchange round -- TEMP: reduced from 2 for smoke run
   distill_epochs_per_round: 1     # epochs spent distilling towards consensus knowledge
-  rounds: 5                       # number of mesh exchange rounds
-  baseline_epochs: 10             # epochs for the local-only baseline (aligned compute budget)
+  rounds: 1                       # number of mesh exchange rounds -- TEMP: reduced from 5 for smoke run
+  baseline_epochs: 1              # epochs for the local-only baseline (aligned compute budget) -- TEMP: reduced from 10 for smoke run
   batch_size: 32
   lr: 0.001
   distill_lr: 0.0005

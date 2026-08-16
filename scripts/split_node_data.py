@@ -36,6 +36,10 @@ def _copy_indices(dataset, indices: list[int], dest_root: Path) -> None:
 
 
 def split(cfg: Config, output_root: Path) -> None:
+    # Clear stale output_root to ensure clean split every run (prevents old files
+    # from previous runs undermining the per-node data isolation)
+    shutil.rmtree(output_root, ignore_errors=True)
+
     dataset = load_full_dataset(cfg.get("data.root"), cfg.get("data.image_size", 160))
     global_map = build_global_label_map(dataset)
     output_root.mkdir(parents=True, exist_ok=True)
