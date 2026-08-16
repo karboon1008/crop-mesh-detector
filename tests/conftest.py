@@ -41,3 +41,17 @@ def build_nodes(dataset, shards, num_crop, num_disease, arch="mobilenet_v3_small
         model = build_model(arch, num_crop, num_disease, pretrained=False)
         nodes.append(Node(f"node_{i}", model, train_loader, test_loader, device="cpu"))
     return nodes
+
+
+@pytest.fixture
+def energy_tracker(tmp_path):
+    from src.energy.tracker import ComputeEnergyTracker
+    return ComputeEnergyTracker(enabled=False, output_dir=tmp_path, fallback_power_watts=15.0)
+
+
+@pytest.fixture
+def wifi_comm_estimator():
+    from src.energy.tracker import CommunicationCostEstimator
+    return CommunicationCostEstimator(
+        radio_energy_j_per_byte={"wifi": 0.00003}, grid_carbon_intensity_gco2_per_kwh=125
+    )

@@ -87,7 +87,9 @@ def test_inactive_node_excluded_from_broadcast_and_distill(synthetic_dataset):
     assert "node_2" in round_log.per_node_distill_loss
 
 
-def test_run_scenario_and_write_report(tmp_path, synthetic_dataset):
+def test_run_scenario_tracks_compute_and_communication_energy(
+    tmp_path, synthetic_dataset, energy_tracker, wifi_comm_estimator
+):
     probe_idx, remaining_idx = carve_public_probe_set(synthetic_dataset, 0.2, seed=2)
     shards = partition_nodes(
         synthetic_dataset, remaining_idx, num_nodes=2, strategy="by_crop", dirichlet_alpha=0.3, seed=2
@@ -109,7 +111,49 @@ def test_run_scenario_and_write_report(tmp_path, synthetic_dataset):
         "local_epochs": 1, "distill_epochs": 1, "lr": 1e-3, "distill_lr": 1e-3,
         "proto_weight": 0.5, "kd_weight": 0.5, "temperature": 2.0,
     }
-    records = run_scenario(baseline_nodes, mesh, num_rounds=2, perturbation_hook=no_op_hook, round_kwargs=round_kwargs)
+    records = run_scenario(
+        baseline_nodes, mesh, num_rounds=2, perturbation_hook=no_op_hook, round_kwargs=round_kwargs,
+        tracker=energy_tracker, comm_estimator=wifi_comm_estimator, radio="wifi",
+    )
+
+    assert len(records) == 2
+    for record in records:
+        assert record.baseline_compute_energy_kwh >= 0
+        assert record.mesh_compute_energy_kwh >= 0
+        # both nodes are active every round in this test, so bytes (and
+        # therefore communication energy) must be strictly positive.
+        assert record.communication_energy_j > 0
+
+    expected_j = records[0].total_bytes_exchanged * 0.00003
+    assert records[0].communication_energy_j == pytest.approx(expected_j)
+
+
+def test_run_scenario_and_write_report(tmp_path, synthetic_dataset, energy_tracker, wifi_comm_estimator):
+    probe_idx, remaining_idx = carve_public_probe_set(synthetic_dataset, 0.2, seed=2)
+    shards = partition_nodes(
+        synthetic_dataset, remaining_idx, num_nodes=2, strategy="by_crop", dirichlet_alpha=0.3, seed=2
+    )
+    probe_loader = DataLoader(make_subset(synthetic_dataset, probe_idx), batch_size=4, shuffle=False)
+    num_crop = len(synthetic_dataset.labels.crop_classes)
+    num_disease = len(synthetic_dataset.labels.disease_classes)
+
+    baseline_nodes = build_nodes(synthetic_dataset, shards, num_crop, num_disease)
+    mesh_nodes = build_nodes(synthetic_dataset, shards, num_crop, num_disease)
+    mesh = MeshSimulator(
+        mesh_nodes, probe_loader, aggregation_method="trimmed_mean", trim_fraction=0.0, krum_neighbors=1
+    )
+
+    def no_op_hook(round_idx, nodes, mesh_or_none):
+        return []
+
+    round_kwargs = {
+        "local_epochs": 1, "distill_epochs": 1, "lr": 1e-3, "distill_lr": 1e-3,
+        "proto_weight": 0.5, "kd_weight": 0.5, "temperature": 2.0,
+    }
+    records = run_scenario(
+        baseline_nodes, mesh, num_rounds=2, perturbation_hook=no_op_hook, round_kwargs=round_kwargs,
+        tracker=energy_tracker, comm_estimator=wifi_comm_estimator,
+    )
     assert len(records) == 2
     assert records[0].round_idx == 0 and records[1].round_idx == 1
 
@@ -146,7 +190,7 @@ def test_recovery_round_returns_none_for_empty_records():
     assert _recovery_round([], "node_0", disruption_start_round=5, disruption_end_round=6, eval_key="mesh_eval") is None
 
 
-def test_disconnection_scenario_end_to_end_smoke(tmp_path, synthetic_dataset):
+def test_disconnection_scenario_end_to_end_smoke(tmp_path, synthetic_dataset, energy_tracker, wifi_comm_estimator):
     from src.scenarios.disconnection import make_disconnect_hook
 
     # NOTE: deviates from the task-4 brief, which specified strategy="by_crop"
@@ -179,7 +223,10 @@ def test_disconnection_scenario_end_to_end_smoke(tmp_path, synthetic_dataset):
         "local_epochs": 1, "distill_epochs": 1, "lr": 1e-3, "distill_lr": 1e-3,
         "proto_weight": 0.5, "kd_weight": 0.5, "temperature": 2.0,
     }
-    records = run_scenario(baseline_nodes, mesh, num_rounds=3, perturbation_hook=hook, round_kwargs=round_kwargs)
+    records = run_scenario(
+        baseline_nodes, mesh, num_rounds=3, perturbation_hook=hook, round_kwargs=round_kwargs,
+        tracker=energy_tracker, comm_estimator=wifi_comm_estimator,
+    )
 
     report_path = write_scenario_report(
         tmp_path, "disconnection", "node_1",
@@ -237,7 +284,7 @@ def test_carve_reserve_pool_is_disjoint_from_remaining_source(synthetic_dataset)
     assert len(reserve_all) > 0
 
 
-def test_class_addition_scenario_end_to_end_smoke(tmp_path, synthetic_dataset):
+def test_class_addition_scenario_end_to_end_smoke(tmp_path, synthetic_dataset, energy_tracker, wifi_comm_estimator):
     from src.scenarios.class_addition import carve_reserve_pool, make_class_addition_hook
 
     _, remaining_idx = carve_public_probe_set(synthetic_dataset, 0.1, seed=5)
@@ -288,7 +335,10 @@ def test_class_addition_scenario_end_to_end_smoke(tmp_path, synthetic_dataset):
         "local_epochs": 1, "distill_epochs": 1, "lr": 1e-3, "distill_lr": 1e-3,
         "proto_weight": 0.5, "kd_weight": 0.5, "temperature": 2.0,
     }
-    records = run_scenario(baseline_nodes, mesh, num_rounds=2, perturbation_hook=hook, round_kwargs=round_kwargs)
+    records = run_scenario(
+        baseline_nodes, mesh, num_rounds=2, perturbation_hook=hook, round_kwargs=round_kwargs,
+        tracker=energy_tracker, comm_estimator=wifi_comm_estimator,
+    )
 
     report_path = write_scenario_report(
         tmp_path, "class_addition", "node_0",
@@ -316,7 +366,7 @@ def test_corrupted_dataset_is_noop_at_zero_severity_and_differs_otherwise(synthe
     assert not torch.equal(image_c, image_b)
 
 
-def test_distribution_shift_scenario_end_to_end_smoke(tmp_path, synthetic_dataset):
+def test_distribution_shift_scenario_end_to_end_smoke(tmp_path, synthetic_dataset, energy_tracker, wifi_comm_estimator):
     from src.scenarios.distribution_shift import make_shift_hook
 
     probe_idx, remaining_idx = carve_public_probe_set(synthetic_dataset, 0.2, seed=6)
@@ -338,7 +388,10 @@ def test_distribution_shift_scenario_end_to_end_smoke(tmp_path, synthetic_datase
         "local_epochs": 1, "distill_epochs": 1, "lr": 1e-3, "distill_lr": 1e-3,
         "proto_weight": 0.5, "kd_weight": 0.5, "temperature": 2.0,
     }
-    records = run_scenario(baseline_nodes, mesh, num_rounds=2, perturbation_hook=hook, round_kwargs=round_kwargs)
+    records = run_scenario(
+        baseline_nodes, mesh, num_rounds=2, perturbation_hook=hook, round_kwargs=round_kwargs,
+        tracker=energy_tracker, comm_estimator=wifi_comm_estimator,
+    )
 
     report_path = write_scenario_report(
         tmp_path, "distribution_shift", "node_0",

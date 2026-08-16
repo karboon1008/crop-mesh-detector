@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 from typing import Callable, Optional
 
+from src.energy.tracker import CommunicationCostEstimator, ComputeEnergyTracker
 from src.evaluate import compute_collaboration_gain
 from src.federated.mesh import MeshSimulator
 from src.federated.node import Node
@@ -36,6 +37,9 @@ class ScenarioRoundRecord:
     events: list[ScenarioEvent] = dataclasses.field(default_factory=list)
     active_nodes: list[str] = dataclasses.field(default_factory=list)
     total_bytes_exchanged: int = 0
+    baseline_compute_energy_kwh: float = 0.0
+    mesh_compute_energy_kwh: float = 0.0
+    communication_energy_j: float = 0.0
 
 
 PerturbationHook = Callable[[int, "list[Node]", Optional[MeshSimulator]], "list[ScenarioEvent]"]
@@ -77,9 +81,15 @@ def run_scenario(
     num_rounds: int,
     perturbation_hook: PerturbationHook,
     round_kwargs: dict,
+    tracker: ComputeEnergyTracker,
+    comm_estimator: CommunicationCostEstimator,
+    radio: str = "wifi",
 ) -> list[ScenarioRoundRecord]:
     """Drives `num_rounds` rounds of a baseline (no-exchange) node set and a
-    mesh node set through the same perturbation schedule.
+    mesh node set through the same perturbation schedule, tracking compute
+    energy (via `tracker`, the same ComputeEnergyTracker src/train.py uses)
+    and communication energy (via `comm_estimator`, fed by the mesh round's
+    already-measured `total_bytes_exchanged`) for every round of both.
 
     Convention: `perturbation_hook` is called once per round for the
     baseline set (third argument None) and once for the mesh set (third
@@ -94,27 +104,38 @@ def run_scenario(
         events = events + perturbation_hook(round_idx, mesh.nodes, mesh)
 
         baseline_eval = {}
+        baseline_compute_energy_kwh = 0.0
         for node in baseline_nodes:
-            node.local_train(round_kwargs["local_epochs"], round_kwargs["lr"])
+            with tracker.track(f"baseline_{node.node_id}_round_{round_idx}") as energy_record:
+                node.local_train(round_kwargs["local_epochs"], round_kwargs["lr"])
+            baseline_compute_energy_kwh += energy_record["energy_kwh"]
             baseline_eval[node.node_id] = node.evaluate()
 
-        round_log = mesh.run_round(
-            round_idx,
-            local_epochs=round_kwargs["local_epochs"],
-            distill_epochs=round_kwargs["distill_epochs"],
-            lr=round_kwargs["lr"],
-            distill_lr=round_kwargs["distill_lr"],
-            proto_weight=round_kwargs["proto_weight"],
-            kd_weight=round_kwargs["kd_weight"],
-            temperature=round_kwargs["temperature"],
-        )
+        with tracker.track(f"mesh_round_{round_idx}") as mesh_energy_record:
+            round_log = mesh.run_round(
+                round_idx,
+                local_epochs=round_kwargs["local_epochs"],
+                distill_epochs=round_kwargs["distill_epochs"],
+                lr=round_kwargs["lr"],
+                distill_lr=round_kwargs["distill_lr"],
+                proto_weight=round_kwargs["proto_weight"],
+                kd_weight=round_kwargs["kd_weight"],
+                temperature=round_kwargs["temperature"],
+            )
+        mesh_compute_energy_kwh = mesh_energy_record["energy_kwh"]
         mesh_eval = {node.node_id: node.evaluate() for node in mesh.nodes}
+
+        comm_result = comm_estimator.estimate(round_log.total_bytes_exchanged, radio)
+        communication_energy_j = comm_result["energy_kwh"] * 3_600_000
 
         gain = compute_collaboration_gain(mesh_eval, baseline_eval)
         records.append(ScenarioRoundRecord(
             round_idx, baseline_eval, mesh_eval, gain, events,
             active_nodes=round_log.active_nodes,
             total_bytes_exchanged=round_log.total_bytes_exchanged,
+            baseline_compute_energy_kwh=baseline_compute_energy_kwh,
+            mesh_compute_energy_kwh=mesh_compute_energy_kwh,
+            communication_energy_j=communication_energy_j,
         ))
         print(f"  round {round_idx}: {len(events)} event(s), macro_gain={gain['macro_gain']}")
     return records
