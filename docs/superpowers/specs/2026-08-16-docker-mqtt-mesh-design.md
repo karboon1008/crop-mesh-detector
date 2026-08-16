@@ -1,7 +1,7 @@
-# Docker/MQTT Multi-Container Mesh + Observability Dashboard — Design
+# Docker/HTTP Multi-Container Mesh + Observability Dashboard — Design
 
 Status: draft, awaiting review
-Date: 2026-08-16
+Date: 2026-08-16 (revised: transport changed from MQTT to HTTP request/response)
 
 ## 1. Motivation
 
@@ -10,12 +10,11 @@ simulation: all nodes are Python objects in one list, "communication" is an
 in-memory dict handoff, and `KnowledgePayload.size_bytes()` is a formula-based
 *estimate* of what a real transmission would cost. This satisfies the
 Challenge's requirements (Appendix C's simulation paths are explicitly "not
-scored; for guidance only"), but a real multi-container deployment over a
-real message broker upgrades several pieces of evidence from *estimated* to
-*measured*:
+scored; for guidance only"), but a real multi-container deployment upgrades
+several pieces of evidence from *estimated* to *measured*:
 
-- Communication cost becomes an actual serialized byte count off a real
-  publish, not a tensor-element count times 4.
+- Communication cost becomes an actual serialized byte count off a real HTTP
+  request body, not a tensor-element count times 4.
 - Node data isolation becomes a filesystem/container boundary, not a
   code-level convention (a container literally has no path to another node's
   images).
@@ -29,33 +28,41 @@ harness under `src/scenarios/`) is left untouched and keeps producing its own
 results — if the Docker work runs out of time, the in-process evidence still
 stands on its own.
 
+**Revision note:** the original draft of this spec used MQTT/Mosquitto as the
+transport. It was changed to plain HTTP request/response after scoping the
+implementation effort — MQTT's pub/sub, retained-topic, and LWT mechanisms
+were buying decoupling this project's fixed 3-node topology doesn't need, at
+the cost of a broker container and a poll-with-timeout coordination loop.
+HTTP's synchronous request/response removes both: a node either responds
+within the timeout or it doesn't, with no separate liveness/retained-message
+machinery required. See §5/§6 for the resulting design.
+
 ## 2. Goals / non-goals
 
 Goals:
 - Run the existing `Node`/`MeshSimulator` training-and-distillation logic
   unmodified, across `data.num_nodes` separate Docker containers, exchanging
-  knowledge over MQTT instead of an in-memory dict.
+  knowledge over direct HTTP calls between node containers instead of an
+  in-memory dict.
 - Give each node container a physically isolated data folder (no shared
   mount), while preserving global class-index alignment across nodes (see
   §4 — this is the one real correctness risk in this design).
 - Track the same energy/communication metrics the in-process pipeline already
   tracks (`ComputeEnergyTracker`, `CommunicationCostEstimator`), persisted to
   SQLite instead of only JSON, both per-node and merged.
-- Add a read-only Streamlit dashboard: connection/liveness status, a live
-  feed of control-plane MQTT traffic, and charts/tables over the merged
-  SQLite data.
+- Add a read-only Streamlit dashboard: node liveness, a live event log of
+  round-coordination requests, and charts/tables over the merged SQLite data.
 
 Non-goals (explicitly deferred, not forgotten):
 - Porting the disruption scenarios (disconnection / class-addition /
   distribution-shift, `src/scenarios/`) onto this transport. Checkpoint 1
   covers only the basic N-round train→exchange→distill→evaluate loop.
 - Any UI-driven "start a new run" control. The coordinator auto-starts the
-  round loop once all expected nodes report online; there is no dashboard
-  button yet. The control topic name is reserved (§6) so this can be added
-  later without a schema change.
-- Replacing a Docker node with the K210 (checkpoint 2). This design's MQTT
-  schema is hardware-agnostic specifically so that swap doesn't require
-  re-designing the protocol, but the K210-side client is out of scope here.
+  round loop once all expected nodes respond healthy; there is no dashboard
+  button yet.
+- Replacing a Docker node with the K210 (checkpoint 2). The K210-side client
+  is out of scope here; §5/§6's HTTP contract is simple enough (plain JSON +
+  a binary GET) that a MicroPython HTTP client can speak it directly.
 - Any change to `aggregation.py` or model architectures.
 
 ## 3. Directory layout
@@ -63,21 +70,19 @@ Non-goals (explicitly deferred, not forgotten):
 ```
 docker/
   docker-compose.yml
-  broker/
-    mosquitto.conf
   coordinator/
     Dockerfile
-    coordinator_app/
-      main.py              # round driver + control-plane; never reads knowledge content
+    main.py                 # HTTP client: drives rounds, tracks liveness, merges DB
+    coordinator_runner.py    # round-driving logic, transport-agnostic (fake-client testable)
   node/
     Dockerfile
-    node_app/
-      main.py              # MQTT wrapper around src.federated.node.Node
-      mqtt_codec.py         # KnowledgePayload <-> bytes (torch.save/load on BytesIO)
+    main.py                  # FastAPI server wrapping src.federated.node.Node
+    node_runner.py            # round-handling logic, transport-agnostic (fake-fetch testable)
+    knowledge_codec.py         # KnowledgePayload <-> bytes (torch.save/load on BytesIO)
   dashboard/
     Dockerfile
-    dashboard_app/
-      app.py                # Streamlit viewer
+    app.py                    # Streamlit viewer
+    data.py                    # pure helpers, unit-testable without Streamlit
 
 scripts/
   split_node_data.py        # one-time: PlantVillage -> data/docker_mesh/{probe,node_i}/
@@ -92,12 +97,15 @@ outputs/docker_mesh/energy/
   merged.db
 ```
 
-`docker/node` is a single image; `docker-compose.yml` declares `node_0`,
-`node_1`, `node_2` as three services built from it, differing only by a
-`NODE_ID` env var and which `data/docker_mesh/node_i` folder is mounted. No
-per-node code duplication.
+Five compose services now, not six — there is no broker. `docker/node` is a
+single image; `docker-compose.yml` declares `node_0`, `node_1`, `node_2` as
+three services built from it, differing only by a `NODE_ID` env var and which
+`data/docker_mesh/node_i` folder is mounted. No per-node code duplication.
 
 ## 4. Data pre-split and the class-index alignment fix
+
+Unchanged from the original design — this section has nothing to do with the
+transport.
 
 `scripts/split_node_data.py` reuses `carve_public_probe_set` and
 `partition_nodes` from `src/data/plantvillage.py`, with the same
@@ -126,120 +134,111 @@ meaningful relative to one specific `ImageFolder` instance) →
 into every node container.
 
 `src/data/plantvillage.py`'s `PlantVillageDataset` gains one additive
-constructor parameter:
+constructor parameter (`global_label_map: GlobalLabelMap | None = None`);
+default `None` preserves today's in-process behaviour exactly.
 
-```python
-class PlantVillageDataset(Dataset):
-    def __init__(self, root, image_size=160, label_maps: LabelMaps | None = None):
-        ...
-        if label_maps is None:
-            self.labels = self._build_label_maps(self.base.classes)   # unchanged, in-process path
-        else:
-            self.labels = self._apply_external_label_maps(self.base.classes, label_maps)
-```
+## 5. Container roles and round flow (HTTP)
 
-`_apply_external_label_maps` looks up each locally-discovered class name in
-the supplied map and raises `ValueError` if a folder name isn't present in
-it (protects against a stale/mismatched `classes.json`). Default `None`
-preserves today's in-process behaviour exactly — nothing about the existing
-pipeline changes.
-
-Two small helpers, added alongside `LabelMaps` in the same module:
-`save_label_maps(label_maps, path)` / `load_label_maps(path) -> LabelMaps`
-(JSON round-trip, keyed by class name as above).
-
-## 5. Container roles and round flow
-
-- **broker**: stock `eclipse-mosquitto`, config allows anonymous clients on
-  the Docker-internal network only; no host port published. No persistence
-  needed — SQLite is the audit trail, not broker-side message retention
-  (beyond the `retained=True` flag used for liveness/latest-knowledge, which
-  is a live-state mechanism, not storage).
-- **coordinator** (`coordinator_app/main.py`):
+- **coordinator** (`docker/coordinator/`):
   - Reads `config.yaml` (mounted read-only) for `training.rounds`,
-    `data.num_nodes` (to derive expected node IDs `node_0..node_{n-1}`, same
-    convention as `src/scenarios/harness.py`'s `node_ids_for`), and the new
-    `docker_mesh.round_timeout_s`.
-  - Subscribes to `mesh/node/+/status` (retained + LWT) to track which
-    expected nodes are currently online.
-  - **Auto-starts** the round loop once all expected nodes have reported
-    `"online"` — no manual or dashboard trigger in this checkpoint.
-  - Per round: publishes `mesh/control/round_start {round_idx}`; waits for
-    `knowledge_ready` from every currently-online node, up to
-    `round_timeout_s`; publishes `mesh/control/round_gather_done
-    {round_idx, active_nodes}` (nodes that timed out are excluded from
-    `active_nodes`, mirroring `MeshSimulator.run_round`'s existing
-    active-node filtering).
-  - Subscribes to `mesh/node/+/energy` and `mesh/node/+/eval`, upserting rows
-    into `outputs/docker_mesh/energy/merged.db` (§7).
-  - **Never subscribes to `mesh/node/+/knowledge`** — it only ever sees a
-    byte count (via `knowledge_ready`), never payload content, preserving
-    "no central aggregator of knowledge."
-- **node** (`node_app/main.py`, one image, three compose services):
+    `data.num_nodes` (to derive expected node IDs and their base URLs —
+    `http://node_i:8000`, using Docker Compose's built-in service-name DNS),
+    and the new `docker_mesh.round_timeout_s`.
+  - Polls `GET /health` on every expected node (with a sleep loop) until all
+    respond `200`. **Auto-starts** the round loop once that's true — no
+    manual or dashboard trigger in this checkpoint.
+  - Per round: `POST /round/start {"round_idx": N}` to every expected node
+    **concurrently**, via `asyncio.gather` over an `httpx.AsyncClient`
+    (sequential calls would force nodes to train one at a time instead of
+    in parallel, silently turning an N-node round into an N× slower one).
+    Nodes that respond within
+    `round_timeout_s` are `active` for this round; nodes that time out or
+    error are excluded — the direct equivalent of `MeshSimulator.run_round`'s
+    active-node filtering.
+  - Writes each responding node's `energy_kwh`/`duration_s`/`energy_method`/
+    `size_bytes` (all present in the `/round/start` response body) into
+    `outputs/docker_mesh/energy/merged.db` (§7).
+  - `POST /round/gather {"round_idx": N, "active_nodes": [...], "peer_bases": {...}}`
+    to every active node, again concurrently; writes each response's
+    `crop_accuracy`/`disease_accuracy` into `merged.db`.
+  - **Never calls a node's `/knowledge` endpoint itself** — `peer_bases`
+    only tells nodes *where* their active peers are; each node fetches peer
+    knowledge directly from the peer, so the coordinator never sees payload
+    content, preserving "no central aggregator of knowledge."
+  - Exposes its own tiny `GET /events` (an in-memory rolling log of every
+    request it made and the response status) purely for the dashboard to
+    poll — this is what replaces the old MQTT "live feed."
+- **node** (`docker/node/`, one image, three compose services), a small
+  FastAPI server:
   - On startup: builds its own `Node` from `data/docker_mesh/node_i` (its own
     read-only mount) plus the shared `classes.json` label map, and from the
     shared `probe/` folder (read-only, identical across all three
     containers, `shuffle=False` — required so every node computes probe
     logits over the exact same image order, matching today's in-process
-    behaviour). Publishes retained `mesh/node/{id}/status = "online"` with an
-    LWT of `"offline"` registered at connect time.
-  - On `round_start {round_idx}`: `local_train` (private, never touches the
-    network) → `compute_knowledge` → serialize (§6) and publish to
-    `mesh/node/{id}/knowledge` (retained) → publish `knowledge_ready
-    {round_idx, size_bytes}` with the *actual* serialized length → publish
-    `energy {round_idx, energy_kwh, duration_s, energy_method}` from the
-    existing `ComputeEnergyTracker`, and write the same row to its own
-    `outputs/docker_mesh/energy/node_i.db`.
-  - On `round_gather_done {round_idx, active_nodes}`: reads the retained
-    `mesh/node/{peer}/knowledge` for each peer in `active_nodes` (excluding
-    itself), runs the *same* `aggregate_prototypes`/`aggregate_logits` +
+    behaviour).
+  - `GET /health` → `{"node_id": ..., "status": "online"}`.
+  - `POST /round/start {"round_idx": N}` → synchronously: `local_train`
+    (private, never touches the network) → `compute_knowledge` → serialize
+    (§6), store in memory keyed by `round_idx` → write the same row to its
+    own `outputs/docker_mesh/energy/node_i.db` → return
+    `{"round_idx", "size_bytes", "energy_kwh", "duration_s", "energy_method"}`.
+  - `GET /knowledge/{round_idx}` → the raw serialized bytes for that round,
+    if it's the round this node most recently computed; `409` otherwise
+    (a peer fetching too early, or the node running behind). Called directly
+    by peer node containers during their own `/round/gather` handling —
+    never by the coordinator.
+  - `POST /round/gather {"round_idx": N, "active_nodes": [...], "peer_bases": {...}}`
+    → fetches every active peer's `/knowledge/{round_idx}` **concurrently**
+    (same `asyncio.gather`/`httpx.AsyncClient` pattern as the coordinator's
+    fan-out — with only 1-2 peers per node the latency win is small at this
+    scale, but it keeps one consistent concurrency approach across the whole
+    system rather than two), skipping itself, skipping a peer whose fetch
+    fails or returns a mismatched `round_idx`, then runs the *same*
+    `aggregate_prototypes`/`aggregate_logits` +
     `node.distill(...)` calls `mesh.py`'s `run_round` already makes, then
-    `evaluate()` and publishes `eval {round_idx, crop_accuracy,
-    disease_accuracy}`.
+    `evaluate()`, writes the row locally, and returns
+    `{"round_idx", "crop_accuracy", "disease_accuracy"}`.
 
-## 6. MQTT topic schema and payload serialization
+## 6. HTTP contract and payload serialization
 
-Control-plane (small JSON):
-
-| Topic | Retained | Payload |
+| Method & path | Caller → callee | Body / response |
 |---|---|---|
-| `mesh/node/{id}/status` | yes (+ LWT) | `{"status": "online"\|"offline", "ts": ...}` |
-| `mesh/control/round_start` | no | `{"round_idx": int}` |
-| `mesh/node/{id}/knowledge_ready` | no | `{"round_idx": int, "size_bytes": int}` |
-| `mesh/control/round_gather_done` | no | `{"round_idx": int, "active_nodes": [...]}` |
-| `mesh/node/{id}/energy` | no | `{"round_idx": int, "energy_kwh": float, "duration_s": float, "energy_method": str}` |
-| `mesh/node/{id}/eval` | no | `{"round_idx": int, "crop_accuracy": float, "disease_accuracy": float}` |
-| `mesh/control/trigger_run` | — | **reserved, unused this checkpoint** (see §2 non-goals) |
+| `GET /health` | coordinator, dashboard → node | `{"node_id", "status": "online"}` |
+| `POST /round/start` | coordinator → node | req `{"round_idx"}`; resp `{"round_idx", "size_bytes", "energy_kwh", "duration_s", "energy_method"}` |
+| `GET /knowledge/{round_idx}` | node → peer node | resp: raw bytes (`application/octet-stream`), or `409` if not ready for that round |
+| `POST /round/gather` | coordinator → node | req `{"round_idx", "active_nodes": [...], "peer_bases": {node_id: base_url}}`; resp `{"round_idx", "crop_accuracy", "disease_accuracy"}` |
+| `GET /events` | dashboard → coordinator | resp: list of `{"ts", "node_id", "path", "status"}`, most recent ~200 |
 
-Data-plane (binary, retained):
+Serialization (`knowledge_codec.py`, unchanged in substance from the MQTT
+draft — only the transport around it changed): pack `{"round_idx": int,
+"prototypes": dict, "crop_logits": Tensor, "disease_logits": Tensor}` via
+`torch.save(..., io.BytesIO())`; `encode_knowledge(round_idx, payload) ->
+bytes` is the exact HTTP response body for `GET /knowledge/{round_idx}`;
+`decode_knowledge(bytes) -> (round_idx, KnowledgePayload)` is what the
+fetching peer calls on the response content.
 
-- `mesh/node/{id}/knowledge` — the serialized `KnowledgePayload` for the
-  node's most recently completed round.
-
-Serialization (`mqtt_codec.py`): pack `{"round_idx": int, "prototypes":
-dict, "crop_logits": Tensor, "disease_logits": Tensor}` via
-`torch.save(..., io.BytesIO())`, publish `.getvalue()`; reverse via
-`torch.load(io.BytesIO(bytes))`. The embedded `round_idx` is a defensive
-integrity tag: a node consuming a peer's retained knowledge topic checks it
-matches the `round_idx` from `round_gather_done` before using it, and drops
-(logs, doesn't crash on) a mismatch rather than silently aggregating a stale
-payload. Because MQTT's retained-topic semantics only keep the latest
-message per topic, and the coordinator only fires `round_gather_done` after
-observing that round's `knowledge_ready` from each active node, a mismatch
-should not occur in normal operation — the tag is a cheap correctness guard,
-not a load-bearing part of the protocol.
+The embedded `round_idx` is a defensive integrity check on both ends: the
+serving node's `GET /knowledge/{round_idx}` route itself checks the request
+path's `round_idx` against what it actually has before responding (so a
+mismatch surfaces as an explicit `409`, not silently wrong data); the fetching
+peer additionally checks the decoded `round_idx` inside the body matches what
+it expected, as a second, cheap guard against ever aggregating stale data.
+Because this is a synchronous request answered from the node's own
+most-recent in-memory state, staleness is structurally much harder to hit
+than it was with MQTT's retained-topic model — the check is a correctness
+belt-and-suspenders, not a load-bearing part of the protocol.
 
 This also directly populates §5.2's Exchange Artefact Table: `purpose`
-= "prototype + logit distillation target", `direction` = "node → all active
-peers", `granularity` = "aggregated to model level", `contains_metadata` =
-No, `size_per_message` = the measured `size_bytes` from `knowledge_ready`
-(not an estimate), `reconstruction_risk` = low, with the same non-invertible/
-aggregated justification already in `node.py`'s docstring.
+= "prototype + logit distillation target", `direction` = "node → active peer
+(direct HTTP GET)", `granularity` = "aggregated to model level",
+`contains_metadata` = No, `size_per_message` = the measured
+`Content-Length`/`size_bytes` (not an estimate), `reconstruction_risk` = low,
+with the same non-invertible/aggregated justification already in `node.py`'s
+docstring.
 
 ## 7. SQLite schema
 
-One table, same shape in every node's own DB and in the coordinator's merged
-DB:
+Unchanged from the original design — the schema doesn't depend on transport.
 
 ```sql
 CREATE TABLE round_metrics (
@@ -257,148 +256,140 @@ CREATE TABLE round_metrics (
 );
 ```
 
-A node's own DB only ever inserts rows for itself, populated in one write
-(it has all the columns' values by the time it writes). The coordinator's
-`merged.db` receives `energy` and `eval` as two separate MQTT messages per
-(node_id, round_idx), so it needs an upsert:
-
-```sql
-INSERT INTO round_metrics (node_id, round_idx, energy_kwh, duration_s, energy_method, recorded_at)
-VALUES (?, ?, ?, ?, ?, ?)
-ON CONFLICT(node_id, round_idx) DO UPDATE SET
-  energy_kwh=excluded.energy_kwh, duration_s=excluded.duration_s,
-  energy_method=excluded.energy_method, recorded_at=excluded.recorded_at;
-```
-(and the symmetric statement for the `eval`-sourced columns, plus
-`knowledge_bytes_sent`/`active` from `knowledge_ready`/`round_gather_done`).
-
-This lives in a new `src/energy/sqlite_store.py` (plain `sqlite3`, no ORM) —
-genuinely shared logic, not Docker-specific, so it's part of the main
-package both the node and coordinator images mount rather than living under
-`docker/`.
+A node's own DB only ever inserts rows for itself. The coordinator's
+`merged.db` receives the `/round/start` response body and the `/round/gather`
+response body separately per (node_id, round_idx), so it needs the same
+column-preserving upsert as before (`src/energy/sqlite_store.py`, unchanged).
 
 ## 8. Dashboard (Streamlit)
 
-A sixth compose service, read-only by design: no Docker socket access, no
-control-plane publish rights.
+A fifth compose service, read-only by design: no Docker socket access, and
+it only ever issues `GET` requests (to nodes' `/health` and the
+coordinator's `/events`) — no `/round/start` or `/round/gather` calls, so it
+cannot trigger a run.
 
-- **Connection/status panel**: broker reachability, the dashboard's own MQTT
-  connection state, each expected node's online/offline (retained status +
-  LWT), current round in progress (from the latest `round_start`/
-  `round_gather_done` seen). A node is flagged stale if nothing has been
-  heard from it for longer than `2 × round_timeout_s`.
-- **Live pub/sub feed**: subscribes *only* to `mesh/control/#`,
-  `mesh/node/+/status`, `mesh/node/+/knowledge_ready`, `mesh/node/+/energy`,
-  `mesh/node/+/eval` — **not** `mesh/node/+/knowledge`. The binary payload
-  topic is excluded deliberately: it wouldn't render meaningfully as a
-  "payload preview" anyway, and subscribing to it would add real broker
-  fan-out/bandwidth for a topic nothing in the dashboard needs the content
-  of. Rendered as a scrolling {topic, payload preview, timestamp} table,
-  which doubles as a human-readable view of the same audit trail §5.2
-  requires.
+- **Connection/status panel**: the dashboard polls each expected node's
+  `GET /health` directly itself (no need to route through the coordinator
+  for this), showing online/unreachable per node.
+- **Live event log**: polls the coordinator's `GET /events` — a plain table
+  of `{ts, node_id, path, status}` for every `/round/start`/`/round/gather`
+  call the coordinator has made. This is the direct replacement for the old
+  MQTT "live pub/sub feed," and it inherently can't show knowledge payload
+  content, since `/events` never includes response bodies — only which
+  path was called and what status came back.
 - **DB viewer**: reads `merged.db`'s `round_metrics` into a dataframe every
   `docker_mesh.dashboard_refresh_s` seconds, filterable by node, with line
   charts for energy/bytes-exchanged/accuracy over rounds.
-- **Sustainability-accounting note**: the dashboard's own process is outside
-  every `ComputeEnergyTracker.track(...)` scope (those only wrap code inside
-  a node's own container) and is not counted in any reported energy figure.
-  This exclusion, plus the recommendation to keep the dashboard's refresh
-  interval modest to avoid CPU contention skewing wall-clock-proxy energy
-  estimates on a single shared machine, should be stated explicitly in the
-  research document's Axis A section (disclosure, not code).
+- **Sustainability-accounting note**: unchanged — the dashboard's own process
+  is outside every `ComputeEnergyTracker.track(...)` scope (those only wrap
+  code inside a node's own container) and is not counted in any reported
+  energy figure. This exclusion should be stated explicitly in the research
+  document's Axis A section.
 
 ## 9. Relationship to the existing in-process simulation
 
-Reused unmodified: `src/federated/node.py`, `src/federated/aggregation.py`,
-`src/models/factory.py`, `src/energy/tracker.py`
-(`ComputeEnergyTracker`, `CommunicationCostEstimator`). `src/federated/
-mesh.py` and `src/train.py` are untouched and remain the in-process
-fallback/baseline pipeline.
+Unchanged from the original design.
 
-Additive-only changes to existing files: `src/data/plantvillage.py` gains
-the optional `label_maps` parameter (§4) and two serialization helpers;
+Reused unmodified: `src/federated/node.py`, `src/federated/aggregation.py`,
+`src/models/factory.py`, `src/energy/tracker.py`. `src/federated/mesh.py` and
+`src/train.py` are untouched and remain the in-process fallback/baseline
+pipeline.
+
+Additive-only changes to existing files: `src/data/plantvillage.py` gains the
+optional `global_label_map` parameter (§4) and two serialization helpers;
 default behaviour for every existing caller is unchanged.
 
 New files: everything under `docker/`, `scripts/split_node_data.py`,
 `src/energy/sqlite_store.py`.
 
-`config.yaml` gains one new additive top-level key, no existing keys
-touched:
+`config.yaml` gains one new additive top-level key:
 
 ```yaml
 docker_mesh:
-  mqtt_host: "broker"
-  mqtt_port: 1883
   round_timeout_s: 300
   data_dir: "data/docker_mesh"
   energy_db_dir: "outputs/docker_mesh/energy"
   dashboard_refresh_s: 3
 ```
 
+(No `mqtt_host`/`mqtt_port` — node base URLs are derived from
+`data.num_nodes` using the fixed `http://node_{i}:8000` pattern Docker
+Compose's service-name DNS provides.)
+
 ## 10. Testing
 
-- `PlantVillageDataset(label_maps=...)` unit test — the one test that
-  directly guards the alignment risk in §4: build a full label map, then
-  construct the dataset over a folder containing only a *subset* of classes
-  with that external map, and assert the returned `crop_idx`/`disease_idx`
-  for each class match what the full map would give for that same class
-  name.
-- `split_node_data.py` unit test (synthetic class-per-folder fixture, same
-  style as `tests/conftest.py`'s `synthetic_dataset`): every source file ends
-  up in exactly one of {`probe`, `node_0`, ..., `node_{n-1}`} (no duplicates,
-  no drops), and per-node file counts match `partition_nodes`'s shard sizes.
-- `mqtt_codec.py` unit test: round-trip a `KnowledgePayload` through
+- `PlantVillageDataset(global_label_map=...)` unit test — unchanged, the one
+  test that directly guards the alignment risk in §4.
+- `split_node_data.py` unit test — unchanged.
+- `knowledge_codec.py` unit test: round-trip a `KnowledgePayload` through
   serialize→deserialize; assert tensors are bit-identical (`torch.equal`)
   and the embedded `round_idx` tag survives.
-- `sqlite_store.py` unit test: insert an `energy`-sourced row then an
-  `eval`-sourced row for the same `(node_id, round_idx)` via the upsert
-  helper; assert the final row has both sets of columns populated (guards
-  against the `ON CONFLICT` path accidentally nulling out the other
-  message's columns).
-- Manual integration smoke test: `docker compose -f docker/docker-compose.yml
-  up --build` with `training.rounds: 1` and a small data slice; confirm
-  `merged.db` ends up with exactly `data.num_nodes` fully-populated rows for
-  `round_idx = 0`, and that final per-node accuracies are in the same
-  ballpark as an in-process run with the same seed/config (a sanity bound,
-  not exact equality, given real wall-clock/thread-scheduling
-  nondeterminism) — this is the practical cross-check that the class-index
-  alignment fix actually worked end-to-end.
-- Manual dashboard check: confirm the live feed never shows a
-  `mesh/node/+/knowledge` entry; stop a node container and confirm its status
-  flips to offline (via LWT) within one timeout window.
+- `sqlite_store.py` unit test — unchanged.
+- `node_runner.py`/`coordinator_runner.py` unit tests: both take their
+  transport as an injected callable (`fetch_peer_knowledge` for the node,
+  `post_all`/`health_check` for the coordinator), so round-handling and
+  round-driving logic is fully unit-testable with fakes — no real HTTP
+  server or network needed, and no real concurrency needs to be exercised
+  in these tests (the fakes are called synchronously).
+- Manual integration smoke test: `docker compose up --build` with
+  `training.rounds: 1`; confirm `merged.db` ends up with exactly
+  `data.num_nodes` fully-populated rows for `round_idx = 0`, and that final
+  per-node accuracies are in the same ballpark as an in-process run with the
+  same seed/config — the practical cross-check that the class-index
+  alignment fix worked end-to-end.
+- Manual dashboard check: confirm `/events` entries only ever show
+  `path`/`status`, never payload content; stop a node container and confirm
+  the dashboard's health panel shows it unreachable within one poll interval.
 
 ## 11. Risks / assumptions
 
-- The split script is strategy-agnostic (works off `partition_nodes`'s
-  output for any `non_iid_strategy`), but has only been exercised against
+- The split script is strategy-agnostic but has only been exercised against
   the currently-configured `"manual"` strategy.
-- Single-machine resource contention: if the dashboard and all containers
-  run on one laptop, its own CPU usage could inflate a node's *wall-clock*
-  duration and, if the `proxy_wall_power` energy fallback is active (no
-  CodeCarbon), that node's reported energy — a real effect if using an
-  actual wattmeter too, not just measurement noise. Mitigated by a modest
-  dashboard refresh interval; should be disclosed in the research document
-  if reporting figures from a run where the dashboard was actively open.
-- QoS 1 (at-least-once) is sufficient here because the coordinator's
-  `round_gather_done` explicitly waits for acknowledgement events rather
-  than assuming delivery ordering; duplicate delivery of a retained topic is
-  a harmless idempotent overwrite.
-- No broker authentication (anonymous, Docker-internal network only, no host
-  port published) — acceptable for a local/demo deployment; would need
-  revisiting before any exposure beyond localhost.
-- No retry/backoff beyond Docker Compose's own restart policy for a node
-  that fails to reach the broker at startup — a known gap, acceptable for
-  this checkpoint.
+- Single-machine resource contention: if the dashboard and all containers run
+  on one laptop, its own CPU usage could inflate a node's *wall-clock*
+  duration and, if the `proxy_wall_power` energy fallback is active, that
+  node's reported energy. Mitigated by a modest dashboard refresh interval;
+  should be disclosed in the research document if reporting figures from a
+  run where the dashboard was actively open.
+- **Concurrency is load-bearing, not incidental**: the coordinator must issue
+  `/round/start`/`/round/gather` calls to all nodes concurrently
+  (`asyncio.gather` over `httpx.AsyncClient`), or rounds silently degrade
+  from parallel to sequential — a functional regression that wouldn't show
+  up as an error, only as much slower rounds. Call this out explicitly in
+  code review of Task 8's `main.py`.
+- **Sync training code inside an async server**: each node's FastAPI route
+  handlers for `/round/start`/`/round/gather` must be defined as plain `def`
+  (not `async def`), since `Node.local_train`/`distill` are CPU-bound,
+  blocking, synchronous PyTorch calls with no `await` points. FastAPI/
+  Starlette automatically runs `def` routes in a worker thread, keeping the
+  event loop free to answer `/health` concurrently with a long-running
+  `/round/start`. Defining these as `async def` and calling the blocking
+  training code directly inside would freeze the whole server's event loop
+  for the duration of training — a correctness trap specific to mixing an
+  async framework with synchronous ML code, worth flagging explicitly for
+  whoever implements Task 6.
+- No request authentication (plain HTTP, Docker-internal network only, no
+  node ports published to the host — only the dashboard's 8501 and, if kept,
+  the coordinator's 9000 for `/events`) — acceptable for a local/demo
+  deployment; would need revisiting before any exposure beyond localhost.
+- No retry/backoff beyond the per-request timeout for a node that's
+  temporarily unreachable — a node that times out for round N is simply
+  excluded from that round's `active_nodes`; it's picked up again
+  automatically at round N+1's own `/round/start` fan-out (no special
+  reconnection logic needed, since there's no persistent connection to
+  re-establish in the first place — this is one of the simplifications HTTP
+  buys over MQTT's connection-oriented model).
 
 ## 12. Future work (deferred, not part of this checkpoint)
 
 - Checkpoint 1.5: port the disruption scenarios (disconnection /
-  class-addition / distribution-shift) onto this transport, using the
-  status/LWT mechanism already built here as the disconnection hook; add
-  dashboard buttons to trigger them.
+  class-addition / distribution-shift) onto this transport — a node
+  "disconnecting" is simply not responding to `/round/start`/`/round/gather`
+  within the timeout, which the coordinator's active-node filtering already
+  handles; add dashboard visibility/buttons to trigger it deliberately.
 - Checkpoint 2: replace one Docker node with the physical K210 (2 Docker
-  nodes + 1 K210), requiring an MQTT client on the K210 side. Today's topic
-  schema is intentionally hardware-agnostic so this is a new client, not a
-  protocol redesign.
-- Wire up `mesh/control/trigger_run` (reserved, unused) once the dashboard
-  needs to start additional runs on demand.
+  nodes + 1 K210) — the K210 side needs an HTTP server (or at minimum an HTTP
+  client for `/knowledge` fetches) speaking the same `/round/start`/
+  `/knowledge/{round_idx}`/`/round/gather` contract as the Docker nodes.
+- A "trigger new run" control on the dashboard, calling into a new
+  coordinator endpoint, once needed.

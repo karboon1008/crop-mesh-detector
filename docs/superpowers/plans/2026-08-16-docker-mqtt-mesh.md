@@ -1,24 +1,26 @@
-# Docker/MQTT Multi-Container Mesh + Observability Dashboard Implementation Plan
+# Docker/HTTP Multi-Container Mesh + Observability Dashboard Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Run the existing single-process mesh (`Node`/`MeshSimulator` training + distillation logic) across 3 isolated Docker containers exchanging knowledge over MQTT instead of an in-memory dict, with energy/eval metrics persisted to SQLite (per-node + merged), plus a read-only Streamlit dashboard.
+**Goal:** Run the existing single-process mesh (`Node`/`MeshSimulator` training + distillation logic) across 3 isolated Docker containers exchanging knowledge over direct HTTP request/response instead of an in-memory dict, with energy/eval metrics persisted to SQLite (per-node + merged), plus a read-only Streamlit dashboard.
 
-**Architecture:** 6 Docker Compose services — `broker` (Mosquitto), `coordinator` (times rounds, tracks liveness, merges metrics — never touches knowledge content), `node_0`/`node_1`/`node_2` (one shared image, each with its own physically-isolated data folder), `dashboard` (Streamlit viewer). The existing in-process simulation (`src/federated/mesh.py`, `src/train.py`) is untouched and stays as a separate, working fallback pipeline.
+**Architecture:** 5 Docker Compose services — `coordinator` (times rounds via concurrent HTTP fan-out, tracks liveness, merges metrics — never touches knowledge content), `node_0`/`node_1`/`node_2` (one shared image, each with its own physically-isolated data folder, running a small FastAPI server), `dashboard` (Streamlit viewer, polls nodes' `/health` + coordinator's `/events`). No broker. The existing in-process simulation (`src/federated/mesh.py`, `src/train.py`) is untouched and stays as a separate, working fallback pipeline.
 
-**Tech Stack:** Python 3.11, PyTorch/timm (nodes only), `paho-mqtt`, `sqlite3` (stdlib), Eclipse Mosquitto, Streamlit + pandas (dashboard only).
+**Tech Stack:** Python 3.11, PyTorch/timm (nodes only), FastAPI + uvicorn (nodes + coordinator's `/events` server), `httpx` (async HTTP client, used for the coordinator's fan-out and each node's peer-knowledge fetch), `sqlite3` (stdlib), Streamlit + pandas (dashboard only).
 
-**Spec:** `docs/superpowers/specs/2026-08-16-docker-mqtt-mesh-design.md`
+**Spec:** `docs/superpowers/specs/2026-08-16-docker-mqtt-mesh-design.md` (filename predates the MQTT→HTTP revision; content is current)
 
 ## Global Constraints
 
 - `src/federated/mesh.py`, `src/federated/node.py`, `src/federated/aggregation.py`, `src/models/factory.py`, `src/train.py` are **not modified** by this plan — the in-process pipeline must keep working exactly as it does today.
-- The coordinator **never subscribes to `mesh/node/+/knowledge`** (the binary payload topic) — control-plane only, per spec §5.
-- The dashboard subscribes only to `mesh/control/#`, `mesh/node/+/status`, `mesh/node/+/knowledge_ready`, `mesh/node/+/energy`, `mesh/node/+/eval` — **never** `mesh/node/+/knowledge` — per spec §8.
-- No broker authentication; Mosquitto has no host port published; only the dashboard publishes a host port (`8501`) — per spec §11.
-- `size_per_message`/`knowledge_bytes_sent` must be the actual serialized byte length, never `KnowledgePayload.size_bytes()`'s estimate — per spec §6.
-- This repo's layout diverges from spec §3 in one place: app code lives flat under `docker/node/`, `docker/coordinator/`, `docker/dashboard/` (no nested `node_app/`/`coordinator_app/`/`dashboard_app/` subfolder) to avoid a `docker.*` dotted-package name colliding with the pip `docker` SDK package, and to keep Dockerfiles simple. Topic names, schema, and container roles are unchanged from the spec.
-- Deferred, do not build in this plan: disruption scenarios over this transport, the K210 node, `mesh/control/trigger_run` — per spec §2/§12.
+- The coordinator **never calls a node's `/knowledge/{round_idx}` endpoint** — control-plane only (`/health`, `/round/start`, `/round/gather`), per spec §5. Peer knowledge is fetched node-to-node, never through the coordinator.
+- The dashboard only ever issues `GET` requests (`/health` on nodes, `/events` on the coordinator) — it never calls `/round/start` or `/round/gather`, so it cannot trigger a run, per spec §8.
+- Node containers publish no host port; only the dashboard (`8501`) and the coordinator's `/events` server (`9000`) do — per spec §11.
+- `size_bytes`/`knowledge_bytes_sent` must be the actual serialized byte length, never `KnowledgePayload.size_bytes()`'s estimate — per spec §6.
+- **Concurrency is load-bearing, not incidental**: the coordinator's fan-out to nodes, and each node's fetch of its peers, must be concurrent (`asyncio.gather` over `httpx.AsyncClient`). Sequential calls would silently turn parallel training into serial training — a functional regression with no error message, only much slower rounds.
+- Node FastAPI routes that call into `NodeRunner` (`/round/start`, `/round/gather`) must be defined as plain `def`, never `async def` — `Node.local_train`/`distill` are blocking synchronous PyTorch calls; FastAPI runs `def` routes in a worker thread automatically, keeping `/health` responsive during training. An `async def` route calling this code directly would freeze the whole server for the duration of training.
+- This repo's layout diverges from spec §3 in one place: app code lives flat under `docker/node/`, `docker/coordinator/`, `docker/dashboard/` (no nested subfolder) to keep Dockerfiles simple and avoid any `docker.*` dotted-package naming question.
+- Deferred, do not build in this plan: disruption scenarios over this transport, the K210 node, a dashboard "trigger new run" control — per spec §2/§12.
 
 ---
 
@@ -257,7 +259,7 @@ git commit -m "Add GlobalLabelMap for cross-container class-index alignment"
 
 **Interfaces:**
 - Consumes: nothing from other tasks (stdlib `sqlite3` only).
-- Produces: `init_db(path: str | Path) -> None`; `upsert_row(path: str | Path, node_id: str, round_idx: int, recorded_at: str, **fields) -> None`; `read_all(path: str | Path) -> list[dict]`. Used by Task 5 (node runner), Task 7 (coordinator runner), Task 10 (dashboard data helpers).
+- Produces: `init_db(path: str | Path) -> None`; `upsert_row(path: str | Path, node_id: str, round_idx: int, recorded_at: str, **fields) -> None`; `read_all(path: str | Path) -> list[dict]`. Used by Task 5 (node runner), Task 7 (coordinator runner), Task 9 (dashboard).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -295,7 +297,7 @@ def test_upsert_row_merges_separate_messages_into_one_row(tmp_path):
     rows = sqlite_store.read_all(db_path)
     assert len(rows) == 1
     row = rows[0]
-    # both messages' columns survive -- the second upsert must not null out the first's
+    # both writes' columns survive -- the second upsert must not null out the first's
     assert row["energy_kwh"] == 0.001
     assert row["energy_method"] == "proxy_wall_power"
     assert row["crop_accuracy"] == 0.8
@@ -328,10 +330,10 @@ Expected: FAIL with `ModuleNotFoundError: No module named 'src.energy.sqlite_sto
 ```python
 # src/energy/sqlite_store.py
 """SQLite persistence for per-round mesh metrics (energy, communication
-bytes, accuracy). Written incrementally: an `energy` MQTT message and an
-`eval` MQTT message for the same (node_id, round_idx) arrive separately,
-so `upsert_row` merges whichever columns are passed into one logical row
-rather than requiring the whole row at once.
+bytes, accuracy). Written incrementally: a node's /round/start response
+and its /round/gather response arrive at different times, so `upsert_row`
+merges whichever columns are passed into one logical row rather than
+requiring the whole row at once.
 """
 
 from __future__ import annotations
@@ -369,9 +371,9 @@ def init_db(path: str | Path) -> None:
 def upsert_row(path: str | Path, node_id: str, round_idx: int, recorded_at: str, **fields) -> None:
     """Insert a row for (node_id, round_idx), or merge `fields` into an
     existing row. Columns not present in `fields` are left untouched on
-    conflict, so separate energy/eval/knowledge_ready/active messages for
-    the same (node_id, round_idx) accumulate into one row instead of
-    clobbering each other.
+    conflict, so a node's separate /round/start-sourced and
+    /round/gather-sourced writes for the same (node_id, round_idx)
+    accumulate into one row instead of clobbering each other.
     """
     init_db(path)
     columns = ["node_id", "round_idx", "recorded_at", *fields.keys()]
@@ -436,8 +438,6 @@ Append to `config.yaml` (new top-level key, does not touch any existing key):
 
 ```yaml
 docker_mesh:
-  mqtt_host: "broker"
-  mqtt_port: 1883
   round_timeout_s: 300
   data_dir: "data/docker_mesh"
   energy_db_dir: "outputs/docker_mesh/energy"
@@ -614,20 +614,20 @@ git commit -m "Add docker_mesh config and per-node data pre-split script"
 
 ---
 
-## Task 4: MQTT knowledge codec
+## Task 4: Knowledge codec
 
 **Files:**
-- Create: `docker/node/mqtt_codec.py`
-- Test: `tests/test_mqtt_codec.py`
+- Create: `docker/node/knowledge_codec.py`
+- Test: `tests/test_knowledge_codec.py`
 
 **Interfaces:**
 - Consumes: `KnowledgePayload` (existing, `src/federated/node.py`, unchanged).
-- Produces: `encode_knowledge(round_idx: int, payload: KnowledgePayload) -> bytes`; `decode_knowledge(data: bytes) -> tuple[int, KnowledgePayload]`. Used by Task 5.
+- Produces: `encode_knowledge(round_idx: int, payload: KnowledgePayload) -> bytes`; `decode_knowledge(data: bytes) -> tuple[int, KnowledgePayload]`. `encode_knowledge`'s return value is the exact HTTP response body for `GET /knowledge/{round_idx}` (Task 6). Used by Task 5.
 
 - [ ] **Step 1: Write the failing test**
 
 ```python
-# tests/test_mqtt_codec.py
+# tests/test_knowledge_codec.py
 from __future__ import annotations
 
 import sys
@@ -637,7 +637,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "docker" / "node
 
 import torch
 
-from mqtt_codec import decode_knowledge, encode_knowledge  # noqa: E402
+from knowledge_codec import decode_knowledge, encode_knowledge  # noqa: E402
 from src.federated.node import KnowledgePayload  # noqa: E402
 
 
@@ -658,25 +658,24 @@ def test_encode_decode_roundtrip_preserves_tensors_and_round_idx():
         assert torch.equal(decoded.prototypes[key], payload.prototypes[key])
 
 
-def test_encoded_size_matches_declared_length():
+def test_encoded_payload_is_nonempty_bytes():
     payload = KnowledgePayload(prototypes={}, crop_logits=torch.zeros(2, 2), disease_logits=torch.zeros(2, 2))
     data = encode_knowledge(0, payload)
-    assert len(data) == len(data)  # sanity: encode_knowledge returns the exact publishable bytes
     assert len(data) > 0
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `pytest tests/test_mqtt_codec.py -v`
-Expected: FAIL with `ModuleNotFoundError: No module named 'mqtt_codec'`
+Run: `pytest tests/test_knowledge_codec.py -v`
+Expected: FAIL with `ModuleNotFoundError: No module named 'knowledge_codec'`
 
 - [ ] **Step 3: Implement**
 
 ```python
-# docker/node/mqtt_codec.py
+# docker/node/knowledge_codec.py
 """Serializes a KnowledgePayload (prototypes + probe-set logits — never
-raw images, gradients, or weights) to bytes for MQTT publish, tagged with
-the round it was computed in.
+raw images, gradients, or weights) to bytes for the GET /knowledge/{round_idx}
+HTTP response, tagged with the round it was computed in.
 """
 
 from __future__ import annotations
@@ -704,8 +703,8 @@ def encode_knowledge(round_idx: int, payload: KnowledgePayload) -> bytes:
 
 def decode_knowledge(data: bytes) -> tuple[int, KnowledgePayload]:
     # weights_only=False: this deserializes our own KnowledgePayload dict
-    # (tuple-keyed prototypes dict + tensors), published only by our own
-    # node containers over the internal broker -- not untrusted input.
+    # (tuple-keyed prototypes dict + tensors), fetched only from our own
+    # node containers over the internal Docker network -- not untrusted input.
     obj = torch.load(io.BytesIO(data), weights_only=False)
     payload = KnowledgePayload(
         prototypes=obj["prototypes"],
@@ -717,21 +716,21 @@ def decode_knowledge(data: bytes) -> tuple[int, KnowledgePayload]:
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `pytest tests/test_mqtt_codec.py -v`
+Run: `pytest tests/test_knowledge_codec.py -v`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add docker/node/mqtt_codec.py tests/test_mqtt_codec.py
-git commit -m "Add MQTT knowledge-payload codec with round_idx tag"
+git add docker/node/knowledge_codec.py tests/test_knowledge_codec.py
+git commit -m "Add knowledge-payload codec with round_idx tag"
 ```
 
 ---
 
 ## Task 5: `NodeRunner` core round-handling logic
 
-The round-handling logic is deliberately separated from real MQTT wiring (Task 6) so it's unit-testable without a live broker: `NodeRunner` takes any object with a `publish(topic, payload, retain=False, qos=1)` method, and its `on_message(topic, payload)` is called directly by tests (or by the real paho client's callback in Task 6).
+Round-handling logic is separated from the real HTTP server and client so it's unit-testable without a running FastAPI app: `NodeRunner.fetch_all_knowledge` is an injected callable (`(peer_ids, peer_bases, round_idx) -> {peer_id: bytes | None}`), fully fake-able in tests. The real implementation (Task 6) uses `asyncio.gather` + `httpx.AsyncClient`, but `NodeRunner` itself never knows or cares.
 
 **Files:**
 - Create: `docker/node/node_runner.py`
@@ -739,7 +738,7 @@ The round-handling logic is deliberately separated from real MQTT wiring (Task 6
 
 **Interfaces:**
 - Consumes: `Node`, `KnowledgePayload` (`src/federated/node.py`); `aggregate_prototypes`, `aggregate_logits` (`src/federated/aggregation.py`); `ComputeEnergyTracker` (`src/energy/tracker.py`); `sqlite_store.upsert_row` (Task 2); `encode_knowledge`, `decode_knowledge` (Task 4).
-- Produces: `NodeRunner` dataclass with `on_message(topic: str, payload: bytes) -> None`, `handle_round_start(round_idx: int) -> None`, `handle_round_gather_done(round_idx: int, active_nodes: list[str]) -> None`. Used by Task 6.
+- Produces: `NodeRunner` dataclass with `handle_round_start(round_idx: int) -> dict`, `get_knowledge_bytes(round_idx: int) -> bytes | None`, `handle_round_gather(round_idx: int, active_nodes: list[str], peer_bases: dict[str, str]) -> dict`. Used by Task 6.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -747,7 +746,6 @@ The round-handling logic is deliberately separated from real MQTT wiring (Task 6
 # tests/test_node_runner.py
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -756,7 +754,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "docker" / "node
 import torch
 from torch.utils.data import DataLoader
 
-from mqtt_codec import encode_knowledge  # noqa: E402
+from knowledge_codec import encode_knowledge  # noqa: E402
 from node_runner import NodeRunner  # noqa: E402
 from src.data.plantvillage import make_subset, train_test_split_indices
 from src.energy import sqlite_store
@@ -765,95 +763,80 @@ from src.federated.node import KnowledgePayload, Node
 from src.models.factory import build_model
 
 
-class FakeClient:
-    def __init__(self):
-        self.published: list[tuple[str, object, bool]] = []
-
-    def publish(self, topic, payload, retain=False, qos=1):
-        self.published.append((topic, payload, retain))
-
-
-def _make_runner(tmp_path, synthetic_dataset):
+def _make_runner(tmp_path, synthetic_dataset, fetch_all_knowledge=None):
     train_idx, test_idx = train_test_split_indices(list(range(len(synthetic_dataset))), 0.3, seed=1)
     train_loader = DataLoader(make_subset(synthetic_dataset, train_idx), batch_size=4, shuffle=True)
     test_loader = DataLoader(make_subset(synthetic_dataset, test_idx), batch_size=4, shuffle=False)
     probe_loader = DataLoader(make_subset(synthetic_dataset, test_idx), batch_size=4, shuffle=False)
     model = build_model("mobilenet_v3_small", 2, 2, pretrained=False)
     node = Node("node_0", model, train_loader, test_loader, device="cpu")
-    client = FakeClient()
     tracker = ComputeEnergyTracker(enabled=False, output_dir=tmp_path, fallback_power_watts=15.0)
     runner = NodeRunner(
         node_id="node_0",
         node=node,
         probe_loader=probe_loader,
-        client=client,
         tracker=tracker,
         db_path=str(tmp_path / "node_0.db"),
+        fetch_all_knowledge=fetch_all_knowledge or (lambda peer_ids, peer_bases, round_idx: {}),
     )
-    return runner, client, probe_loader
+    return runner, probe_loader
 
 
-def test_handle_round_start_publishes_knowledge_energy_and_writes_db(tmp_path, synthetic_dataset):
-    runner, client, _ = _make_runner(tmp_path, synthetic_dataset)
-    runner.handle_round_start(0)
+def test_handle_round_start_returns_response_body_and_writes_db(tmp_path, synthetic_dataset):
+    runner, _ = _make_runner(tmp_path, synthetic_dataset)
+    response = runner.handle_round_start(0)
 
-    topics = [t for t, _, _ in client.published]
-    assert "mesh/node/node_0/knowledge" in topics
-    assert "mesh/node/node_0/knowledge_ready" in topics
-    assert "mesh/node/node_0/energy" in topics
-
-    knowledge_topic, knowledge_bytes, retained = next(
-        (t, p, r) for t, p, r in client.published if t == "mesh/node/node_0/knowledge"
-    )
-    assert retained is True
-    assert isinstance(knowledge_bytes, bytes)
-
-    ready_payload = json.loads(
-        next(p for t, p, _ in client.published if t == "mesh/node/node_0/knowledge_ready")
-    )
-    assert ready_payload["round_idx"] == 0
-    assert ready_payload["size_bytes"] == len(knowledge_bytes)
+    assert response["round_idx"] == 0
+    assert response["size_bytes"] > 0
+    assert response["energy_kwh"] is not None
 
     rows = sqlite_store.read_all(tmp_path / "node_0.db")
     assert len(rows) == 1
-    assert rows[0]["knowledge_bytes_sent"] == len(knowledge_bytes)
-    assert rows[0]["energy_kwh"] is not None
+    assert rows[0]["knowledge_bytes_sent"] == response["size_bytes"]
 
 
-def test_on_message_stores_peer_knowledge_by_round(tmp_path, synthetic_dataset):
-    runner, _, probe_loader = _make_runner(tmp_path, synthetic_dataset)
-    n_probe = len(probe_loader.dataset)
-    peer_payload = KnowledgePayload(
-        prototypes={}, crop_logits=torch.zeros(n_probe, 2), disease_logits=torch.zeros(n_probe, 2)
-    )
-    runner.on_message("mesh/node/node_1/knowledge", encode_knowledge(3, peer_payload))
-    assert runner._peer_knowledge["node_1"][0] == 3
+def test_get_knowledge_bytes_returns_none_for_a_different_round(tmp_path, synthetic_dataset):
+    runner, _ = _make_runner(tmp_path, synthetic_dataset)
+    runner.handle_round_start(0)
+    assert runner.get_knowledge_bytes(0) is not None
+    assert runner.get_knowledge_bytes(1) is None
 
 
-def test_handle_round_gather_done_ignores_peer_knowledge_from_a_different_round(tmp_path, synthetic_dataset):
-    runner, client, probe_loader = _make_runner(tmp_path, synthetic_dataset)
-    n_probe = len(probe_loader.dataset)
-    stale_payload = KnowledgePayload(
-        prototypes={}, crop_logits=torch.zeros(n_probe, 2), disease_logits=torch.zeros(n_probe, 2)
-    )
-    # published for round 99, but we are about to gather round 0 -- must be dropped
-    runner.on_message("mesh/node/node_1/knowledge", encode_knowledge(99, stale_payload))
+def test_handle_round_gather_ignores_peer_data_for_a_different_round(tmp_path, synthetic_dataset):
+    n_probe_holder = {}
 
-    runner.handle_round_gather_done(0, ["node_0", "node_1"])
+    def fake_fetch_all(peer_ids, peer_bases, round_idx):
+        n_probe = n_probe_holder["n"]
+        stale_payload = KnowledgePayload(
+            prototypes={}, crop_logits=torch.zeros(n_probe, 2), disease_logits=torch.zeros(n_probe, 2)
+        )
+        # encoded for round 99, but we are gathering round 0 -- must be dropped
+        return {"node_1": encode_knowledge(99, stale_payload)}
 
-    eval_payload = json.loads(next(p for t, p, _ in client.published if t == "mesh/node/node_0/eval"))
-    assert "crop_accuracy" in eval_payload
-    assert "disease_accuracy" in eval_payload
+    runner, probe_loader = _make_runner(tmp_path, synthetic_dataset, fetch_all_knowledge=fake_fetch_all)
+    n_probe_holder["n"] = len(probe_loader.dataset)
+
+    response = runner.handle_round_gather(0, ["node_0", "node_1"], {"node_1": "http://node_1:8000"})
+    assert "crop_accuracy" in response
+    assert "disease_accuracy" in response
 
     rows = sqlite_store.read_all(tmp_path / "node_0.db")
     assert rows[0]["active"] == 1
 
 
-def test_handle_round_gather_done_with_no_active_peers_still_evaluates(tmp_path, synthetic_dataset):
-    runner, client, _ = _make_runner(tmp_path, synthetic_dataset)
-    runner.handle_round_gather_done(0, ["node_0"])  # single-node mesh: nothing to reconcile
-    eval_topics = [t for t, _, _ in client.published if t == "mesh/node/node_0/eval"]
-    assert len(eval_topics) == 1
+def test_handle_round_gather_skips_a_peer_whose_fetch_failed(tmp_path, synthetic_dataset):
+    def fake_fetch_all(peer_ids, peer_bases, round_idx):
+        return {"node_1": None}  # peer timed out / errored
+
+    runner, _ = _make_runner(tmp_path, synthetic_dataset, fetch_all_knowledge=fake_fetch_all)
+    response = runner.handle_round_gather(0, ["node_0", "node_1"], {"node_1": "http://node_1:8000"})
+    assert "crop_accuracy" in response
+
+
+def test_handle_round_gather_with_no_peers_still_evaluates(tmp_path, synthetic_dataset):
+    runner, _ = _make_runner(tmp_path, synthetic_dataset)
+    response = runner.handle_round_gather(0, ["node_0"], {})
+    assert "crop_accuracy" in response
 ```
 
 (`synthetic_dataset` is the existing fixture in `tests/conftest.py` — no changes needed there.)
@@ -867,33 +850,35 @@ Expected: FAIL with `ModuleNotFoundError: No module named 'node_runner'`
 
 ```python
 # docker/node/node_runner.py
-"""MQTT-driven wrapper around a single Node, reusing src/federated/node.py
-and src/federated/aggregation.py unmodified. Round-handling logic is
-separated from the real MQTT client so it's unit-testable with a fake
-client -- see docker/node/main.py for the real wiring.
+"""HTTP-driven wrapper around a single Node, reusing src/federated/node.py
+and src/federated/aggregation.py unmodified. Round-handling logic takes its
+peer-fetch mechanism as an injected callable so it's unit-testable with a
+fake fetcher -- no real HTTP server, no real concurrency, needed in tests.
+See docker/node/main.py for the real FastAPI + httpx wiring.
 """
 
 from __future__ import annotations
 
-import json
 import time
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Callable
 
 from src.energy import sqlite_store
 from src.energy.tracker import ComputeEnergyTracker
 from src.federated.aggregation import aggregate_logits, aggregate_prototypes
 from src.federated.node import KnowledgePayload, Node
 
-from mqtt_codec import decode_knowledge, encode_knowledge
-
-
-class MQTTClientLike(Protocol):
-    def publish(self, topic: str, payload, retain: bool = False, qos: int = 1) -> None: ...
+from knowledge_codec import decode_knowledge, encode_knowledge
 
 
 def _now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+# fetch_all_knowledge(peer_ids, peer_bases, round_idx) -> {peer_id: bytes | None}
+# None means that peer's fetch failed, timed out, or (checked by the caller)
+# returned a mismatched round.
+FetchAllKnowledge = Callable[[list, dict, int], dict]
 
 
 @dataclass
@@ -901,9 +886,9 @@ class NodeRunner:
     node_id: str
     node: Node
     probe_loader: object
-    client: MQTTClientLike
     tracker: ComputeEnergyTracker
     db_path: str
+    fetch_all_knowledge: FetchAllKnowledge
     aggregation_method: str = "trimmed_mean"
     trim_fraction: float = 0.2
     krum_neighbors: int = 2
@@ -914,41 +899,17 @@ class NodeRunner:
     proto_weight: float = 0.5
     kd_weight: float = 0.5
     temperature: float = 2.0
-    _peer_knowledge: dict = field(default_factory=dict)
+    _last_round_idx: int | None = field(default=None, init=False)
+    _last_knowledge_bytes: bytes | None = field(default=None, init=False)
 
-    def on_message(self, topic: str, payload: bytes) -> None:
-        parts = topic.split("/")
-        if len(parts) == 4 and parts[0] == "mesh" and parts[1] == "node" and parts[3] == "knowledge":
-            peer_id = parts[2]
-            if peer_id == self.node_id:
-                return
-            round_idx, knowledge = decode_knowledge(payload)
-            self._peer_knowledge[peer_id] = (round_idx, knowledge)
-
-    def handle_round_start(self, round_idx: int) -> None:
+    def handle_round_start(self, round_idx: int) -> dict:
         with self.tracker.track(f"{self.node_id}_round_{round_idx}") as energy_record:
             self.node.local_train(self.local_epochs, self.lr)
         knowledge = self.node.compute_knowledge(self.probe_loader)
         data = encode_knowledge(round_idx, knowledge)
+        self._last_round_idx = round_idx
+        self._last_knowledge_bytes = data
 
-        self.client.publish(f"mesh/node/{self.node_id}/knowledge", data, retain=True, qos=1)
-        self.client.publish(
-            f"mesh/node/{self.node_id}/knowledge_ready",
-            json.dumps({"round_idx": round_idx, "size_bytes": len(data)}),
-            qos=1,
-        )
-        self.client.publish(
-            f"mesh/node/{self.node_id}/energy",
-            json.dumps(
-                {
-                    "round_idx": round_idx,
-                    "energy_kwh": energy_record["energy_kwh"],
-                    "duration_s": energy_record["duration_s"],
-                    "energy_method": energy_record["method"],
-                }
-            ),
-            qos=1,
-        )
         sqlite_store.upsert_row(
             self.db_path,
             self.node_id,
@@ -959,16 +920,32 @@ class NodeRunner:
             energy_method=energy_record["method"],
             knowledge_bytes_sent=len(data),
         )
+        return {
+            "round_idx": round_idx,
+            "size_bytes": len(data),
+            "energy_kwh": energy_record["energy_kwh"],
+            "duration_s": energy_record["duration_s"],
+            "energy_method": energy_record["method"],
+        }
 
-    def handle_round_gather_done(self, round_idx: int, active_nodes: list[str]) -> None:
+    def get_knowledge_bytes(self, round_idx: int) -> bytes | None:
+        if self._last_round_idx != round_idx:
+            return None
+        return self._last_knowledge_bytes
+
+    def handle_round_gather(self, round_idx: int, active_nodes: list, peer_bases: dict) -> dict:
+        peer_ids = [n for n in active_nodes if n != self.node_id]
+        fetched = self.fetch_all_knowledge(peer_ids, peer_bases, round_idx)
+
         peers: list[KnowledgePayload] = []
-        for peer_id in active_nodes:
-            if peer_id == self.node_id:
+        for peer_id in peer_ids:
+            data = fetched.get(peer_id)
+            if data is None:
                 continue
-            entry = self._peer_knowledge.get(peer_id)
-            if entry is None or entry[0] != round_idx:
-                continue  # missing or stale -- integrity guard from spec §6
-            peers.append(entry[1])
+            peer_round_idx, knowledge = decode_knowledge(data)
+            if peer_round_idx != round_idx:
+                continue  # defensive: peer returned data for a different round
+            peers.append(knowledge)
 
         if peers:
             consensus_prototypes = aggregate_prototypes(
@@ -1002,11 +979,6 @@ class NodeRunner:
             )
 
         eval_result = self.node.evaluate()
-        self.client.publish(
-            f"mesh/node/{self.node_id}/eval",
-            json.dumps({"round_idx": round_idx, **eval_result}),
-            qos=1,
-        )
         sqlite_store.upsert_row(
             self.db_path,
             self.node_id,
@@ -1014,27 +986,28 @@ class NodeRunner:
             _now_iso(),
             crop_accuracy=eval_result["crop_accuracy"],
             disease_accuracy=eval_result["disease_accuracy"],
-            active=1 if self.node_id in active_nodes else 0,
+            active=1,
         )
+        return {"round_idx": round_idx, **eval_result}
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `pytest tests/test_node_runner.py -v`
-Expected: PASS (4 tests)
+Expected: PASS (5 tests)
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add docker/node/node_runner.py tests/test_node_runner.py
-git commit -m "Add NodeRunner: MQTT-driven round handling over the existing Node/aggregation logic"
+git commit -m "Add NodeRunner: HTTP-driven round handling over the existing Node/aggregation logic"
 ```
 
 ---
 
-## Task 6: Node container — `main.py` wiring, `Dockerfile`, `requirements.txt`
+## Task 6: Node container — FastAPI `main.py`, `Dockerfile`, `requirements.txt`
 
-This task wires `NodeRunner` to a real `paho-mqtt` client and real data. It is not TDD — `NodeRunner`'s logic is already covered by Task 5; this is thin, mostly-untestable-without-a-broker glue, verified manually in Task 13's integration smoke test.
+This task wires `NodeRunner` to a real FastAPI server and a real `httpx.AsyncClient` for peer fetches. It is not TDD — `NodeRunner`'s logic is already covered by Task 5; this is thin, mostly-untestable-without-real-network glue, verified manually in Task 12's integration smoke test.
 
 **Files:**
 - Create: `docker/node/main.py`
@@ -1043,7 +1016,7 @@ This task wires `NodeRunner` to a real `paho-mqtt` client and real data. It is n
 
 **Interfaces:**
 - Consumes: `NodeRunner` (Task 5); `Config` (`src/config.py`); `GlobalLabelMap`/`load_global_label_map`/`PlantVillageDataset`/`make_subset`/`train_test_split_indices` (`src/data/plantvillage.py`, Task 1); `build_model` (`src/models/factory.py`); `Node` (`src/federated/node.py`); `ComputeEnergyTracker` (`src/energy/tracker.py`).
-- Produces: a runnable container entry point reading `NODE_ID`, `MQTT_HOST`, `MQTT_PORT`, `DATA_ROOT`, `PROBE_ROOT`, `CLASSES_JSON`, `ENERGY_DB`, `CONFIG_PATH` from the environment (all set by `docker-compose.yml` in Task 12).
+- Produces: a FastAPI app on port `8000` with `GET /health`, `POST /round/start`, `GET /knowledge/{round_idx}`, `POST /round/gather`, reading `NODE_ID`, `DATA_ROOT`, `PROBE_ROOT`, `CLASSES_JSON`, `ENERGY_DB`, `CONFIG_PATH` from the environment (all set by `docker-compose.yml` in Task 11).
 
 - [ ] **Step 1: Write `requirements.txt`**
 
@@ -1056,32 +1029,42 @@ numpy>=1.24
 Pillow>=10.0
 PyYAML>=6.0
 codecarbon>=2.3
-paho-mqtt>=2.1
+fastapi>=0.115
+uvicorn>=0.30
+httpx>=0.27
 ```
 
 - [ ] **Step 2: Write `main.py`**
 
 ```python
 # docker/node/main.py
-"""Container entry point for one mesh node. Builds a Node from its own
-isolated data folder + the shared global label map, wires it to
-NodeRunner, and drives everything from MQTT callbacks.
+"""FastAPI server for one mesh node. /round/start and /round/gather are
+plain `def` routes (not `async def`) -- Node.local_train/distill are
+blocking, synchronous PyTorch calls with no await points; FastAPI runs
+`def` routes in a worker thread automatically, keeping /health responsive
+while training runs. An `async def` route calling this code directly
+would freeze the whole server's event loop for the duration of training.
+
+Peer-knowledge fetches (needed inside /round/gather) use httpx.AsyncClient
++ asyncio.gather for concurrency, invoked via asyncio.run() from the
+synchronous handler.
 """
 
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
 from pathlib import Path
 
-# In the container, /app already has src/ copied alongside this file, so
-# this insert is a harmless no-op there. Running locally (e.g. `python
-# docker/node/main.py` from the repo root, for the no-Docker verification
-# workflow) main.py's own directory does NOT contain src/ -- this makes
-# `from src...` resolve in both cases without two different code paths.
+# In the container, /app has src/ copied alongside this file, so this
+# insert is a harmless no-op there. Running locally (e.g. for the
+# no-Docker verification workflow) this file's own directory does NOT
+# contain src/ -- this makes `from src...` resolve in both cases.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-import paho.mqtt.client as mqtt
+import httpx
+from fastapi import FastAPI, HTTPException, Response
 from torch.utils.data import DataLoader
 
 from src.config import Config
@@ -1097,10 +1080,32 @@ from src.models.factory import build_model
 from node_runner import NodeRunner
 
 
-def main() -> None:
+async def _fetch_one(client: httpx.AsyncClient, peer_id: str, base_url: str, round_idx: int):
+    try:
+        resp = await client.get(f"{base_url}/knowledge/{round_idx}", timeout=30.0)
+        if resp.status_code != 200:
+            return peer_id, None
+        return peer_id, resp.content
+    except httpx.HTTPError:
+        return peer_id, None
+
+
+async def _fetch_all_knowledge_async(peer_ids: list, peer_bases: dict, round_idx: int) -> dict:
+    async with httpx.AsyncClient() as client:
+        results = await asyncio.gather(
+            *(_fetch_one(client, peer_id, peer_bases[peer_id], round_idx) for peer_id in peer_ids)
+        )
+    return dict(results)
+
+
+def fetch_all_knowledge(peer_ids: list, peer_bases: dict, round_idx: int) -> dict:
+    if not peer_ids:
+        return {}
+    return asyncio.run(_fetch_all_knowledge_async(peer_ids, peer_bases, round_idx))
+
+
+def build_runner() -> NodeRunner:
     node_id = os.environ["NODE_ID"]
-    mqtt_host = os.environ.get("MQTT_HOST", "broker")
-    mqtt_port = int(os.environ.get("MQTT_PORT", "1883"))
     data_root = os.environ["DATA_ROOT"]
     probe_root = os.environ["PROBE_ROOT"]
     classes_json = os.environ["CLASSES_JSON"]
@@ -1136,14 +1141,13 @@ def main() -> None:
         country_iso_code=cfg.get("energy.country_iso_code", "GBR"),
     )
 
-    client = mqtt.Client(client_id=node_id, callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
-    runner = NodeRunner(
+    return NodeRunner(
         node_id=node_id,
         node=node,
         probe_loader=probe_loader,
-        client=client,
         tracker=tracker,
         db_path=energy_db,
+        fetch_all_knowledge=fetch_all_knowledge,
         aggregation_method=cfg.get("federated.aggregation", "trimmed_mean"),
         trim_fraction=cfg.get("federated.trim_fraction", 0.2),
         krum_neighbors=cfg.get("federated.krum_neighbors", 2),
@@ -1156,32 +1160,38 @@ def main() -> None:
         temperature=cfg.get("training.kd_temperature", 2.0),
     )
 
-    def _on_message(_client, _userdata, msg):
-        if msg.topic == "mesh/control/round_start":
-            import json
 
-            runner.handle_round_start(json.loads(msg.payload)["round_idx"])
-        elif msg.topic == "mesh/control/round_gather_done":
-            import json
+runner = build_runner()
+app = FastAPI()
 
-            data = json.loads(msg.payload)
-            runner.handle_round_gather_done(data["round_idx"], data["active_nodes"])
-        else:
-            runner.on_message(msg.topic, msg.payload)
 
-    client.on_message = _on_message
-    client.will_set(f"mesh/node/{node_id}/status", payload='{"status": "offline"}', qos=1, retain=True)
-    client.connect(mqtt_host, mqtt_port)
-    client.subscribe("mesh/control/round_start")
-    client.subscribe("mesh/control/round_gather_done")
-    client.subscribe("mesh/node/+/knowledge")
-    client.publish(f"mesh/node/{node_id}/status", '{"status": "online"}', qos=1, retain=True)
-    print(f"[{node_id}] connected to {mqtt_host}:{mqtt_port}, waiting for rounds...")
-    client.loop_forever()
+@app.get("/health")
+def health():
+    return {"node_id": runner.node_id, "status": "online"}
+
+
+@app.post("/round/start")
+def round_start(body: dict):
+    return runner.handle_round_start(body["round_idx"])
+
+
+@app.get("/knowledge/{round_idx}")
+def get_knowledge(round_idx: int):
+    data = runner.get_knowledge_bytes(round_idx)
+    if data is None:
+        raise HTTPException(status_code=409, detail="knowledge not ready for this round")
+    return Response(content=data, media_type="application/octet-stream")
+
+
+@app.post("/round/gather")
+def round_gather(body: dict):
+    return runner.handle_round_gather(body["round_idx"], body["active_nodes"], body["peer_bases"])
 
 
 if __name__ == "__main__":
-    main()
+    import uvicorn
+
+    uvicorn.run(app, host="0.0.0.0", port=8000)
 ```
 
 - [ ] **Step 3: Write `Dockerfile`**
@@ -1196,31 +1206,29 @@ COPY docker/node/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src/ ./src/
-COPY docker/node/main.py docker/node/node_runner.py docker/node/mqtt_codec.py ./
+COPY docker/node/main.py docker/node/node_runner.py docker/node/knowledge_codec.py ./
 
+EXPOSE 8000
 CMD ["python", "main.py"]
 ```
 
 - [ ] **Step 4: Build the image to verify it compiles and installs cleanly**
 
-Run: `docker build -f docker/node/Dockerfile -t mesh-node -t mesh-node .` (from repo root, so `src/` is in the build context)
+Run: `docker build -f docker/node/Dockerfile -t mesh-node .` (from repo root, so `src/` is in the build context)
 Expected: build succeeds with no errors.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add docker/node/main.py docker/node/Dockerfile docker/node/requirements.txt
-git commit -m "Add node container: main.py wiring, Dockerfile, requirements"
+git commit -m "Add node container: FastAPI main.py wiring, Dockerfile, requirements"
 ```
 
 ---
 
 ## Task 7: `CoordinatorRunner` core round-driving logic
 
-Like Task 5, this separates round-driving logic from the real MQTT client so it's unit-testable without a broker. Two subtleties this task must get right (both discovered while planning, not in the original spec text — see comments in the code below):
-
-1. **Readiness detection must be decoupled from round-driving.** If `on_message`'s "all nodes online" check directly called a long-running, sleep-polling round loop, and `on_message` runs on the paho network thread (the standard `loop_start()` pattern), that thread would be blocked sleeping and could never receive the very `knowledge_ready` messages the round loop is waiting for. `on_message` only ever flips a fast callback (`on_ready`); the actual round-driving loop runs on the caller's thread (Task 8 wires this to the main thread).
-2. **A round isn't complete until evals are in, not just knowledge.** The coordinator must wait for `eval` from every active node — not just `knowledge_ready` — before starting the next round, otherwise round N+1 could start while round N's distillation is still running on some node.
+Like Task 5, this separates round-driving logic from the real HTTP client so it's unit-testable without a network. `post_all`/`health_check` are injected callables — the real implementation (Task 8) uses `asyncio.gather` + `httpx`, but `CoordinatorRunner` never knows or cares. This is meaningfully simpler than the equivalent MQTT design would have been: there's no separate poll-with-timeout loop to test, since a synchronous `post_all` call either returns a node's result or `None` (timed out/errored) by the time it returns — the timeout itself is the real client's concern (Task 8), not this class's.
 
 **Files:**
 - Create: `docker/coordinator/coordinator_runner.py`
@@ -1228,7 +1236,7 @@ Like Task 5, this separates round-driving logic from the real MQTT client so it'
 
 **Interfaces:**
 - Consumes: `sqlite_store.upsert_row` (Task 2).
-- Produces: `CoordinatorRunner` dataclass with `on_message(topic, payload) -> None`, `run_round(round_idx, sleep_fn=time.sleep, now_fn=time.time, poll_interval_s=0.5) -> list[str]`, `run_all_rounds(sleep_fn=time.sleep, now_fn=time.time) -> None`, and an `on_ready: Callable[[], None]` field fired once when every expected node has reported online. Used by Task 8.
+- Produces: `CoordinatorRunner` dataclass with `wait_until_all_online(sleep_fn=time.sleep, poll_interval_s=1.0) -> None`, `run_round(round_idx: int) -> list[str]`, `run_all_rounds() -> None`. Used by Task 8.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1236,7 +1244,6 @@ Like Task 5, this separates round-driving logic from the real MQTT client so it'
 # tests/test_coordinator_runner.py
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -1246,110 +1253,88 @@ from coordinator_runner import CoordinatorRunner  # noqa: E402
 from src.energy import sqlite_store
 
 
-class FakeClient:
-    def __init__(self):
-        self.published: list[tuple[str, str]] = []
-
-    def publish(self, topic, payload, qos=1):
-        self.published.append((topic, payload))
-
-
-def test_on_ready_fires_once_when_all_expected_nodes_online(tmp_path):
-    client = FakeClient()
-    fired = []
-    runner = CoordinatorRunner(
+def _make_runner(tmp_path, post_all, health_check=lambda n: True, num_rounds=1):
+    return CoordinatorRunner(
         expected_nodes=["node_0", "node_1"],
-        num_rounds=1,
-        round_timeout_s=5,
-        client=client,
+        node_base_urls={"node_0": "http://node_0:8000", "node_1": "http://node_1:8000"},
+        num_rounds=num_rounds,
+        round_timeout_s=30,
         db_path=str(tmp_path / "merged.db"),
-        on_ready=lambda: fired.append(True),
+        post_all=post_all,
+        health_check=health_check,
     )
-    runner.on_message("mesh/node/node_0/status", json.dumps({"status": "online"}).encode())
-    assert fired == []
-    runner.on_message("mesh/node/node_1/status", json.dumps({"status": "online"}).encode())
-    assert fired == [True]
-    # a repeat status message must not fire on_ready a second time
-    runner.on_message("mesh/node/node_0/status", json.dumps({"status": "online"}).encode())
-    assert fired == [True]
 
 
-def test_on_ready_does_not_fire_if_a_node_goes_offline_before_all_are_online(tmp_path):
-    client = FakeClient()
-    fired = []
-    runner = CoordinatorRunner(
-        expected_nodes=["node_0", "node_1"],
-        num_rounds=1,
-        round_timeout_s=5,
-        client=client,
-        db_path=str(tmp_path / "merged.db"),
-        on_ready=lambda: fired.append(True),
-    )
-    runner.on_message("mesh/node/node_0/status", json.dumps({"status": "online"}).encode())
-    runner.on_message("mesh/node/node_0/status", json.dumps({"status": "offline"}).encode())
-    runner.on_message("mesh/node/node_1/status", json.dumps({"status": "online"}).encode())
-    assert fired == []
-
-
-def test_run_round_waits_for_knowledge_then_eval_and_merges_db_rows(tmp_path):
-    client = FakeClient()
-    db_path = str(tmp_path / "merged.db")
-    runner = CoordinatorRunner(
-        expected_nodes=["node_0", "node_1"], num_rounds=1, round_timeout_s=5, client=client, db_path=db_path
-    )
-    runner._online = {"node_0", "node_1"}
-
+def test_wait_until_all_online_blocks_until_health_check_passes_for_every_node():
     calls = {"n": 0}
 
-    def fake_sleep(_interval):
+    def health_check(_node_id):
         calls["n"] += 1
-        if calls["n"] == 1:
-            runner.on_message("mesh/node/node_0/knowledge_ready", json.dumps({"round_idx": 0}).encode())
-            runner.on_message("mesh/node/node_1/knowledge_ready", json.dumps({"round_idx": 0}).encode())
-        else:
-            runner.on_message(
-                "mesh/node/node_0/eval",
-                json.dumps({"round_idx": 0, "crop_accuracy": 0.5, "disease_accuracy": 0.6}).encode(),
-            )
-            runner.on_message(
-                "mesh/node/node_1/eval",
-                json.dumps({"round_idx": 0, "crop_accuracy": 0.4, "disease_accuracy": 0.7}).encode(),
-            )
+        return calls["n"] > 2  # first couple of checks report unhealthy
 
-    active = runner.run_round(0, sleep_fn=fake_sleep, poll_interval_s=0)
+    runner = CoordinatorRunner(
+        expected_nodes=["node_0"],
+        node_base_urls={"node_0": "http://node_0:8000"},
+        num_rounds=1,
+        round_timeout_s=30,
+        db_path="unused.db",
+        post_all=lambda *a: {},
+        health_check=health_check,
+    )
+    slept = []
+    runner.wait_until_all_online(sleep_fn=slept.append, poll_interval_s=0.1)
+    assert len(slept) >= 1
+
+
+def test_run_round_writes_energy_and_eval_rows_from_response_bodies(tmp_path):
+    def post_all(node_ids, path, body):
+        if path == "/round/start":
+            return {
+                n: {"energy_kwh": 0.01, "duration_s": 1.0, "energy_method": "proxy_wall_power", "size_bytes": 100}
+                for n in node_ids
+            }
+        assert path == "/round/gather"
+        assert body["active_nodes"] == ["node_0", "node_1"]
+        return {n: {"crop_accuracy": 0.5, "disease_accuracy": 0.6} for n in node_ids}
+
+    runner = _make_runner(tmp_path, post_all)
+    active = runner.run_round(0)
 
     assert active == ["node_0", "node_1"]
-    topics = [t for t, _ in client.published]
-    assert topics == ["mesh/control/round_start", "mesh/control/round_gather_done"]
-
-    gather_payload = json.loads(next(p for t, p in client.published if t == "mesh/control/round_gather_done"))
-    assert gather_payload["active_nodes"] == ["node_0", "node_1"]
-
-    rows = {r["node_id"]: r for r in sqlite_store.read_all(db_path)}
+    rows = {r["node_id"]: r for r in sqlite_store.read_all(str(tmp_path / "merged.db"))}
     assert rows["node_0"]["crop_accuracy"] == 0.5
-    assert rows["node_1"]["active"] == 1
+    assert rows["node_1"]["knowledge_bytes_sent"] == 100
 
 
-def test_run_round_excludes_a_node_that_never_publishes_knowledge_ready(tmp_path):
-    client = FakeClient()
-    db_path = str(tmp_path / "merged.db")
-    runner = CoordinatorRunner(
-        expected_nodes=["node_0", "node_1"], num_rounds=1, round_timeout_s=1, client=client, db_path=db_path
-    )
-    runner._online = {"node_0", "node_1"}
-    runner.on_message("mesh/node/node_0/knowledge_ready", json.dumps({"round_idx": 0}).encode())
-    # node_1 never responds
+def test_run_round_excludes_a_node_that_failed_round_start(tmp_path):
+    def post_all(node_ids, path, body):
+        if path == "/round/start":
+            return {
+                "node_0": {"energy_kwh": 0.01, "duration_s": 1.0, "energy_method": "x", "size_bytes": 10},
+                "node_1": None,  # timed out / errored
+            }
+        assert set(body["active_nodes"]) == {"node_0"}
+        return {n: {"crop_accuracy": 0.5, "disease_accuracy": 0.5} for n in node_ids}
 
-    fake_now = {"t": 0.0}
-
-    def now_fn():
-        return fake_now["t"]
-
-    def fake_sleep(interval):
-        fake_now["t"] += interval + 1.1  # advance well past the 1s timeout, no real waiting
-
-    active = runner.run_round(0, sleep_fn=fake_sleep, now_fn=now_fn, poll_interval_s=0.5)
+    runner = _make_runner(tmp_path, post_all)
+    active = runner.run_round(0)
     assert active == ["node_0"]
+
+
+def test_run_all_rounds_calls_run_round_for_every_configured_round(tmp_path):
+    seen_rounds = []
+
+    def post_all(node_ids, path, body):
+        if path == "/round/start":
+            seen_rounds.append(body["round_idx"])
+            return {
+                n: {"energy_kwh": 0.0, "duration_s": 0.0, "energy_method": "x", "size_bytes": 1} for n in node_ids
+            }
+        return {n: {"crop_accuracy": 0.0, "disease_accuracy": 0.0} for n in node_ids}
+
+    runner = _make_runner(tmp_path, post_all, num_rounds=3)
+    runner.run_all_rounds()
+    assert seen_rounds == [0, 1, 2]
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -1362,17 +1347,19 @@ Expected: FAIL with `ModuleNotFoundError: No module named 'coordinator_runner'`
 ```python
 # docker/coordinator/coordinator_runner.py
 """Control-plane round driver: times rounds, tracks node liveness, merges
-energy/eval MQTT messages into SQLite. Never subscribes to or inspects
-mesh/node/+/knowledge -- it only ever sees a byte count via
-knowledge_ready, never payload content, so there is no central
-aggregator of knowledge (that stays per-node, in node_runner.py).
+per-round HTTP response bodies into SQLite. Never calls a node's
+/knowledge endpoint itself -- nodes fetch peer knowledge directly from
+each other, so there is no central aggregator of knowledge (that logic
+stays entirely in node_runner.py). Transport (concurrent HTTP fan-out,
+health polling) is injected as plain callables so this class is
+unit-testable with fakes -- see docker/coordinator/main.py for the real
+asyncio/httpx wiring.
 """
 
 from __future__ import annotations
 
-import json
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable
 
 from src.energy import sqlite_store
@@ -1382,89 +1369,66 @@ def _now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
+# post_all(node_ids, path, body) -> {node_id: response_json | None}
+# None means that node's request failed, timed out, or returned non-200.
+PostAll = Callable[[list, str, dict], dict]
+HealthCheck = Callable[[str], bool]
+
+
 @dataclass
 class CoordinatorRunner:
-    expected_nodes: list[str]
+    expected_nodes: list
+    node_base_urls: dict
     num_rounds: int
     round_timeout_s: float
-    client: object
     db_path: str
-    on_ready: Callable[[], None] = lambda: None
-    _online: set = field(default_factory=set)
-    _knowledge_ready: dict = field(default_factory=dict)
-    _eval_received: dict = field(default_factory=dict)
-    _ready_fired: bool = False
+    post_all: PostAll
+    health_check: HealthCheck
 
-    def on_message(self, topic: str, payload: bytes) -> None:
-        parts = topic.split("/")
-        if len(parts) != 4 or parts[0] != "mesh" or parts[1] != "node":
-            return
-        node_id, kind = parts[2], parts[3]
-        data = json.loads(payload) if payload else {}
-
-        if kind == "status":
-            if data.get("status") == "online":
-                self._online.add(node_id)
-            else:
-                self._online.discard(node_id)
-            # readiness check must stay cheap and non-blocking -- see Task 7 docstring
-            if not self._ready_fired and set(self.expected_nodes) <= self._online:
-                self._ready_fired = True
-                self.on_ready()
-        elif kind == "knowledge_ready":
-            self._knowledge_ready.setdefault(data["round_idx"], set()).add(node_id)
-        elif kind == "energy":
-            sqlite_store.upsert_row(
-                self.db_path,
-                node_id,
-                data["round_idx"],
-                _now_iso(),
-                energy_kwh=data["energy_kwh"],
-                duration_s=data["duration_s"],
-                energy_method=data["energy_method"],
-            )
-        elif kind == "eval":
-            self._eval_received.setdefault(data["round_idx"], set()).add(node_id)
-            sqlite_store.upsert_row(
-                self.db_path,
-                node_id,
-                data["round_idx"],
-                _now_iso(),
-                crop_accuracy=data["crop_accuracy"],
-                disease_accuracy=data["disease_accuracy"],
-            )
-
-    def _poll_until(self, round_idx, tracker, expected, sleep_fn, now_fn, poll_interval_s) -> set:
-        deadline = now_fn() + self.round_timeout_s
-        while now_fn() < deadline:
-            if expected <= tracker.get(round_idx, set()):
-                break
+    def wait_until_all_online(self, sleep_fn=time.sleep, poll_interval_s: float = 1.0) -> None:
+        while not all(self.health_check(n) for n in self.expected_nodes):
             sleep_fn(poll_interval_s)
-        return tracker.get(round_idx, set()) & expected
 
-    def run_round(self, round_idx, sleep_fn=time.sleep, now_fn=time.time, poll_interval_s: float = 0.5) -> list[str]:
-        self.client.publish("mesh/control/round_start", json.dumps({"round_idx": round_idx}), qos=1)
-
-        active = sorted(
-            self._poll_until(round_idx, self._knowledge_ready, set(self._online), sleep_fn, now_fn, poll_interval_s)
-        )
+    def run_round(self, round_idx: int) -> list:
+        start_results = self.post_all(self.expected_nodes, "/round/start", {"round_idx": round_idx})
+        active = sorted(n for n, r in start_results.items() if r is not None)
         for node_id in active:
-            sqlite_store.upsert_row(self.db_path, node_id, round_idx, _now_iso(), active=1)
+            r = start_results[node_id]
+            sqlite_store.upsert_row(
+                self.db_path,
+                node_id,
+                round_idx,
+                _now_iso(),
+                energy_kwh=r["energy_kwh"],
+                duration_s=r["duration_s"],
+                energy_method=r["energy_method"],
+                knowledge_bytes_sent=r["size_bytes"],
+                active=1,
+            )
 
-        self.client.publish(
-            "mesh/control/round_gather_done",
-            json.dumps({"round_idx": round_idx, "active_nodes": active}),
-            qos=1,
-        )
-
-        # a round is not complete until every active node's eval is in --
-        # otherwise round N+1 could start while round N is still distilling
-        self._poll_until(round_idx, self._eval_received, set(active), sleep_fn, now_fn, poll_interval_s)
+        gather_body = {
+            "round_idx": round_idx,
+            "active_nodes": active,
+            "peer_bases": {n: self.node_base_urls[n] for n in active},
+        }
+        gather_results = self.post_all(active, "/round/gather", gather_body)
+        for node_id in active:
+            r = gather_results.get(node_id)
+            if r is None:
+                continue
+            sqlite_store.upsert_row(
+                self.db_path,
+                node_id,
+                round_idx,
+                _now_iso(),
+                crop_accuracy=r["crop_accuracy"],
+                disease_accuracy=r["disease_accuracy"],
+            )
         return active
 
-    def run_all_rounds(self, sleep_fn=time.sleep, now_fn=time.time) -> None:
+    def run_all_rounds(self) -> None:
         for round_idx in range(self.num_rounds):
-            self.run_round(round_idx, sleep_fn=sleep_fn, now_fn=now_fn)
+            self.run_round(round_idx)
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
@@ -1476,14 +1440,14 @@ Expected: PASS (4 tests)
 
 ```bash
 git add docker/coordinator/coordinator_runner.py tests/test_coordinator_runner.py
-git commit -m "Add CoordinatorRunner: control-plane round timing and DB merge, decoupled from MQTT wiring"
+git commit -m "Add CoordinatorRunner: HTTP round timing and DB merge, decoupled from transport"
 ```
 
 ---
 
-## Task 8: Coordinator container — `main.py` wiring, `Dockerfile`, `requirements.txt`
+## Task 8: Coordinator container — `main.py`, `Dockerfile`, `requirements.txt`
 
-Like Task 6, this is thin glue verified manually in Task 13. The coordinator's image deliberately has **no** PyTorch — it only imports `src.config` and `src.energy.sqlite_store`, neither of which pulls in `src.federated`/`src.models`.
+Like Task 6, this is thin glue verified manually in Task 12. The coordinator's image deliberately has **no** PyTorch — it only imports `src.config` and `src.energy.sqlite_store`, neither of which pulls in `src.federated`/`src.models`.
 
 **Files:**
 - Create: `docker/coordinator/main.py`
@@ -1492,86 +1456,130 @@ Like Task 6, this is thin glue verified manually in Task 13. The coordinator's i
 
 **Interfaces:**
 - Consumes: `CoordinatorRunner` (Task 7); `Config` (`src/config.py`).
-- Produces: a runnable container entry point reading `MQTT_HOST`, `MQTT_PORT`, `CONFIG_PATH`, `ENERGY_DB` from the environment.
+- Produces: a runnable container entry point reading `CONFIG_PATH`, `ENERGY_DB` from the environment; also serves `GET /events` on port `9000` for the dashboard.
 
 - [ ] **Step 1: Write `requirements.txt`**
 
 ```
 # docker/coordinator/requirements.txt
 PyYAML>=6.0
-paho-mqtt>=2.1
+fastapi>=0.115
+uvicorn>=0.30
+httpx>=0.27
 ```
 
 - [ ] **Step 2: Write `main.py`**
 
 ```python
 # docker/coordinator/main.py
-"""Container entry point for the round coordinator. Runs the paho network
-loop on a background thread (loop_start) and blocks the main thread on a
-threading.Event until every expected node reports online -- see
-coordinator_runner.py's docstring for why on_ready must stay non-blocking
-inside the MQTT callback thread.
+"""Entry point for the round coordinator. Fan-out to nodes uses
+asyncio.gather over httpx.AsyncClient for concurrency -- sequential calls
+would force nodes to train one at a time instead of in parallel. Exposes
+a tiny /events endpoint purely for the dashboard to poll -- it records
+only which path was called and what status came back, never touching
+knowledge content.
 """
 
 from __future__ import annotations
 
-import json
+import asyncio
 import os
 import sys
 import threading
+import time
 from pathlib import Path
 
-# See docker/node/main.py's identical comment: makes `from src...` resolve
-# both inside the flattened /app container layout and when run locally.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-import paho.mqtt.client as mqtt
+import httpx
+import uvicorn
+from fastapi import FastAPI
 
 from src.config import Config
 from coordinator_runner import CoordinatorRunner
 
+events: list = []
+MAX_EVENTS = 200
+
+
+async def _post_one(client: httpx.AsyncClient, node_id: str, url: str, body: dict, timeout: float):
+    try:
+        resp = await client.post(url, json=body, timeout=timeout)
+        events.append({"ts": time.time(), "node_id": node_id, "path": url, "status": resp.status_code})
+        events[:] = events[-MAX_EVENTS:]
+        if resp.status_code != 200:
+            return node_id, None
+        return node_id, resp.json()
+    except httpx.HTTPError:
+        events.append({"ts": time.time(), "node_id": node_id, "path": url, "status": "error"})
+        events[:] = events[-MAX_EVENTS:]
+        return node_id, None
+
+
+async def _post_all_async(node_base_urls: dict, node_ids: list, path: str, body: dict, timeout: float) -> dict:
+    async with httpx.AsyncClient() as client:
+        results = await asyncio.gather(
+            *(_post_one(client, n, f"{node_base_urls[n]}{path}", body, timeout) for n in node_ids)
+        )
+    return dict(results)
+
+
+def make_post_all(node_base_urls: dict, timeout: float):
+    def post_all(node_ids: list, path: str, body: dict) -> dict:
+        if not node_ids:
+            return {}
+        return asyncio.run(_post_all_async(node_base_urls, node_ids, path, body, timeout))
+
+    return post_all
+
+
+def make_health_check(node_base_urls: dict):
+    def health_check(node_id: str) -> bool:
+        try:
+            resp = httpx.get(f"{node_base_urls[node_id]}/health", timeout=5.0)
+            return resp.status_code == 200
+        except httpx.HTTPError:
+            return False
+
+    return health_check
+
 
 def main() -> None:
-    mqtt_host = os.environ.get("MQTT_HOST", "broker")
-    mqtt_port = int(os.environ.get("MQTT_PORT", "1883"))
-    energy_db = os.environ["ENERGY_DB"]
     cfg = Config.load(os.environ.get("CONFIG_PATH"))
-
     num_nodes = cfg.get("data.num_nodes", 3)
     expected_nodes = [f"node_{i}" for i in range(num_nodes)]
-    num_rounds = cfg.get("training.rounds", 5)
+    node_base_urls = {n: f"http://{n}:8000" for n in expected_nodes}
     round_timeout_s = cfg.get("docker_mesh.round_timeout_s", 300)
+    energy_db = os.environ["ENERGY_DB"]
 
-    ready_event = threading.Event()
-    client = mqtt.Client(client_id="coordinator", callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
     runner = CoordinatorRunner(
         expected_nodes=expected_nodes,
-        num_rounds=num_rounds,
+        node_base_urls=node_base_urls,
+        num_rounds=cfg.get("training.rounds", 5),
         round_timeout_s=round_timeout_s,
-        client=client,
         db_path=energy_db,
-        on_ready=ready_event.set,
+        post_all=make_post_all(node_base_urls, round_timeout_s),
+        health_check=make_health_check(node_base_urls),
     )
 
-    def _on_message(_client, _userdata, msg):
-        runner.on_message(msg.topic, msg.payload)
+    events_app = FastAPI()
 
-    client.on_message = _on_message
-    client.connect(mqtt_host, mqtt_port)
-    client.subscribe("mesh/node/+/status")
-    client.subscribe("mesh/node/+/knowledge_ready")
-    client.subscribe("mesh/node/+/energy")
-    client.subscribe("mesh/node/+/eval")
-    client.loop_start()
+    @events_app.get("/events")
+    def get_events():
+        return events[-MAX_EVENTS:]
+
+    server_thread = threading.Thread(
+        target=lambda: uvicorn.run(events_app, host="0.0.0.0", port=9000), daemon=True
+    )
+    server_thread.start()
 
     print(f"[coordinator] waiting for {expected_nodes} to come online...")
-    ready_event.wait()
+    runner.wait_until_all_online()
     print("[coordinator] all nodes online, starting round loop")
     runner.run_all_rounds()
     print("[coordinator] all rounds complete")
 
-    while True:
-        threading.Event().wait(3600)  # idle -- no re-run trigger yet, see spec §12
+    threading.Event().wait()  # idle -- no re-run trigger yet, see spec §12
 
 
 if __name__ == "__main__":
@@ -1589,79 +1597,38 @@ WORKDIR /app
 COPY docker/coordinator/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+COPY src/__init__.py ./src/__init__.py
 COPY src/config.py ./src/config.py
 COPY src/energy/ ./src/energy/
 COPY docker/coordinator/main.py docker/coordinator/coordinator_runner.py ./
 
+EXPOSE 9000
 CMD ["python", "main.py"]
 ```
 
-Note: `src/` needs an `__init__.py` for `src.config`/`src.energy` to import correctly — copy those too:
-
-```dockerfile
-COPY src/__init__.py ./src/__init__.py
-```
-
-(Add this line right before the `COPY src/config.py` line above.)
-
-- [ ] **Step 4: Build the image to verify it compiles and installs cleanly**
+- [ ] **Step 4: Build the image to verify it compiles, installs cleanly, and stays lean**
 
 Run: `docker build -f docker/coordinator/Dockerfile -t mesh-coordinator .` (from repo root)
-Expected: build succeeds with no errors, and no PyTorch gets installed (`docker run --rm mesh-coordinator python -c "import torch"` should fail with `ModuleNotFoundError` — confirming the image really is lean).
+Expected: build succeeds; `docker run --rm mesh-coordinator python -c "import torch"` fails with `ModuleNotFoundError` (confirms the image really has no PyTorch).
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add docker/coordinator/main.py docker/coordinator/Dockerfile docker/coordinator/requirements.txt
-git commit -m "Add coordinator container: main.py wiring, Dockerfile, requirements"
+git commit -m "Add coordinator container: asyncio/httpx fan-out, /events endpoint, Dockerfile"
 ```
 
 ---
 
-## Task 9: Broker config
-
-**Files:**
-- Create: `docker/broker/mosquitto.conf`
-
-**Interfaces:**
-- Consumes: nothing.
-- Produces: Mosquitto config consumed by `docker-compose.yml` (Task 12).
-
-- [ ] **Step 1: Write the config**
-
-```
-# docker/broker/mosquitto.conf
-listener 1883
-allow_anonymous true
-persistence false
-log_dest stdout
-```
-
-- [ ] **Step 2: Verify syntax**
-
-Run: `docker run --rm -v "$(pwd)/docker/broker/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro" eclipse-mosquitto:2 mosquitto -c /mosquitto/config/mosquitto.conf -v &` then check it logs "mosquitto version ... running" with no config errors, then stop it (`docker stop` on the container, or Ctrl+C if run in foreground without `&`).
-Expected: no config parse errors printed.
-
-- [ ] **Step 3: Commit**
-
-```bash
-git add docker/broker/mosquitto.conf
-git commit -m "Add Mosquitto broker config"
-```
-
----
-
-## Task 10: Dashboard data helpers
-
-Pure, testable functions only — no Streamlit calls. These are what Task 11's `app.py` calls into; the `st.*` rendering itself is not automated-testable and is verified manually in Task 13.
+## Task 9: Dashboard data helpers
 
 **Files:**
 - Create: `docker/dashboard/data.py`
 - Test: `tests/test_dashboard_data.py`
 
 **Interfaces:**
-- Consumes: `sqlite_store.read_all` (Task 2).
-- Produces: `is_metadata_topic(topic: str) -> bool`; `format_feed_entry(topic: str, payload: bytes, ts: float) -> dict`; `DASHBOARD_SUBSCRIBE_TOPICS: tuple[str, ...]` (the exact wildcard subscription list Task 11's `app.py` must use — deliberately excludes `mesh/node/+/knowledge`).
+- Consumes: nothing (pure function, no I/O).
+- Produces: `build_status_rows(node_health: dict[str, bool]) -> list[dict]`. Used by Task 10.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1669,43 +1636,25 @@ Pure, testable functions only — no Streamlit calls. These are what Task 11's `
 # tests/test_dashboard_data.py
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "docker" / "dashboard"))
 
-from data import DASHBOARD_SUBSCRIBE_TOPICS, format_feed_entry, is_metadata_topic  # noqa: E402
+from data import build_status_rows  # noqa: E402
 
 
-def test_dashboard_never_subscribes_to_the_binary_knowledge_topic():
-    assert "mesh/node/+/knowledge" not in DASHBOARD_SUBSCRIBE_TOPICS
-    for topic in DASHBOARD_SUBSCRIBE_TOPICS:
-        assert not topic.endswith("/knowledge")
+def test_build_status_rows_sorts_by_node_id():
+    rows = build_status_rows({"node_2": True, "node_0": False, "node_1": True})
+    assert rows == [
+        {"node_id": "node_0", "online": False},
+        {"node_id": "node_1", "online": True},
+        {"node_id": "node_2", "online": True},
+    ]
 
 
-def test_is_metadata_topic_accepts_control_and_metadata_topics():
-    assert is_metadata_topic("mesh/control/round_start")
-    assert is_metadata_topic("mesh/control/round_gather_done")
-    assert is_metadata_topic("mesh/node/node_0/status")
-    assert is_metadata_topic("mesh/node/node_0/knowledge_ready")
-    assert is_metadata_topic("mesh/node/node_0/energy")
-    assert is_metadata_topic("mesh/node/node_0/eval")
-
-
-def test_is_metadata_topic_rejects_the_binary_knowledge_topic():
-    assert not is_metadata_topic("mesh/node/node_0/knowledge")
-
-
-def test_format_feed_entry_parses_json_payload():
-    payload = json.dumps({"round_idx": 2}).encode()
-    entry = format_feed_entry("mesh/control/round_start", payload, ts=123.0)
-    assert entry == {"topic": "mesh/control/round_start", "payload": {"round_idx": 2}, "timestamp": 123.0}
-
-
-def test_format_feed_entry_falls_back_to_byte_count_on_non_json():
-    entry = format_feed_entry("mesh/node/node_0/knowledge", b"\x00\x01\x02", ts=1.0)
-    assert entry["payload"] == "<3 bytes>"
+def test_build_status_rows_handles_empty_input():
+    assert build_status_rows({}) == []
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -1717,67 +1666,37 @@ Expected: FAIL with `ModuleNotFoundError: No module named 'data'`
 
 ```python
 # docker/dashboard/data.py
-"""Pure helpers for the dashboard's live MQTT feed and DB view --
-deliberately separated from Streamlit rendering (docker/dashboard/app.py)
-so this logic is unit-testable without a live broker or a running
-Streamlit session.
+"""Pure helpers for the dashboard -- deliberately separated from Streamlit
+rendering (docker/dashboard/app.py) so this logic is unit-testable without
+a running Streamlit session or real HTTP calls.
 """
 
 from __future__ import annotations
 
-import json
 
-# Deliberately excludes mesh/node/+/knowledge (the binary KnowledgePayload
-# topic): it wouldn't render meaningfully as a feed entry, and subscribing
-# to it would add real broker fan-out/bandwidth for content the dashboard
-# never needs -- see spec §8.
-DASHBOARD_SUBSCRIBE_TOPICS: tuple[str, ...] = (
-    "mesh/control/round_start",
-    "mesh/control/round_gather_done",
-    "mesh/node/+/status",
-    "mesh/node/+/knowledge_ready",
-    "mesh/node/+/energy",
-    "mesh/node/+/eval",
-)
-
-_METADATA_SUFFIXES = {"status", "knowledge_ready", "energy", "eval"}
-
-
-def is_metadata_topic(topic: str) -> bool:
-    if topic in ("mesh/control/round_start", "mesh/control/round_gather_done"):
-        return True
-    parts = topic.split("/")
-    return (
-        len(parts) == 4
-        and parts[0] == "mesh"
-        and parts[1] == "node"
-        and parts[3] in _METADATA_SUFFIXES
-    )
-
-
-def format_feed_entry(topic: str, payload: bytes, ts: float) -> dict:
-    try:
-        parsed = json.loads(payload)
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        parsed = f"<{len(payload)} bytes>"
-    return {"topic": topic, "payload": parsed, "timestamp": ts}
+def build_status_rows(node_health: dict) -> list:
+    """node_health: {node_id: bool} -> sorted list of {"node_id", "online"}
+    rows, so table row order is a guarantee rather than an accident of
+    dict iteration order.
+    """
+    return [{"node_id": node_id, "online": online} for node_id, online in sorted(node_health.items())]
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `pytest tests/test_dashboard_data.py -v`
-Expected: PASS (5 tests)
+Expected: PASS (2 tests)
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add docker/dashboard/data.py tests/test_dashboard_data.py
-git commit -m "Add dashboard data helpers with metadata-only MQTT subscription list"
+git commit -m "Add dashboard status-table helper"
 ```
 
 ---
 
-## Task 11: Dashboard container — Streamlit `app.py`, `Dockerfile`, `requirements.txt`
+## Task 10: Dashboard container — Streamlit `app.py`, `Dockerfile`, `requirements.txt`
 
 Not TDD — Streamlit rendering itself has no automated test here; this task's steps end in a manual verification (running `streamlit run` and checking the browser), not a pytest run. Say so explicitly rather than claim UI correctness from code review alone.
 
@@ -1787,8 +1706,8 @@ Not TDD — Streamlit rendering itself has no automated test here; this task's s
 - Create: `docker/dashboard/requirements.txt`
 
 **Interfaces:**
-- Consumes: `is_metadata_topic`, `format_feed_entry`, `DASHBOARD_SUBSCRIBE_TOPICS` (Task 10); `sqlite_store.read_all` (Task 2).
-- Produces: a Streamlit app reading `MQTT_HOST`, `MQTT_PORT`, `MERGED_DB`, `REFRESH_S` from the environment, serving on port 8501.
+- Consumes: `build_status_rows` (Task 9); `sqlite_store.read_all` (Task 2).
+- Produces: a Streamlit app reading `NUM_NODES`, `COORDINATOR_EVENTS_URL`, `MERGED_DB`, `REFRESH_S` from the environment, serving on port 8501.
 
 - [ ] **Step 1: Write `requirements.txt`**
 
@@ -1796,7 +1715,7 @@ Not TDD — Streamlit rendering itself has no automated test here; this task's s
 # docker/dashboard/requirements.txt
 streamlit>=1.38
 pandas>=2.0
-paho-mqtt>=2.1
+httpx>=0.27
 ```
 
 (No `PyYAML` — `app.py`/`data.py` never read `config.yaml` directly; everything they need comes from env vars or `sqlite_store`.)
@@ -1805,90 +1724,62 @@ paho-mqtt>=2.1
 
 ```python
 # docker/dashboard/app.py
-"""Read-only observability dashboard: connection/liveness status, a live
-feed of control-plane MQTT traffic, and a table/charts over the merged
-SQLite metrics. No Docker socket access, no control-plane publish rights
--- this process is excluded from the sustainability accounting scope
-(see spec §8): its own CPU usage is outside every ComputeEnergyTracker
-scope in the node containers.
+"""Read-only observability dashboard: polls each node's /health directly,
+polls the coordinator's /events for a live request log, and reads the
+merged SQLite metrics. No Docker socket access, and it only ever issues
+GET requests -- it cannot trigger a run. Excluded from the sustainability
+accounting scope (see spec §8): its own CPU usage is outside every
+ComputeEnergyTracker scope in the node containers.
 """
 
 from __future__ import annotations
 
 import os
 import sys
-import threading
 import time
 from pathlib import Path
 
-# See docker/node/main.py's identical comment: makes `from src...` resolve
-# both inside the flattened /app container layout and when run locally
-# (e.g. `streamlit run docker/dashboard/app.py` from the repo root).
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
+import httpx
 import pandas as pd
-import paho.mqtt.client as mqtt
 import streamlit as st
 
-from data import DASHBOARD_SUBSCRIBE_TOPICS, format_feed_entry
+from data import build_status_rows
 from src.energy.sqlite_store import read_all
 
-MQTT_HOST = os.environ.get("MQTT_HOST", "broker")
-MQTT_PORT = int(os.environ.get("MQTT_PORT", "1883"))
+NUM_NODES = int(os.environ.get("NUM_NODES", "3"))
+NODE_BASE_URLS = {f"node_{i}": f"http://node_{i}:8000" for i in range(NUM_NODES)}
+COORDINATOR_EVENTS_URL = os.environ.get("COORDINATOR_EVENTS_URL", "http://coordinator:9000/events")
 MERGED_DB = os.environ.get("MERGED_DB", "/energy/merged.db")
 REFRESH_S = float(os.environ.get("REFRESH_S", "3"))
-STALE_AFTER_S = 600  # 2x a generous round_timeout_s default; adjust if config's is much larger
-
-FEED_MAX_ENTRIES = 200
 
 
-@st.cache_resource
-def _mqtt_state():
-    """One shared, session-independent state dict + background MQTT
-    client for the whole dashboard process (cache_resource runs once per
-    process, not per browser session).
-    """
-    state = {"feed": [], "last_seen": {}, "lock": threading.Lock()}
+def _poll_health() -> dict:
+    health = {}
+    for node_id, base_url in NODE_BASE_URLS.items():
+        try:
+            resp = httpx.get(f"{base_url}/health", timeout=3.0)
+            health[node_id] = resp.status_code == 200
+        except httpx.HTTPError:
+            health[node_id] = False
+    return health
 
-    def _on_message(_client, _userdata, msg):
-        with state["lock"]:
-            entry = format_feed_entry(msg.topic, msg.payload, ts=time.time())
-            state["feed"].append(entry)
-            state["feed"][:] = state["feed"][-FEED_MAX_ENTRIES:]
-            parts = msg.topic.split("/")
-            if len(parts) == 4 and parts[1] == "node":
-                state["last_seen"][parts[2]] = time.time()
 
-    client = mqtt.Client(client_id="dashboard", callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
-    client.on_message = _on_message
-    client.connect(MQTT_HOST, MQTT_PORT)
-    for topic in DASHBOARD_SUBSCRIBE_TOPICS:
-        client.subscribe(topic)
-    client.loop_start()
-    state["client"] = client
-    return state
+def _poll_events() -> list:
+    try:
+        resp = httpx.get(COORDINATOR_EVENTS_URL, timeout=3.0)
+        return resp.json() if resp.status_code == 200 else []
+    except httpx.HTTPError:
+        return []
 
 
 def render() -> None:
     st.set_page_config(page_title="Mesh dashboard", layout="wide")
-    st.title("Docker/MQTT mesh — live status")
-
-    state = _mqtt_state()
-    with state["lock"]:
-        feed_snapshot = list(state["feed"])
-        last_seen_snapshot = dict(state["last_seen"])
+    st.title("Docker/HTTP mesh — live status")
 
     st.subheader("Node status")
-    now = time.time()
-    status_rows = [
-        {
-            "node_id": node_id,
-            "last_seen_s_ago": round(now - ts, 1),
-            "state": "stale" if now - ts > STALE_AFTER_S else "online",
-        }
-        for node_id, ts in sorted(last_seen_snapshot.items())
-    ]
-    st.dataframe(pd.DataFrame(status_rows), use_container_width=True)
+    st.dataframe(pd.DataFrame(build_status_rows(_poll_health())), use_container_width=True)
 
     st.subheader("Round metrics (merged.db)")
     rows = read_all(MERGED_DB)
@@ -1902,8 +1793,8 @@ def render() -> None:
     else:
         st.write("No rows yet.")
 
-    st.subheader("Live control-plane feed")
-    st.dataframe(pd.DataFrame(list(reversed(feed_snapshot))), use_container_width=True)
+    st.subheader("Coordinator event log")
+    st.dataframe(pd.DataFrame(list(reversed(_poll_events()))), use_container_width=True)
 
     time.sleep(REFRESH_S)
     st.rerun()
@@ -1935,29 +1826,29 @@ CMD ["streamlit", "run", "app.py", "--server.address=0.0.0.0", "--server.port=85
 - [ ] **Step 4: Build the image to verify it compiles and installs cleanly**
 
 Run: `docker build -f docker/dashboard/Dockerfile -t mesh-dashboard .` (from repo root)
-Expected: build succeeds with no errors, and no PyTorch is installed (`docker run --rm mesh-dashboard python -c "import torch"` fails with `ModuleNotFoundError`).
+Expected: build succeeds; `docker run --rm mesh-dashboard python -c "import torch"` fails with `ModuleNotFoundError`.
 
-- [ ] **Step 5: Manual check — run it standalone against no broker yet**
+- [ ] **Step 5: Manual check — run it standalone before any nodes/coordinator exist**
 
-Run: `docker run --rm -p 8501:8501 -e MQTT_HOST=localhost mesh-dashboard` and open `http://localhost:8501`.
-Expected: the page loads (it will show empty/stale status since no broker/nodes are running yet — that's expected at this point; full verification with a live mesh happens in Task 13). This step only confirms the app boots and serves a page — say so explicitly, don't claim more than that.
+Run: `docker run --rm -p 8501:8501 mesh-dashboard` and open `http://localhost:8501`.
+Expected: the page loads showing all nodes unreachable and no rows yet — that's expected at this point; full verification with a live mesh happens in Task 12. This step only confirms the app boots and serves a page — say so explicitly, don't claim more than that.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add docker/dashboard/app.py docker/dashboard/Dockerfile docker/dashboard/requirements.txt
-git commit -m "Add dashboard container: Streamlit app, Dockerfile, requirements"
+git commit -m "Add dashboard container: Streamlit app polling nodes and coordinator over HTTP"
 ```
 
 ---
 
-## Task 12: `docker-compose.yml` — assemble all six services
+## Task 11: `docker-compose.yml` — assemble all five services
 
 **Files:**
 - Create: `docker/docker-compose.yml`
 
 **Interfaces:**
-- Consumes: every Dockerfile from Tasks 6, 8, 9, 11; `config.yaml` (Task 3); `data/docker_mesh/` (produced by running Task 3's `split_node_data.py`, not by this task).
+- Consumes: every Dockerfile from Tasks 6, 8, 10; `config.yaml` (Task 3); `data/docker_mesh/` (produced by running Task 3's `split_node_data.py`, not by this task).
 - Produces: the full runnable stack.
 
 - [ ] **Step 1: Write `docker-compose.yml`**
@@ -1965,20 +1856,14 @@ git commit -m "Add dashboard container: Streamlit app, Dockerfile, requirements"
 ```yaml
 # docker/docker-compose.yml
 services:
-  broker:
-    image: eclipse-mosquitto:2
-    volumes:
-      - ./broker/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
-    networks: [mesh]
-
   coordinator:
     build:
       context: ..
       dockerfile: docker/coordinator/Dockerfile
-    depends_on: [broker]
+    depends_on: [node_0, node_1, node_2]
+    ports:
+      - "9000:9000"
     environment:
-      MQTT_HOST: broker
-      MQTT_PORT: "1883"
       CONFIG_PATH: /config/config.yaml
       ENERGY_DB: /energy/merged.db
     volumes:
@@ -1990,11 +1875,8 @@ services:
     build:
       context: ..
       dockerfile: docker/node/Dockerfile
-    depends_on: [broker]
     environment:
       NODE_ID: node_0
-      MQTT_HOST: broker
-      MQTT_PORT: "1883"
       CONFIG_PATH: /config/config.yaml
       DATA_ROOT: /data/node_0
       PROBE_ROOT: /data/probe
@@ -2012,11 +1894,8 @@ services:
     build:
       context: ..
       dockerfile: docker/node/Dockerfile
-    depends_on: [broker]
     environment:
       NODE_ID: node_1
-      MQTT_HOST: broker
-      MQTT_PORT: "1883"
       CONFIG_PATH: /config/config.yaml
       DATA_ROOT: /data/node_1
       PROBE_ROOT: /data/probe
@@ -2034,11 +1913,8 @@ services:
     build:
       context: ..
       dockerfile: docker/node/Dockerfile
-    depends_on: [broker]
     environment:
       NODE_ID: node_2
-      MQTT_HOST: broker
-      MQTT_PORT: "1883"
       CONFIG_PATH: /config/config.yaml
       DATA_ROOT: /data/node_2
       PROBE_ROOT: /data/probe
@@ -2056,12 +1932,12 @@ services:
     build:
       context: ..
       dockerfile: docker/dashboard/Dockerfile
-    depends_on: [broker]
+    depends_on: [coordinator, node_0, node_1, node_2]
     ports:
       - "8501:8501"
     environment:
-      MQTT_HOST: broker
-      MQTT_PORT: "1883"
+      NUM_NODES: "3"
+      COORDINATOR_EVENTS_URL: http://coordinator:9000/events
       MERGED_DB: /energy/merged.db
       REFRESH_S: "3"
     volumes:
@@ -2072,6 +1948,8 @@ networks:
   mesh: {}
 ```
 
+Node services don't strictly need to wait for anything (they serve `/health` immediately on startup), and the coordinator's own `wait_until_all_online` already tolerates nodes not being up yet — `depends_on` here is just for a tidier startup order in `docker compose up` logs, not a correctness requirement.
+
 - [ ] **Step 2: Validate the compose file**
 
 Run: `docker compose -f docker/docker-compose.yml config`
@@ -2081,14 +1959,14 @@ Expected: prints the fully-resolved config with no errors (this does not build o
 
 ```bash
 git add docker/docker-compose.yml
-git commit -m "Add docker-compose.yml assembling broker, coordinator, 3 nodes, dashboard"
+git commit -m "Add docker-compose.yml assembling coordinator, 3 nodes, dashboard (no broker)"
 ```
 
 ---
 
-## Task 13: Full-stack integration smoke test
+## Task 12: Full-stack integration smoke test
 
-Manual verification per spec §10 — this task has no new source files, it exercises everything built in Tasks 1–12 together.
+Manual verification per spec §10 — this task has no new source files, it exercises everything built in Tasks 1–11 together.
 
 **Files:** none (verification only).
 
@@ -2104,47 +1982,51 @@ Expected: prints `Wrote split dataset + classes.json to data/docker_mesh`, and `
 - [ ] **Step 3: Bring up the full stack**
 
 Run: `docker compose -f docker/docker-compose.yml up --build`
-Expected: all 6 services start; node logs show `connected to broker:1883, waiting for rounds...`; coordinator logs show it waiting, then `all nodes online, starting round loop`, then `all rounds complete`.
+Expected: all 5 services start; coordinator logs show it waiting, then `all nodes online, starting round loop`, then `all rounds complete`.
 
 - [ ] **Step 4: Verify the merged database**
 
 Run: `python -c "from src.energy.sqlite_store import read_all; import json; print(json.dumps(read_all('outputs/docker_mesh/energy/merged.db'), indent=2))"`
 Expected: exactly 3 rows (`round_idx=0`, one per node), each with `energy_kwh`, `knowledge_bytes_sent`, `crop_accuracy`, `disease_accuracy`, and `active=1` all populated (not `None`).
 
-- [ ] **Step 5: Verify the dashboard**
+- [ ] **Step 5: Verify the coordinator's event log directly**
 
-Open `http://localhost:8501`. Expected: "Node status" shows all 3 nodes with a recent `last_seen_s_ago`; "Round metrics" table shows the same 3 rows as Step 4; "Live control-plane feed" shows `round_start`/`round_gather_done`/`status`/`knowledge_ready`/`energy`/`eval` entries — confirm by visual inspection that no entry's topic ends in `/knowledge` (the binary payload topic must never appear, since the dashboard never subscribes to it).
+Run: `curl http://localhost:9000/events` (or open it in a browser).
+Expected: a JSON list of `{ts, node_id, path, status}` entries for every `/round/start`/`/round/gather` call — confirm none of them include payload content, only path/status.
 
-- [ ] **Step 6: Cross-check against the in-process pipeline**
+- [ ] **Step 6: Verify the dashboard**
+
+Open `http://localhost:8501`. Expected: "Node status" shows all 3 nodes online; "Round metrics" table shows the same 3 rows as Step 4; "Coordinator event log" shows the same entries as Step 5.
+
+- [ ] **Step 7: Cross-check against the in-process pipeline**
 
 Run: `python -m src.train --config config.yaml --arch mobilenet_v3_small` (same seed/config) and compare its per-node `crop_accuracy`/`disease_accuracy` from `outputs/results_mobilenet_v3_small.json` against the Docker run's `merged.db` rows. Expected: same ballpark (not exact — real wall-clock/thread-scheduling nondeterminism between the two runs is expected), which is the practical confirmation that Task 1's class-index alignment fix worked end-to-end rather than silently misaligning logits.
 
-- [ ] **Step 7: Tear down and revert the smoke-test config change**
+- [ ] **Step 8: Tear down and revert the smoke-test config change**
 
 Run: `docker compose -f docker/docker-compose.yml down`
 Revert `config.yaml`'s `training.rounds` back to its original value (5).
 
-- [ ] **Step 8: Commit the reverted config (if Step 1's edit was accidentally committed) or confirm there is nothing to commit**
+- [ ] **Step 9: Commit the reverted config (if Step 1's edit was accidentally committed) or confirm there is nothing to commit**
 
 ```bash
 git status
 ```
-Expected: `config.yaml` shows no diff (already reverted in Step 7) — no commit needed for this task.
+Expected: `config.yaml` shows no diff (already reverted in Step 8) — no commit needed for this task.
 
 ---
 
 ## Appendix: Local verification without Docker
 
-`NodeRunner`/`CoordinatorRunner` (Tasks 5, 7) don't know or care whether they're inside a container — `main.py`/`app.py` (Tasks 6, 8, 11) are thin, env-var-driven wiring with no Docker-specific code. This means every piece except the broker itself can be run as plain host processes, which is faster to iterate on than rebuilding images — a good way to validate Tasks 1–11 end-to-end before ever running `docker build`. Only the broker needs *something* providing an MQTT server on `localhost:1883`; the simplest option is still a single `docker run` for just that one, unmodified image (no build, no Dockerfile of yours involved) — or a natively-installed Mosquitto if Docker Desktop isn't wanted at all for this step.
+`NodeRunner`/`CoordinatorRunner` (Tasks 5, 7) don't know or care whether they're inside a container — `main.py`/`app.py` (Tasks 6, 8, 10) are thin, env-var-driven wiring with no Docker-specific code. Every piece can run as plain host processes — no broker, no Docker at all needed for this workflow (the HTTP redesign removed even the one piece — Mosquitto — that would have needed *something* running).
 
-This works because of the `sys.path.insert` added to `main.py`/`app.py` above (resolves `src/` from the repo root either way) — do this appendix's steps only after Tasks 1–11 are implemented.
+This works because of the `sys.path.insert` in `main.py`/`app.py` above (resolves `src/` from the repo root either way) — do this appendix's steps only after Tasks 1–10 are implemented.
 
-1. Start a broker on localhost: `docker run --rm -p 1883:1883 -v ${PWD}/docker/broker/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro eclipse-mosquitto:2` (or a native Mosquitto install, config from Task 9).
-2. `python scripts/split_node_data.py` — writes `data/docker_mesh/` on the host filesystem directly, no container involved.
-3. In separate terminals, from the repo root, with `MQTT_HOST=localhost` and paths pointing at the host's `data/docker_mesh/...` (not the container's `/data/...`):
-   - Coordinator: `ENERGY_DB=outputs/docker_mesh/energy/merged.db CONFIG_PATH=config.yaml MQTT_HOST=localhost python docker/coordinator/main.py`
-   - `node_0`: `NODE_ID=node_0 MQTT_HOST=localhost CONFIG_PATH=config.yaml DATA_ROOT=data/docker_mesh/node_0 PROBE_ROOT=data/docker_mesh/probe CLASSES_JSON=data/docker_mesh/classes.json ENERGY_DB=outputs/docker_mesh/energy/node_0.db python docker/node/main.py` (repeat for `node_1`/`node_2` with their own `NODE_ID`/`DATA_ROOT`/`ENERGY_DB`)
-   - Dashboard: `MQTT_HOST=localhost MERGED_DB=outputs/docker_mesh/energy/merged.db streamlit run docker/dashboard/app.py`
-4. Open `http://localhost:8501`.
+1. `python scripts/split_node_data.py` — writes `data/docker_mesh/` on the host filesystem directly.
+2. In separate terminals, from the repo root, with paths pointing at the host's `data/docker_mesh/...` (not the container's `/data/...`):
+   - `node_0`: `NODE_ID=node_0 CONFIG_PATH=config.yaml DATA_ROOT=data/docker_mesh/node_0 PROBE_ROOT=data/docker_mesh/probe CLASSES_JSON=data/docker_mesh/classes.json ENERGY_DB=outputs/docker_mesh/energy/node_0.db python docker/node/main.py` (this starts a `uvicorn` server on port 8000 — repeat for `node_1`/`node_2` with their own `NODE_ID`/`DATA_ROOT`/`ENERGY_DB`, but each needs its own port: pass `--port 8001`/`--port 8002` by editing the `uvicorn.run(...)` call's port for the second/third instance, or run each node from a separate working directory with a small per-node override — simplest is temporarily editing the port per terminal for this manual check.)
+   - Coordinator: since `docker/coordinator/main.py` derives node base URLs as `http://node_i:8000` (a Docker Compose DNS assumption), running it locally against nodes on `localhost:8000/8001/8002` needs those URLs overridden — the cleanest way to do this locally is to temporarily hardcode `node_base_urls` in `main()` to `{"node_0": "http://localhost:8000", "node_1": "http://localhost:8001", "node_2": "http://localhost:8002"}` for this manual check only (don't commit that change): `ENERGY_DB=outputs/docker_mesh/energy/merged.db CONFIG_PATH=config.yaml python docker/coordinator/main.py`.
+   - Dashboard: same idea — temporarily override `NODE_BASE_URLS` to point at `localhost:8000/8001/8002`, then `COORDINATOR_EVENTS_URL=http://localhost:9000/events MERGED_DB=outputs/docker_mesh/energy/merged.db streamlit run docker/dashboard/app.py`.
+3. Open `http://localhost:8501`.
 
-This is the same env-var contract `docker-compose.yml` sets — only the *values* (`localhost` + host paths, instead of `broker` + container paths) differ. Once this works, Tasks 6/8/11's `docker build` steps and Task 12/13 just move the same processes into containers with no code changes.
+Once this works, moving to real Docker images (Tasks 6/8/10's `docker build` steps, then Task 11's compose file) is just deleting the temporary localhost-port overrides — Compose's per-service DNS (`http://node_0:8000`) is what the code already assumes by default.
