@@ -19,6 +19,7 @@ per node; only derived, non-invertible artefacts ever leave a node
 """
 
 from __future__ import annotations
+import json
 import random
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -56,10 +57,66 @@ class LabelMaps:
     class_to_crop_disease: dict[int, tuple[int, int]] = field(default_factory=dict)
 
 
+@dataclass
+class GlobalLabelMap:
+    """Class-name-keyed label map, shared across every node container so
+    each node's locally-discovered ImageFolder classes map to the SAME
+    global crop/disease indices as every other node — required for the
+    prototype/logit exchange to align positionally. Keyed by class NAME,
+    not the numeric ImageFolder index used by LabelMaps.class_to_crop_disease,
+    because that index is only meaningful relative to one specific
+    ImageFolder instance (and a node's local ImageFolder only discovers
+    whatever subset of class folders it physically has).
+    """
+
+    crop_classes: list[str]
+    disease_classes: list[str]
+    name_to_crop_disease: dict[str, tuple[int, int]]
+
+
+def build_global_label_map(dataset: "PlantVillageDataset") -> GlobalLabelMap:
+    name_to_crop_disease = {
+        dataset.base.classes[idx]: cd
+        for idx, cd in dataset.labels.class_to_crop_disease.items()
+    }
+    return GlobalLabelMap(
+        crop_classes=list(dataset.labels.crop_classes),
+        disease_classes=list(dataset.labels.disease_classes),
+        name_to_crop_disease=name_to_crop_disease,
+    )
+
+
+def save_global_label_map(label_map: GlobalLabelMap, path: str | Path) -> None:
+    Path(path).write_text(
+        json.dumps(
+            {
+                "crop_classes": label_map.crop_classes,
+                "disease_classes": label_map.disease_classes,
+                "name_to_crop_disease": label_map.name_to_crop_disease,
+            },
+            indent=2,
+        )
+    )
+
+
+def load_global_label_map(path: str | Path) -> GlobalLabelMap:
+    data = json.loads(Path(path).read_text())
+    return GlobalLabelMap(
+        crop_classes=data["crop_classes"],
+        disease_classes=data["disease_classes"],
+        name_to_crop_disease={k: tuple(v) for k, v in data["name_to_crop_disease"].items()},
+    )
+
+
 class PlantVillageDataset(Dataset):
     """Wraps torchvision's ImageFolder, exposing (image, crop_label, disease_label)."""
 
-    def __init__(self, root: str | Path, image_size: int = 160):
+    def __init__(
+        self,
+        root: str | Path,
+        image_size: int = 160,
+        global_label_map: "GlobalLabelMap | None" = None,
+    ):
         self.transform = transforms.Compose(
             [
                 transforms.Resize((image_size, image_size)),
@@ -68,7 +125,27 @@ class PlantVillageDataset(Dataset):
             ]
         )
         self.base = ImageFolder(str(root))
-        self.labels = self._build_label_maps(self.base.classes)
+        if global_label_map is None:
+            self.labels = self._build_label_maps(self.base.classes)
+        else:
+            self.labels = self._apply_global_label_map(self.base.classes, global_label_map)
+
+    @staticmethod
+    def _apply_global_label_map(class_names: list[str], global_label_map: "GlobalLabelMap") -> LabelMaps:
+        missing = [c for c in class_names if c not in global_label_map.name_to_crop_disease]
+        if missing:
+            raise ValueError(
+                f"Classes {missing} are not present in the supplied global label map "
+                f"(classes.json) — the split data and classes.json are out of sync."
+            )
+        class_to_crop_disease = {
+            i: global_label_map.name_to_crop_disease[name] for i, name in enumerate(class_names)
+        }
+        return LabelMaps(
+            crop_classes=list(global_label_map.crop_classes),
+            disease_classes=list(global_label_map.disease_classes),
+            class_to_crop_disease=class_to_crop_disease,
+        )
 
     @staticmethod
     def _build_label_maps(class_names: list[str]) -> LabelMaps:
