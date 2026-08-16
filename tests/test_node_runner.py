@@ -1,0 +1,96 @@
+# tests/test_node_runner.py
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "docker" / "node"))
+
+import torch
+from torch.utils.data import DataLoader
+
+from knowledge_codec import encode_knowledge  # noqa: E402
+from node_runner import NodeRunner  # noqa: E402
+from src.data.plantvillage import make_subset, train_test_split_indices
+from src.energy import sqlite_store
+from src.energy.tracker import ComputeEnergyTracker
+from src.federated.node import KnowledgePayload, Node
+from src.models.factory import build_model
+
+
+def _make_runner(tmp_path, synthetic_dataset, fetch_all_knowledge=None):
+    train_idx, test_idx = train_test_split_indices(list(range(len(synthetic_dataset))), 0.3, seed=1)
+    train_loader = DataLoader(make_subset(synthetic_dataset, train_idx), batch_size=4, shuffle=True)
+    test_loader = DataLoader(make_subset(synthetic_dataset, test_idx), batch_size=4, shuffle=False)
+    probe_loader = DataLoader(make_subset(synthetic_dataset, test_idx), batch_size=4, shuffle=False)
+    num_crop = len(synthetic_dataset.labels.crop_classes)
+    num_disease = len(synthetic_dataset.labels.disease_classes)
+    model = build_model("mobilenet_v3_small", num_crop, num_disease, pretrained=False)
+    node = Node("node_0", model, train_loader, test_loader, device="cpu")
+    tracker = ComputeEnergyTracker(enabled=False, output_dir=tmp_path, fallback_power_watts=15.0)
+    runner = NodeRunner(
+        node_id="node_0",
+        node=node,
+        probe_loader=probe_loader,
+        tracker=tracker,
+        db_path=str(tmp_path / "node_0.db"),
+        fetch_all_knowledge=fetch_all_knowledge or (lambda peer_ids, peer_bases, round_idx: {}),
+    )
+    return runner, probe_loader
+
+
+def test_handle_round_start_returns_response_body_and_writes_db(tmp_path, synthetic_dataset):
+    runner, _ = _make_runner(tmp_path, synthetic_dataset)
+    response = runner.handle_round_start(0)
+
+    assert response["round_idx"] == 0
+    assert response["size_bytes"] > 0
+    assert response["energy_kwh"] is not None
+
+    rows = sqlite_store.read_all(tmp_path / "node_0.db")
+    assert len(rows) == 1
+    assert rows[0]["knowledge_bytes_sent"] == response["size_bytes"]
+
+
+def test_get_knowledge_bytes_returns_none_for_a_different_round(tmp_path, synthetic_dataset):
+    runner, _ = _make_runner(tmp_path, synthetic_dataset)
+    runner.handle_round_start(0)
+    assert runner.get_knowledge_bytes(0) is not None
+    assert runner.get_knowledge_bytes(1) is None
+
+
+def test_handle_round_gather_ignores_peer_data_for_a_different_round(tmp_path, synthetic_dataset):
+    n_probe_holder = {}
+
+    def fake_fetch_all(peer_ids, peer_bases, round_idx):
+        n_probe = n_probe_holder["n"]
+        stale_payload = KnowledgePayload(
+            prototypes={}, crop_logits=torch.zeros(n_probe, 2), disease_logits=torch.zeros(n_probe, 2)
+        )
+        # encoded for round 99, but we are gathering round 0 -- must be dropped
+        return {"node_1": encode_knowledge(99, stale_payload)}
+
+    runner, probe_loader = _make_runner(tmp_path, synthetic_dataset, fetch_all_knowledge=fake_fetch_all)
+    n_probe_holder["n"] = len(probe_loader.dataset)
+
+    response = runner.handle_round_gather(0, ["node_0", "node_1"], {"node_1": "http://node_1:8000"})
+    assert "crop_accuracy" in response
+    assert "disease_accuracy" in response
+
+    rows = sqlite_store.read_all(tmp_path / "node_0.db")
+    assert rows[0]["active"] == 1
+
+
+def test_handle_round_gather_skips_a_peer_whose_fetch_failed(tmp_path, synthetic_dataset):
+    def fake_fetch_all(peer_ids, peer_bases, round_idx):
+        return {"node_1": None}  # peer timed out / errored
+
+    runner, _ = _make_runner(tmp_path, synthetic_dataset, fetch_all_knowledge=fake_fetch_all)
+    response = runner.handle_round_gather(0, ["node_0", "node_1"], {"node_1": "http://node_1:8000"})
+    assert "crop_accuracy" in response
+
+
+def test_handle_round_gather_with_no_peers_still_evaluates(tmp_path, synthetic_dataset):
+    runner, _ = _make_runner(tmp_path, synthetic_dataset)
+    response = runner.handle_round_gather(0, ["node_0"], {})
+    assert "crop_accuracy" in response
