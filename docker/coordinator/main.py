@@ -37,7 +37,10 @@ async def _post_one(client: httpx.AsyncClient, node_id: str, url: str, body: dic
         if resp.status_code != 200:
             return node_id, None
         return node_id, resp.json()
-    except httpx.HTTPError:
+    except (httpx.HTTPError, ValueError):
+        # ValueError covers json.JSONDecodeError -- a node returning HTTP 200
+        # with a non-JSON body must not crash the whole gather() fan-out, it
+        # should just be excluded from this round like any other failure.
         events.append({"ts": time.time(), "node_id": node_id, "path": url, "status": "error"})
         events[:] = events[-MAX_EVENTS:]
         return node_id, None
