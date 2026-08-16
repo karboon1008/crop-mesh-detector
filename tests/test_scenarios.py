@@ -403,3 +403,38 @@ def test_distribution_shift_scenario_end_to_end_smoke(tmp_path, synthetic_datase
     event_types = [e["event_type"] for r in report["rounds"] for e in r["events"]]
     assert event_types == ["shift_applied"]
     assert report["rounds"][1]["events"][0]["details"]["severity"] == 0.5
+
+
+def test_write_scenario_report_includes_sustainability_summary(tmp_path):
+    records = [
+        ScenarioRoundRecord(
+            0, {"node_0": {"crop_accuracy": 0.5}}, {"node_0": {"crop_accuracy": 0.6}}, {"macro_gain": 0.1},
+            baseline_compute_energy_kwh=0.0001, mesh_compute_energy_kwh=0.0002, communication_energy_j=50.0,
+        ),
+        ScenarioRoundRecord(
+            1, {"node_0": {"crop_accuracy": 0.55}}, {"node_0": {"crop_accuracy": 0.7}}, {"macro_gain": 0.15},
+            baseline_compute_energy_kwh=0.0001, mesh_compute_energy_kwh=0.0002, communication_energy_j=50.0,
+        ),
+    ]
+    report_path = write_scenario_report(
+        tmp_path, "unit_test_energy", "node_0",
+        disruption_start_round=1, disruption_end_round=1,
+        config_snapshot={}, records=records,
+    )
+    report = json.loads(report_path.read_text())
+    sustainability = report["summary"]["sustainability"]
+    assert sustainability["total_baseline_compute_energy_kwh"] == pytest.approx(0.0002)
+    assert sustainability["total_mesh_compute_energy_kwh"] == pytest.approx(0.0004)
+    assert sustainability["total_communication_energy_j"] == pytest.approx(100.0)
+    expected_total_mesh_j = 0.0004 * 3_600_000 + 100.0
+    assert sustainability["gain_per_joule"] == pytest.approx(0.15 / expected_total_mesh_j)
+
+
+def test_gain_per_joule_is_none_when_no_energy_recorded():
+    from src.scenarios.harness import _gain_per_joule
+
+    records = [
+        ScenarioRoundRecord(0, {"node_0": {"crop_accuracy": 0.5}}, {"node_0": {"crop_accuracy": 0.6}}, {"macro_gain": 0.1}),
+    ]
+    assert _gain_per_joule(records) is None
+    assert _gain_per_joule([]) is None

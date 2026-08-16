@@ -172,6 +172,32 @@ def _recovery_round(
     return None
 
 
+def _gain_per_joule(records: list[ScenarioRoundRecord]) -> Optional[float]:
+    """The final round's macro collaboration gain divided by the total
+    energy (compute + communication) the mesh spent across the whole run —
+    Appendix A's gain_per_joule metric. Returns None when no energy was
+    recorded at all, to avoid a divide-by-zero silently reporting 0.0 as if
+    it were a measured (rather than absent) figure.
+    """
+    if not records:
+        return None
+    total_mesh_energy_j = (
+        sum(r.mesh_compute_energy_kwh for r in records) * 3_600_000
+        + sum(r.communication_energy_j for r in records)
+    )
+    if total_mesh_energy_j <= 0:
+        return None
+    final_gain = records[-1].collaboration_gain.get("macro_gain", 0.0)
+    # Handle case where macro_gain is a dict (from compute_collaboration_gain)
+    # by averaging its values; otherwise it's already a scalar
+    if isinstance(final_gain, dict):
+        values = list(final_gain.values())
+        if not values:
+            return None
+        final_gain = sum(values) / len(values)
+    return final_gain / total_mesh_energy_j
+
+
 def write_scenario_report(
     output_dir: Path,
     scenario_name: str,
@@ -197,6 +223,12 @@ def write_scenario_report(
             "recovery_round_baseline": _recovery_round(
                 records, target_node_id, disruption_start_round, disruption_end_round, "baseline_eval"
             ),
+            "sustainability": {
+                "total_baseline_compute_energy_kwh": sum(r.baseline_compute_energy_kwh for r in records),
+                "total_mesh_compute_energy_kwh": sum(r.mesh_compute_energy_kwh for r in records),
+                "total_communication_energy_j": sum(r.communication_energy_j for r in records),
+                "gain_per_joule": _gain_per_joule(records),
+            },
         },
     }
     path = scenarios_dir / f"{scenario_name}.json"
