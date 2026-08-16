@@ -1,0 +1,92 @@
+# docker/docker-compose.yml
+services:
+  coordinator:
+    build:
+      context: ..
+      dockerfile: docker/coordinator/Dockerfile
+    depends_on: [node_0, node_1, node_2]
+    ports:
+      - "9000:9000"
+    environment:
+      CONFIG_PATH: /config/config.yaml
+      ENERGY_DB: /energy/merged.db
+    volumes:
+      - ../config.yaml:/config/config.yaml:ro
+      - ../outputs/docker_mesh/energy:/energy
+    networks: [mesh]
+
+  node_0:
+    build:
+      context: ..
+      dockerfile: docker/node/Dockerfile
+    environment:
+      NODE_ID: node_0
+      CONFIG_PATH: /config/config.yaml
+      DATA_ROOT: /data/node_0
+      PROBE_ROOT: /data/probe
+      CLASSES_JSON: /data/classes.json
+      ENERGY_DB: /energy/node_0.db
+    volumes:
+      - ../config.yaml:/config/config.yaml:ro
+      - ../data/docker_mesh/node_0:/data/node_0:ro
+      - ../data/docker_mesh/probe:/data/probe:ro
+      - ../data/docker_mesh/classes.json:/data/classes.json:ro
+      - ../outputs/docker_mesh/energy:/energy
+    networks: [mesh]
+
+  node_1:
+    build:
+      context: ..
+      dockerfile: docker/node/Dockerfile
+    environment:
+      NODE_ID: node_1
+      CONFIG_PATH: /config/config.yaml
+      DATA_ROOT: /data/node_1
+      PROBE_ROOT: /data/probe
+      CLASSES_JSON: /data/classes.json
+      ENERGY_DB: /energy/node_1.db
+    volumes:
+      - ../config.yaml:/config/config.yaml:ro
+      - ../data/docker_mesh/node_1:/data/node_1:ro
+      - ../data/docker_mesh/probe:/data/probe:ro
+      - ../data/docker_mesh/classes.json:/data/classes.json:ro
+      - ../outputs/docker_mesh/energy:/energy
+    networks: [mesh]
+
+  node_2:
+    build:
+      context: ..
+      dockerfile: docker/node/Dockerfile
+    environment:
+      NODE_ID: node_2
+      CONFIG_PATH: /config/config.yaml
+      DATA_ROOT: /data/node_2
+      PROBE_ROOT: /data/probe
+      CLASSES_JSON: /data/classes.json
+      ENERGY_DB: /energy/node_2.db
+    volumes:
+      - ../config.yaml:/config/config.yaml:ro
+      - ../data/docker_mesh/node_2:/data/node_2:ro
+      - ../data/docker_mesh/probe:/data/probe:ro
+      - ../data/docker_mesh/classes.json:/data/classes.json:ro
+      - ../outputs/docker_mesh/energy:/energy
+    networks: [mesh]
+
+  dashboard:
+    build:
+      context: ..
+      dockerfile: docker/dashboard/Dockerfile
+    depends_on: [coordinator, node_0, node_1, node_2]
+    ports:
+      - "8501:8501"
+    environment:
+      NUM_NODES: "3"
+      COORDINATOR_EVENTS_URL: http://coordinator:9000/events
+      MERGED_DB: /energy/merged.db
+      REFRESH_S: "3"
+    volumes:
+      - ../outputs/docker_mesh/energy:/energy:ro
+    networks: [mesh]
+
+networks:
+  mesh: {}
