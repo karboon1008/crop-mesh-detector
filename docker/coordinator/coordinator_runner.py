@@ -46,6 +46,16 @@ class CoordinatorRunner:
         active = sorted(n for n, r in start_results.items() if r is not None)
         for node_id in active:
             r = start_results[node_id]
+            # r["size_bytes"] is the size of ONE serialized knowledge payload.
+            # In the HTTP pull model every OTHER active peer independently
+            # fetches that same payload via its own GET /knowledge/{round_idx},
+            # so the bytes actually transmitted off this node are
+            # size_bytes * (active_n - 1). This mirrors src/federated/mesh.py's
+            # RoundLog.total_bytes_exchanged convention exactly (same
+            # "broadcast to every other active peer" multiplier), so the
+            # Docker/HTTP figure stays directly comparable to the in-process
+            # one. Both are upper bounds: they assume every active peer
+            # fetches exactly once and none drop out mid-gather.
             sqlite_store.upsert_row(
                 self.db_path,
                 node_id,
@@ -54,7 +64,7 @@ class CoordinatorRunner:
                 energy_kwh=r["energy_kwh"],
                 duration_s=r["duration_s"],
                 energy_method=r["energy_method"],
-                knowledge_bytes_sent=r["size_bytes"],
+                knowledge_bytes_sent=r["size_bytes"] * max(0, len(active) - 1),
                 active=1,
             )
 

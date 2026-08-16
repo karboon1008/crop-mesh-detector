@@ -63,6 +63,53 @@ def test_run_round_writes_energy_and_eval_rows_from_response_bodies(tmp_path):
     assert rows["node_1"]["knowledge_bytes_sent"] == 100
 
 
+def test_run_round_multiplies_knowledge_bytes_by_the_number_of_fetching_peers(tmp_path):
+    # size_bytes is ONE payload's size; in the HTTP pull model every other
+    # active peer fetches it independently, so the bytes actually leaving a
+    # node are size_bytes * (active_n - 1) -- the same multiplier
+    # src/federated/mesh.py applies to RoundLog.total_bytes_exchanged.
+    def post_all(node_ids, path, body):
+        if path == "/round/start":
+            return {
+                n: {"energy_kwh": 0.0, "duration_s": 0.0, "energy_method": "x", "size_bytes": 100}
+                for n in node_ids
+            }
+        return {n: {"crop_accuracy": 0.0, "disease_accuracy": 0.0} for n in node_ids}
+
+    runner = CoordinatorRunner(
+        expected_nodes=["node_0", "node_1", "node_2"],
+        node_base_urls={n: f"http://{n}:8000" for n in ["node_0", "node_1", "node_2"]},
+        num_rounds=1,
+        round_timeout_s=30,
+        db_path=str(tmp_path / "merged.db"),
+        post_all=post_all,
+        health_check=lambda n: True,
+    )
+    runner.run_round(0)
+
+    rows = sqlite_store.read_all(str(tmp_path / "merged.db"))
+    assert [r["knowledge_bytes_sent"] for r in rows] == [200, 200, 200]
+
+
+def test_run_round_records_zero_knowledge_bytes_when_only_one_node_is_active(tmp_path):
+    # A lone active node has nobody to serve its payload to, so nothing is
+    # actually transmitted -- mesh.py's max(0, active_n - 1) gives 0 here too.
+    def post_all(node_ids, path, body):
+        if path == "/round/start":
+            return {
+                "node_0": {"energy_kwh": 0.0, "duration_s": 0.0, "energy_method": "x", "size_bytes": 100},
+                "node_1": None,
+            }
+        return {n: {"crop_accuracy": 0.0, "disease_accuracy": 0.0} for n in node_ids}
+
+    runner = _make_runner(tmp_path, post_all)
+    runner.run_round(0)
+
+    rows = sqlite_store.read_all(str(tmp_path / "merged.db"))
+    assert len(rows) == 1
+    assert rows[0]["knowledge_bytes_sent"] == 0
+
+
 def test_run_round_excludes_a_node_that_failed_round_start(tmp_path):
     def post_all(node_ids, path, body):
         if path == "/round/start":
