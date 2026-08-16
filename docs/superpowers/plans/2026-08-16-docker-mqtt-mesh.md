@@ -1071,6 +1071,15 @@ NodeRunner, and drives everything from MQTT callbacks.
 from __future__ import annotations
 
 import os
+import sys
+from pathlib import Path
+
+# In the container, /app already has src/ copied alongside this file, so
+# this insert is a harmless no-op there. Running locally (e.g. `python
+# docker/node/main.py` from the repo root, for the no-Docker verification
+# workflow) main.py's own directory does NOT contain src/ -- this makes
+# `from src...` resolve in both cases without two different code paths.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import paho.mqtt.client as mqtt
 from torch.utils.data import DataLoader
@@ -1508,7 +1517,13 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import threading
+from pathlib import Path
+
+# See docker/node/main.py's identical comment: makes `from src...` resolve
+# both inside the flattened /app container layout and when run locally.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import paho.mqtt.client as mqtt
 
@@ -1801,8 +1816,15 @@ scope in the node containers.
 from __future__ import annotations
 
 import os
+import sys
 import threading
 import time
+from pathlib import Path
+
+# See docker/node/main.py's identical comment: makes `from src...` resolve
+# both inside the flattened /app container layout and when run locally
+# (e.g. `streamlit run docker/dashboard/app.py` from the repo root).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import pandas as pd
 import paho.mqtt.client as mqtt
@@ -2108,3 +2130,21 @@ Revert `config.yaml`'s `training.rounds` back to its original value (5).
 git status
 ```
 Expected: `config.yaml` shows no diff (already reverted in Step 7) — no commit needed for this task.
+
+---
+
+## Appendix: Local verification without Docker
+
+`NodeRunner`/`CoordinatorRunner` (Tasks 5, 7) don't know or care whether they're inside a container — `main.py`/`app.py` (Tasks 6, 8, 11) are thin, env-var-driven wiring with no Docker-specific code. This means every piece except the broker itself can be run as plain host processes, which is faster to iterate on than rebuilding images — a good way to validate Tasks 1–11 end-to-end before ever running `docker build`. Only the broker needs *something* providing an MQTT server on `localhost:1883`; the simplest option is still a single `docker run` for just that one, unmodified image (no build, no Dockerfile of yours involved) — or a natively-installed Mosquitto if Docker Desktop isn't wanted at all for this step.
+
+This works because of the `sys.path.insert` added to `main.py`/`app.py` above (resolves `src/` from the repo root either way) — do this appendix's steps only after Tasks 1–11 are implemented.
+
+1. Start a broker on localhost: `docker run --rm -p 1883:1883 -v ${PWD}/docker/broker/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro eclipse-mosquitto:2` (or a native Mosquitto install, config from Task 9).
+2. `python scripts/split_node_data.py` — writes `data/docker_mesh/` on the host filesystem directly, no container involved.
+3. In separate terminals, from the repo root, with `MQTT_HOST=localhost` and paths pointing at the host's `data/docker_mesh/...` (not the container's `/data/...`):
+   - Coordinator: `ENERGY_DB=outputs/docker_mesh/energy/merged.db CONFIG_PATH=config.yaml MQTT_HOST=localhost python docker/coordinator/main.py`
+   - `node_0`: `NODE_ID=node_0 MQTT_HOST=localhost CONFIG_PATH=config.yaml DATA_ROOT=data/docker_mesh/node_0 PROBE_ROOT=data/docker_mesh/probe CLASSES_JSON=data/docker_mesh/classes.json ENERGY_DB=outputs/docker_mesh/energy/node_0.db python docker/node/main.py` (repeat for `node_1`/`node_2` with their own `NODE_ID`/`DATA_ROOT`/`ENERGY_DB`)
+   - Dashboard: `MQTT_HOST=localhost MERGED_DB=outputs/docker_mesh/energy/merged.db streamlit run docker/dashboard/app.py`
+4. Open `http://localhost:8501`.
+
+This is the same env-var contract `docker-compose.yml` sets — only the *values* (`localhost` + host paths, instead of `broker` + container paths) differ. Once this works, Tasks 6/8/11's `docker build` steps and Task 12/13 just move the same processes into containers with no code changes.
