@@ -78,7 +78,18 @@ def main() -> None:
     cfg = Config.load(os.environ.get("CONFIG_PATH"))
     num_nodes = cfg.get("data.num_nodes", 3)
     expected_nodes = [f"node_{i}" for i in range(num_nodes)]
-    node_base_urls = {n: f"http://{n}:8000" for n in expected_nodes}
+    # Default reproduces the Docker-network behaviour exactly (service name as
+    # hostname, port 8000), so docker-compose.yml needs no change. Overridable
+    # so peers can live at other hosts/ports without editing this file.
+    # Placeholders are named, not positional, so the env var's value is
+    # self-documenting: {node_id} is e.g. "node_1", {index} is e.g. 1. {index}
+    # is what makes the no-Docker workflow expressible -- three node processes
+    # on three local ports is NODE_URL_TEMPLATE="http://127.0.0.1:810{index}"
+    # (each node process picking up the matching port via its own PORT var).
+    node_url_template = os.environ.get("NODE_URL_TEMPLATE", "http://{node_id}:8000")
+    node_base_urls = {
+        n: node_url_template.format(node_id=n, index=i) for i, n in enumerate(expected_nodes)
+    }
     round_timeout_s = cfg.get("docker_mesh.round_timeout_s", 300)
     energy_db = os.environ["ENERGY_DB"]
 

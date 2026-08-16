@@ -24,7 +24,14 @@ from data import build_status_rows
 from src.energy.sqlite_store import read_all
 
 NUM_NODES = int(os.environ.get("NUM_NODES", "3"))
-NODE_BASE_URLS = {f"node_{i}": f"http://node_{i}:8000" for i in range(NUM_NODES)}
+# Default reproduces the Docker-network behaviour exactly; overridable with the
+# same named {node_id}/{index} placeholders as the coordinator's
+# NODE_URL_TEMPLATE, so the dashboard can also point at nodes running on local
+# ports outside Docker.
+NODE_URL_TEMPLATE = os.environ.get("NODE_URL_TEMPLATE", "http://{node_id}:8000")
+NODE_BASE_URLS = {
+    f"node_{i}": NODE_URL_TEMPLATE.format(node_id=f"node_{i}", index=i) for i in range(NUM_NODES)
+}
 COORDINATOR_EVENTS_URL = os.environ.get("COORDINATOR_EVENTS_URL", "http://coordinator:9000/events")
 MERGED_DB = os.environ.get("MERGED_DB", "/energy/merged.db")
 REFRESH_S = float(os.environ.get("REFRESH_S", "3"))

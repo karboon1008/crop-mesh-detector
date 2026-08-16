@@ -41,7 +41,15 @@ from src.models.factory import build_model
 from node_runner import NodeRunner
 
 
-async def _fetch_one(client: httpx.AsyncClient, peer_id: str, base_url: str, round_idx: int):
+async def _fetch_one(client: httpx.AsyncClient, peer_id: str, base_url: str | None, round_idx: int):
+    # base_url is None when peer_bases had no entry for this peer. Treat that
+    # exactly like a failed fetch (return None) instead of raising: a KeyError
+    # here would propagate out of the asyncio.gather() below and fail THIS
+    # node's entire /round/gather, so one bad peer entry from a buggy caller
+    # would cost the node its whole round rather than just that peer's
+    # contribution.
+    if not base_url:
+        return peer_id, None
     try:
         resp = await client.get(f"{base_url}/knowledge/{round_idx}", timeout=30.0)
         if resp.status_code != 200:
@@ -54,7 +62,7 @@ async def _fetch_one(client: httpx.AsyncClient, peer_id: str, base_url: str, rou
 async def _fetch_all_knowledge_async(peer_ids: list, peer_bases: dict, round_idx: int) -> dict:
     async with httpx.AsyncClient() as client:
         results = await asyncio.gather(
-            *(_fetch_one(client, peer_id, peer_bases[peer_id], round_idx) for peer_id in peer_ids)
+            *(_fetch_one(client, peer_id, peer_bases.get(peer_id), round_idx) for peer_id in peer_ids)
         )
     return dict(results)
 
@@ -131,8 +139,18 @@ def health():
     return {"node_id": runner.node_id, "status": "online"}
 
 
+def _require(body: dict, *keys: str) -> None:
+    """Reject a malformed request body with a 400 naming the missing key,
+    rather than letting a raw KeyError surface as an opaque 500.
+    """
+    for key in keys:
+        if key not in body:
+            raise HTTPException(status_code=400, detail=f"missing required field: {key!r}")
+
+
 @app.post("/round/start")
 def round_start(body: dict):
+    _require(body, "round_idx")
     return runner.handle_round_start(body["round_idx"])
 
 
@@ -146,10 +164,16 @@ def get_knowledge(round_idx: int):
 
 @app.post("/round/gather")
 def round_gather(body: dict):
+    _require(body, "round_idx", "active_nodes", "peer_bases")
     return runner.handle_round_gather(body["round_idx"], body["active_nodes"], body["peer_bases"])
 
 
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # PORT defaults to 8000 -- exactly what docker-compose.yml and the
+    # Dockerfile's EXPOSE assume -- but is overridable so several nodes can be
+    # run side by side on one host (the no-Docker verification workflow) or a
+    # non-default port can be used, without editing this file.
+    port = int(os.environ.get("PORT", "8000"))
+    uvicorn.run(app, host="0.0.0.0", port=port)
