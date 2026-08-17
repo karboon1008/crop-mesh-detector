@@ -4,15 +4,21 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "docker" / "dashboard"))
 
 from data import (  # noqa: E402
+    build_export_payload,
+    build_fairness_disclosure,
     build_final_result_payload,
     build_log_lines,
     build_status_rows,
     is_run_complete,
     merge_transfer_rows,
+    read_log_file,
     rows_for_node,
+    scenario_paths,
     to_json_str,
 )
 
@@ -87,3 +93,61 @@ def test_build_final_result_payload_groups_rows_by_node():
 def test_to_json_str_round_trips():
     obj = {"a": 1, "b": [1, 2, 3]}
     assert json.loads(to_json_str(obj)) == obj
+
+
+def test_scenario_paths_builds_per_node_and_shared_paths():
+    paths = scenario_paths("/energy", "disconnection", num_nodes=2)
+    assert paths["merged_db"] == "/energy/disconnection/merged.db"
+    assert paths["node_dbs"] == {
+        "node_0": "/energy/disconnection/node_0.db",
+        "node_1": "/energy/disconnection/node_1.db",
+    }
+    assert paths["status_path"] == "/energy/disconnection/status.json"
+    assert paths["log_paths"]["node_0"] == "/energy/disconnection/node_0.log"
+    assert paths["log_paths"]["coordinator"] == "/energy/disconnection/coordinator.log"
+
+
+def test_read_log_file_returns_empty_list_when_file_missing(tmp_path):
+    assert read_log_file(str(tmp_path / "missing.log")) == []
+
+
+def test_read_log_file_parses_one_json_object_per_line(tmp_path):
+    path = tmp_path / "node_0.log"
+    path.write_text('{"ts": 1.0, "stage": "a", "message": "x"}\n{"ts": 2.0, "stage": "b", "message": "y"}\n')
+    entries = read_log_file(str(path))
+    assert [e["message"] for e in entries] == ["x", "y"]
+
+
+def test_build_fairness_disclosure_reports_macro_avg_and_worst_node():
+    rows = [
+        {"node_id": "node_0", "round_idx": 0, "crop_accuracy": 0.80, "disease_accuracy": 0.70,
+         "baseline_crop_accuracy": 0.60, "baseline_disease_accuracy": 0.50},
+        {"node_id": "node_1", "round_idx": 0, "crop_accuracy": 0.55, "disease_accuracy": 0.55,
+         "baseline_crop_accuracy": 0.50, "baseline_disease_accuracy": 0.50},
+    ]
+    cfg = {
+        "training.local_epochs_per_round": 1, "training.distill_epochs_per_round": 1,
+        "training.lr": 0.001, "training.distill_lr": 0.0005,
+        "data.non_iid_strategy": "manual", "data.test_fraction": 0.15,
+    }
+    table = build_fairness_disclosure(rows, cfg)
+    assert table["node_count"] == 2
+    # node_0 delta: crop +0.20, disease +0.20 -> avg 0.20; node_1: crop +0.05, disease +0.05 -> avg 0.05
+    assert table["macro_avg_and_worst_node"]["macro_avg"] == pytest.approx(0.125)
+    assert table["macro_avg_and_worst_node"]["worst_node"] == pytest.approx(0.05)
+    assert table["per_node_scores"]["node_0"]["mesh"]["crop_accuracy"] == 0.80
+    assert table["per_node_scores"]["node_0"]["baseline"]["crop_accuracy"] == 0.60
+    assert "delta_g_formula" in table and table["delta_g_formula"]
+
+
+def test_build_export_payload_includes_fairness_disclosure_and_scenario_name():
+    rows = [{"node_id": "node_0", "round_idx": 0, "crop_accuracy": 0.8, "disease_accuracy": 0.7,
+             "baseline_crop_accuracy": 0.6, "baseline_disease_accuracy": 0.5}]
+    cfg = {"training.local_epochs_per_round": 1, "training.distill_epochs_per_round": 1,
+           "training.lr": 0.001, "training.distill_lr": 0.0005,
+           "data.non_iid_strategy": "manual", "data.test_fraction": 0.15}
+    payload = build_export_payload("disconnection", rows, transfers=[], status=None, cfg=cfg)
+    assert payload["scenario"] == "disconnection"
+    assert payload["complete"] is False
+    assert "fairness_disclosure" in payload
+    assert payload["nodes"]["node_0"] == rows
