@@ -21,6 +21,10 @@ CREATE TABLE IF NOT EXISTS round_metrics (
     crop_accuracy REAL,
     disease_accuracy REAL,
     active INTEGER,
+    baseline_crop_accuracy REAL,
+    baseline_disease_accuracy REAL,
+    baseline_energy_kwh REAL,
+    baseline_duration_s REAL,
     recorded_at TEXT,
     PRIMARY KEY (node_id, round_idx)
 );

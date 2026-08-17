@@ -109,3 +109,17 @@ def test_record_transfer_does_not_touch_round_metrics_table(tmp_path):
     db_path = tmp_path / "node_0.db"
     sqlite_store.record_transfer(db_path, 0, "node_1", "node_0", 100, "t0")
     assert sqlite_store.read_all(db_path) == []
+
+
+def test_upsert_row_accepts_baseline_columns(tmp_path):
+    path = tmp_path / "node_0.db"
+    sqlite_store.upsert_row(
+        path, "node_0", 0, "2026-08-17T00:00:00Z",
+        baseline_crop_accuracy=0.7, baseline_disease_accuracy=0.6,
+        baseline_energy_kwh=0.001, baseline_duration_s=12.0,
+    )
+    rows = sqlite_store.read_all(path)
+    assert rows[0]["baseline_crop_accuracy"] == 0.7
+    assert rows[0]["baseline_disease_accuracy"] == 0.6
+    assert rows[0]["baseline_energy_kwh"] == 0.001
+    assert rows[0]["baseline_duration_s"] == 12.0
