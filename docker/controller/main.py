@@ -28,10 +28,15 @@ COMPOSE_TIMEOUT_S = 120
 
 def _run_compose(args: list[str], env_overrides: dict) -> None:
     env = {**os.environ, **env_overrides}
-    result = subprocess.run(
-        ["docker", "compose", "-f", COMPOSE_FILE, *args],
-        env=env, capture_output=True, text=True, timeout=COMPOSE_TIMEOUT_S,
-    )
+    try:
+        result = subprocess.run(
+            ["docker", "compose", "-f", COMPOSE_FILE, *args],
+            env=env, capture_output=True, text=True, timeout=COMPOSE_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"docker compose {' '.join(args)} timed out after {COMPOSE_TIMEOUT_S}s"
+        ) from exc
     if result.returncode != 0:
         raise RuntimeError(f"docker compose {' '.join(args)} failed: {result.stderr.strip()}")
 
