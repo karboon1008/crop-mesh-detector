@@ -11,6 +11,10 @@ opencv-python>=4.8   # laptop webcam capture for src/infer.py --camera
 # Config
 PyYAML>=6.0
 
+# Hyperparameter search (scripts/tune_hyperparams.py) — Bayesian (TPE) search
+# over training.* config values, scored on accuracy vs. compute energy.
+optuna>=3.6
+
 # Sustainability accounting
 codecarbon>=2.3       # measured compute energy -> kWh / CO2e
 

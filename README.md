@@ -144,6 +144,28 @@ python -m src.scenarios.class_addition [--config path] [--arch name]
 python -m src.scenarios.distribution_shift [--config path] [--arch name]
 ```
 
+### Hyperparameter tuning
+
+`scripts/tune_hyperparams.py` runs a Bayesian (Optuna TPE) search over the
+core training hyperparameters (`lr`, `distill_lr`, `proto_weight`,
+`kd_weight`, `kd_temperature`) for one architecture. Each trial is a full
+`python -m src.train` subprocess against its own scratch output directory
+under `outputs_tuning/trials/`, scored on two objectives — maximize global
+mesh test accuracy, minimize total compute energy (kWh) — so the result is a
+Pareto front of trials rather than one "best" config:
+
+```bash
+python -m scripts.tune_hyperparams --n-trials 30 --arch efficientnet_lite0
+```
+
+Progress is checkpointed to a SQLite study db under `outputs_tuning/`, so a
+re-run with the same `--study-name` resumes instead of starting over. The
+Pareto-optimal trials (accuracy, energy, and the params that produced them)
+are printed at the end and written to `outputs_tuning/pareto_front.json`.
+Each trial's own `outputs_tuning/trials/trial_XXXX/config.yaml` records the
+exact config used, so any trial can be re-run standalone with
+`python -m src.train --config outputs_tuning/trials/trial_XXXX/config.yaml`.
+
 ### Try it out: classify an image or use your laptop's camera
 
 Once a checkpoint exists in `outputs/checkpoints/` (from `python -m src.train`),
