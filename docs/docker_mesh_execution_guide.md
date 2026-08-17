@@ -91,41 +91,45 @@ curl -X POST http://localhost:9100/stop
 
 ## Manual Verification (run once after implementing the control plane)
 
-1. **Initial bring-up succeeds and all 6 containers are running.**
+**Data-Dependent Items:** Items marked **[REQUIRES DATA]** need the training dataset to exist at `data/docker_mesh/node_0/`, `data/docker_mesh/node_1/`, `data/docker_mesh/node_2/`, `data/docker_mesh/probe/`, and `data/docker_mesh/classes.json`. Items without this marker are pure UI/wiring checks that work in any environment.
+
+1. `docker compose up -d --build` (with `HOST_PROJECT_ROOT` set) — all 6 containers reach a healthy/running state.
+
+2. Open the dashboard at http://localhost:8501 — 4 tabs are visible: Full Run, Class Addition, Disconnection, Distribution Shift.
+
+3. **[REQUIRES DATA]** Click Start on the "Full Run" tab. Confirm: the controller's state moves idle -> starting -> running (visible in the tab's state caption), node/coordinator log panels (expand them) begin showing activity, and `outputs/docker_mesh/energy/full_run/` appears on disk.
+
+4. **[REQUIRES DATA]** While Full Run is still going, click Start on the "Disconnection" tab. Confirm: Full Run's containers stop (its state caption shows the tab is no longer running), Disconnection's containers start fresh, and `outputs/docker_mesh/energy/full_run/` is left untouched (Full Run's last data is still viewable in its own tab, un-overwritten) while `outputs/docker_mesh/energy/disconnection/` starts fresh.
+
+5. **[REQUIRES DATA]** Let a run reach completion (or stop it early) and click "Download {scenario}_result.json" — confirm the downloaded file has `scenario`, `nodes`, `knowledge_transfers`, `fairness_disclosure`, and `complete` keys, and that `fairness_disclosure.per_node_scores` has one entry per node with both `mesh` and `baseline` accuracy figures.
+
+6. **[REQUIRES DATA]** Click Start on the same tab a second time after it finished — confirm the per-round results table restarts from round 0 (clean slate), not appending to the previous run's rows.
+
+### Bounded Verification: Infrastructure and Control-Plane Wiring (No Training Data Required)
+
+If you do not have the training dataset under `data/docker_mesh/`, you can still verify the infrastructure and control-plane wiring using these curl-based checks:
+
+1. **Initial bring-up and container creation:**
    - Run: `docker compose up -d --build` (from `docker/` with `HOST_PROJECT_ROOT` set)
-   - Expected: All 6 containers start without errors. Run `docker compose ps` and confirm all show a "Running" or "Up" state.
-   - Note: Node containers may show "unhealthy" or crash-loop if the training data directories (`data/docker_mesh/node_0`, etc.) do not exist. This is expected in environments without the full training dataset — see caveat below.
+   - Expected: All 6 containers are created. Run `docker compose ps -a` and confirm all are present.
+   - Note: Node containers will exit with error code 1 if training data is missing — this is expected and not a bug.
 
-2. **Dashboard is reachable and displays 4 tabs.**
+2. **Dashboard HTTP endpoint:**
    - Run: `curl -s -o /dev/null -w "%{http_code}" http://localhost:8501`
-   - Expected: HTTP 200 response
-   - Or open http://localhost:8501 in a browser — you should see 4 tabs: Full Run, Class Addition, Disconnection, Distribution Shift
+   - Expected: HTTP 200 response (dashboard is reachable)
 
-3. **Controller's `/status` endpoint responds.**
+3. **Controller `/status` endpoint:**
    - Run: `curl http://localhost:9100/status`
-   - Expected: JSON response with controller state and current scenario information
+   - Expected: JSON response such as `{"running_scenario":null,"state":"idle","started_at":null,"error_detail":null}`
 
-4. **Controller accepts `POST /start` with a scenario payload.**
+4. **Controller `/start` endpoint:**
    - Run: `curl -X POST http://localhost:9100/start -H 'Content-Type: application/json' -d '{"scenario": "full_run"}'`
-   - Expected: HTTP 200 response; controller begins launching the scenario's nodes and coordinator
+   - Expected: Controller responds (HTTP 200) and attempts to start containers; this tests the API wiring even if container startup fails due to missing data.
 
-5. **Controller accepts `POST /stop` and stops the scenario.**
+5. **Controller `/stop` endpoint:**
    - Run: `curl -X POST http://localhost:9100/stop`
-   - Expected: HTTP 200 response; containers stop gracefully
+   - Expected: Controller responds with JSON indicating idle state.
 
 6. **Cleanup:**
    - Run: `docker compose down`
-   - Expected: All containers stop and are removed
-
-### Caveat: Training Data Not Available in All Environments
-
-Steps in the checklist that require a completed training round (e.g., "let a run reach completion," "verify per-node accuracy figures in the downloaded JSON") require the training dataset to exist at `data/docker_mesh/node_0/`, `data/docker_mesh/node_1/`, `data/docker_mesh/node_2/`, and `data/docker_mesh/probe/`. If these directories do not exist in your environment, the node containers will crash or remain unhealthy; this is **not a bug**—it is expected behavior when no data is available.
-
-To run the full checklist including training completion, ensure the training dataset is present:
-- `data/docker_mesh/node_0/`: Training dataset for node 0
-- `data/docker_mesh/node_1/`: Training dataset for node 1
-- `data/docker_mesh/node_2/`: Training dataset for node 2
-- `data/docker_mesh/probe/`: Probe dataset for evaluation
-- `data/docker_mesh/classes.json`: Class labels (required by all nodes)
-
-If you only have the code repository without the dataset, the control plane (dashboard, controller, scenario switching API) can still be verified via steps 1-5 above.
+   - Expected: All containers stop and are removed, network cleaned up.
