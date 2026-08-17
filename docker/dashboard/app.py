@@ -187,7 +187,6 @@ def _render_tab(scenario: str, controller_status: dict) -> None:
     paths = scenario_paths(ENERGY_DIR, scenario, num_nodes=NUM_NODES)
 
     running_here = controller_status.get("running_scenario") == scenario
-    busy_elsewhere = controller_status.get("state") in ("starting", "running", "stopping") and not running_here
     state = controller_status.get("state", "unreachable")
 
     header_col, status_col = st.columns([5, 2])
@@ -195,7 +194,7 @@ def _render_tab(scenario: str, controller_status: dict) -> None:
     status_col.caption(f"state: {state}" + (f" ({controller_status['error_detail']})" if controller_status.get("error_detail") else ""))
 
     start_col, stop_col = st.columns([1, 1])
-    if start_col.button("Start", key=f"start_{scenario}", disabled=running_here or busy_elsewhere or state in ("starting", "stopping")):
+    if start_col.button("Start", key=f"start_{scenario}", disabled=running_here or state in ("starting", "stopping")):
         _controller_start(scenario)
         st.rerun()
     if stop_col.button("Stop", key=f"stop_{scenario}", disabled=not running_here or state in ("starting", "stopping")):
