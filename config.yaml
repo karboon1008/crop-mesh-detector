@@ -6,7 +6,10 @@ data:
   root: "data/PlantVillage"      # expects class-per-folder images, e.g. "Tomato___Bacterial_spot"
   image_size: 160
   num_nodes: 3                    # simulated farms
-  probe_set_fraction: 0.05        # held-out PUBLIC subset shared by all nodes for logit exchange
+  probe_set_fraction: 0.05
+  probe_set_large_class_threshold: 200
+  probe_set_min_samples_small_class: 8
+  probe_set_max_fraction_small_class: 0.2
   test_fraction: 0.15             # per-node held-out test split (used for accuracy + collaboration gain)
   non_iid_strategy: "manual"      # "by_crop" | "by_disease" | "dirichlet" | "manual"
   dirichlet_alpha: 0.3            # only used when non_iid_strategy == "dirichlet"
