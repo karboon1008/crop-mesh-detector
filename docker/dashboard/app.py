@@ -1,8 +1,12 @@
 # docker/dashboard/app.py
 """Read-only observability dashboard: polls each node's /health and /log
 directly, polls the coordinator's /events and /log for a live request/stage
-log, and reads the merged + per-node SQLite metrics. No Docker socket
-access, and it only ever issues GET requests -- it cannot trigger a run.
+log, and reads the merged + per-node SQLite metrics. The dashboard process
+itself has no Docker socket access and never talks to Docker directly --
+but it does POST start/stop requests to the separate `controller` service
+(which does hold the Docker socket) to trigger/stop scenario runs, so it
+can indirectly cause a run to start or stop even though it never issues
+Docker calls itself.
 Excluded from the sustainability accounting scope (see spec §8): its own
 CPU usage is outside every ComputeEnergyTracker scope in the node
 containers.
@@ -182,7 +186,7 @@ def _status_row_html(status_rows: list) -> str:
     return f'<div class="status-row">{"".join(items)}</div>'
 
 
-def _render_tab(scenario: str, controller_status: dict) -> None:
+def _render_tab(scenario: str, controller_status: dict, cfg) -> None:
     label = SCENARIO_LABELS[scenario]
     paths = scenario_paths(ENERGY_DIR, scenario, num_nodes=NUM_NODES)
 
@@ -197,7 +201,13 @@ def _render_tab(scenario: str, controller_status: dict) -> None:
     if start_col.button("Start", key=f"start_{scenario}", disabled=running_here or state in ("starting", "stopping")):
         _controller_start(scenario)
         st.rerun()
-    if stop_col.button("Stop", key=f"stop_{scenario}", disabled=not running_here or state in ("starting", "stopping")):
+    # Stop is enabled whenever there is something to attempt stopping: a
+    # "running" scenario (on any tab) or an "error" state (from which the
+    # backend's POST /stop still works, but running_scenario is None so we
+    # can't tell which tab "owns" it -- allow Stop from any tab in that
+    # case since stop_scenario() is harmless to call again). Disabled only
+    # during "idle" and the "starting"/"stopping" transitions.
+    if stop_col.button("Stop", key=f"stop_{scenario}", disabled=state in ("idle", "starting", "stopping")):
         _controller_stop()
         st.rerun()
 
@@ -207,12 +217,12 @@ def _render_tab(scenario: str, controller_status: dict) -> None:
         with col:
             with st.expander(node_id, expanded=False):
                 components.html(
-                    _log_panel_html(read_log_file(paths["log_paths"][node_id]), panel_key=f"{scenario}_{node_id}"),
+                    _log_panel_html(read_log_file(paths["log_paths"][node_id])[-200:], panel_key=f"{scenario}_{node_id}"),
                     height=280, scrolling=False,
                 )
     with st.expander("coordinator", expanded=False):
         components.html(
-            _log_panel_html(read_log_file(paths["log_paths"]["coordinator"]), panel_key=f"{scenario}_coordinator"),
+            _log_panel_html(read_log_file(paths["log_paths"]["coordinator"])[-200:], panel_key=f"{scenario}_coordinator"),
             height=280, scrolling=False,
         )
 
@@ -223,7 +233,6 @@ def _render_tab(scenario: str, controller_status: dict) -> None:
         else:
             st.write("No rows yet.")
 
-    cfg = Config.load(CONFIG_PATH)
     with st.expander("Collaboration-Gain Fairness Disclosure Table (Appendix A.1)", expanded=False):
         if rows:
             st.json(build_fairness_disclosure(rows, cfg))
@@ -267,10 +276,11 @@ def render() -> None:
     st.markdown(_status_row_html(build_status_rows(_poll_health())), unsafe_allow_html=True)
 
     controller_status = _controller_status()
+    cfg = Config.load(CONFIG_PATH)
     tabs = st.tabs([SCENARIO_LABELS[s] for s in SCENARIOS])
     for tab, scenario in zip(tabs, SCENARIOS):
         with tab:
-            _render_tab(scenario, controller_status)
+            _render_tab(scenario, controller_status, cfg)
 
     time.sleep(REFRESH_S)
     st.rerun()

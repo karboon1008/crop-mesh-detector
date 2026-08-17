@@ -6,6 +6,8 @@
 
 The Docker Compose setup requires the `HOST_PROJECT_ROOT` environment variable to be set to the absolute path of this repository (as the Docker daemon on your machine would resolve it). This is used to mount the configuration, data, and output directories into the containers.
 
+> **Stale containers from before this branch:** this branch pins the Compose project name to `crop-mesh` (previously it defaulted to a name derived from the directory, e.g. `docker`). If you have pre-existing containers from an earlier run under the old project name, they are invisible to `docker compose` under the new project name but may still be holding host ports 9000, 8501, and 8000 — causing a confusing `port is already allocated` error on your first bring-up here. Before your first `docker compose up` on this branch, run `docker compose down` once (from any old checkout/project directory that still has the old containers), or manually stop/remove any leftover `docker-coordinator-1`/`docker-node_0-1`/etc. containers, to avoid the port conflict.
+
 Create a `.env` file in the `docker/` directory with the following content:
 
 ```bash
@@ -21,8 +23,10 @@ echo "HOST_PROJECT_ROOT=$(cd .. && pwd)" > .env
 On Windows (PowerShell):
 ```powershell
 cd docker
-"HOST_PROJECT_ROOT=$(Convert-Path ..)" | Out-File -FilePath .env -Encoding UTF8
+"HOST_PROJECT_ROOT=$(Convert-Path ..)" | Out-File -FilePath .env -Encoding ascii
 ```
+
+Note: use `-Encoding ascii` (not `UTF8`, which on PowerShell 5.1 writes a byte-order-mark) -- a BOM at the start of `.env` breaks Compose's `.env` parsing.
 
 Docker Compose will automatically load the `.env` file when running commands from the `docker/` directory.
 

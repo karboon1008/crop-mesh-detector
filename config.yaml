@@ -83,11 +83,23 @@ docker_mesh:
   # node_2's shard (Tomato-heavy, per manual_node_crops) is ~3x node_0's and
   # ~2x node_1's batch count. Measured: node_2's /round/start (1 local
   # epoch + compute_knowledge) took ~4330s under 3-way CPU contention on a
-  # 16-core host -- comfortably over the old 300s/3600s values. Sized here
-  # for roughly double that (to cover local_epochs_per_round/
+  # 16-core host -- comfortably over the old 300s/3600s values. Originally
+  # sized here for roughly double that (to cover local_epochs_per_round/
   # distill_epochs_per_round going from 1 back to their original 2) plus
   # safety margin, since round_timeout_s is the per-HTTP-call timeout for
   # BOTH /round/start and /round/gather.
+  #
+  # STALE MARGIN NOTE: since that measurement, the shadow-model task made
+  # /round/start also run a full shadow (local_only) arm -- its own
+  # local_train + evaluate -- sequentially BEFORE the existing mesh arm,
+  # roughly doubling /round/start's per-call cost again on top of the
+  # headroom above. 21600 still numerically covers a reasonable worst case
+  # today, but the actual safety margin it provides is now much smaller
+  # than the "roughly double" framing above implies. Re-measure
+  # /round/start (shadow arm + mesh arm) and revisit this value before
+  # restoring local_epochs_per_round/distill_epochs_per_round from their
+  # current "TEMP: reduced for smoke run" values back to non-smoke-test
+  # settings.
   round_timeout_s: 21600
   data_dir: "data/docker_mesh"
   energy_db_dir: "outputs/docker_mesh/energy"

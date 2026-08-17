@@ -50,6 +50,21 @@ def stop_scenario() -> None:
 
 
 runner = ControllerRunner(start_scenario=start_scenario, stop_scenario=stop_scenario)
+
+# Best-effort reconciliation: `docker compose up -d --build` brings up
+# coordinator/node_0/1/2 with a real SCENARIO before this controller process
+# (or a restarted one) ever runs, so runner's in-memory "idle" state starts
+# out desynced from a possibly-already-running mesh. Call the module-level
+# stop_scenario() directly (NOT runner.stop(), which only acts when the state
+# machine already believes something is "running") to force the containers
+# to a real stopped state regardless of what the state machine currently
+# believes. A failure here is a fine no-op (nothing to stop, or genuinely
+# already idle) -- runner.state stays "idle", which is correct either way.
+try:
+    stop_scenario()
+except Exception:
+    pass
+
 app = FastAPI()
 
 

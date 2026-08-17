@@ -94,7 +94,14 @@ def read_log_file(path: str) -> list:
     entries = []
     for line in Path(path).read_text().splitlines():
         if line.strip():
-            entries.append(json.loads(line))
+            try:
+                entries.append(json.loads(line))
+            except json.JSONDecodeError:
+                # A node/coordinator killed mid-write (e.g. docker compose
+                # stop's timeout, hit on every scenario switch) can leave a
+                # truncated final line. Skip it rather than taking down the
+                # whole page render over one malformed line.
+                continue
     return entries
 
 
@@ -118,9 +125,26 @@ def build_fairness_disclosure(rows: list, cfg) -> dict:
     node_ids = sorted({r["node_id"] for r in rows})
     per_node_scores = {}
     per_node_deltas = []
+    rounds_used = {}
     for node_id in node_ids:
         node_rows = [r for r in rows if r["node_id"] == node_id]
-        last = max(node_rows, key=lambda r: r["round_idx"])
+        # "Last round" must mean the last COMPLETE round: baseline_* is
+        # written at /round/start but crop_accuracy/disease_accuracy only
+        # land at /round/gather, so if the last-recorded round is still in
+        # progress (or that node's /round/gather failed/timed out), its row
+        # has crop_accuracy/disease_accuracy still None. Filter to rows
+        # where both are present before taking the max round_idx, so a
+        # trailing in-progress/failed row never silently drops a node from
+        # per_node_deltas without any trace in the payload.
+        complete_rows = [r for r in node_rows if r.get("crop_accuracy") is not None and r.get("disease_accuracy") is not None]
+        if not complete_rows:
+            # No complete round recorded for this node yet (e.g. its most
+            # recent /round/gather never landed) -- flag it via rounds_used
+            # instead of silently synthesizing a score from an incomplete row.
+            rounds_used[node_id] = None
+            continue
+        last = max(complete_rows, key=lambda r: r["round_idx"])
+        rounds_used[node_id] = last["round_idx"]
         mesh = {"crop_accuracy": last.get("crop_accuracy"), "disease_accuracy": last.get("disease_accuracy")}
         baseline = {
             "crop_accuracy": last.get("baseline_crop_accuracy"),
@@ -153,6 +177,7 @@ def build_fairness_disclosure(rows: list, cfg) -> dict:
         },
         "per_node_scores": per_node_scores,
         "macro_avg_and_worst_node": {"macro_avg": macro_avg, "worst_node": worst_node},
+        "rounds_used": rounds_used,
         "delta_g_formula": (
             "per-node delta = mean(mesh_accuracy - baseline_accuracy) over {crop_accuracy, disease_accuracy}, "
             "using each node's own last completed round; macro_avg is the mean across nodes, "

@@ -16,8 +16,8 @@ services:
       ENERGY_DB: /energy/${SCENARIO:-full_run}/merged.db
       LOG_FILE: /energy/${SCENARIO:-full_run}/coordinator.log
     volumes:
-      - ${HOST_PROJECT_ROOT}/config.yaml:/config/config.yaml:ro
-      - ${HOST_PROJECT_ROOT}/outputs/docker_mesh/energy:/energy
+      - ${HOST_PROJECT_ROOT:?HOST_PROJECT_ROOT must be set to the repo's absolute host path}/config.yaml:/config/config.yaml:ro
+      - ${HOST_PROJECT_ROOT:?HOST_PROJECT_ROOT must be set to the repo's absolute host path}/outputs/docker_mesh/energy:/energy
     networks: [mesh]
 
   node_0:
@@ -35,11 +35,11 @@ services:
       ENERGY_DB: /energy/${SCENARIO:-full_run}/node_0.db
       LOG_FILE: /energy/${SCENARIO:-full_run}/node_0.log
     volumes:
-      - ${HOST_PROJECT_ROOT}/config.yaml:/config/config.yaml:ro
-      - ${HOST_PROJECT_ROOT}/data/docker_mesh/node_0:/data/node_0:ro
-      - ${HOST_PROJECT_ROOT}/data/docker_mesh/probe:/data/probe:ro
-      - ${HOST_PROJECT_ROOT}/data/docker_mesh/classes.json:/data/classes.json:ro
-      - ${HOST_PROJECT_ROOT}/outputs/docker_mesh/energy:/energy
+      - ${HOST_PROJECT_ROOT:?HOST_PROJECT_ROOT must be set to the repo's absolute host path}/config.yaml:/config/config.yaml:ro
+      - ${HOST_PROJECT_ROOT:?HOST_PROJECT_ROOT must be set to the repo's absolute host path}/data/docker_mesh/node_0:/data/node_0:ro
+      - ${HOST_PROJECT_ROOT:?HOST_PROJECT_ROOT must be set to the repo's absolute host path}/data/docker_mesh/probe:/data/probe:ro
+      - ${HOST_PROJECT_ROOT:?HOST_PROJECT_ROOT must be set to the repo's absolute host path}/data/docker_mesh/classes.json:/data/classes.json:ro
+      - ${HOST_PROJECT_ROOT:?HOST_PROJECT_ROOT must be set to the repo's absolute host path}/outputs/docker_mesh/energy:/energy
     networks: [mesh]
 
   node_1:
@@ -57,11 +57,11 @@ services:
       ENERGY_DB: /energy/${SCENARIO:-full_run}/node_1.db
       LOG_FILE: /energy/${SCENARIO:-full_run}/node_1.log
     volumes:
-      - ${HOST_PROJECT_ROOT}/config.yaml:/config/config.yaml:ro
-      - ${HOST_PROJECT_ROOT}/data/docker_mesh/node_1:/data/node_1:ro
-      - ${HOST_PROJECT_ROOT}/data/docker_mesh/probe:/data/probe:ro
-      - ${HOST_PROJECT_ROOT}/data/docker_mesh/classes.json:/data/classes.json:ro
-      - ${HOST_PROJECT_ROOT}/outputs/docker_mesh/energy:/energy
+      - ${HOST_PROJECT_ROOT:?HOST_PROJECT_ROOT must be set to the repo's absolute host path}/config.yaml:/config/config.yaml:ro
+      - ${HOST_PROJECT_ROOT:?HOST_PROJECT_ROOT must be set to the repo's absolute host path}/data/docker_mesh/node_1:/data/node_1:ro
+      - ${HOST_PROJECT_ROOT:?HOST_PROJECT_ROOT must be set to the repo's absolute host path}/data/docker_mesh/probe:/data/probe:ro
+      - ${HOST_PROJECT_ROOT:?HOST_PROJECT_ROOT must be set to the repo's absolute host path}/data/docker_mesh/classes.json:/data/classes.json:ro
+      - ${HOST_PROJECT_ROOT:?HOST_PROJECT_ROOT must be set to the repo's absolute host path}/outputs/docker_mesh/energy:/energy
     networks: [mesh]
 
   node_2:
@@ -79,11 +79,11 @@ services:
       ENERGY_DB: /energy/${SCENARIO:-full_run}/node_2.db
       LOG_FILE: /energy/${SCENARIO:-full_run}/node_2.log
     volumes:
-      - ${HOST_PROJECT_ROOT}/config.yaml:/config/config.yaml:ro
-      - ${HOST_PROJECT_ROOT}/data/docker_mesh/node_2:/data/node_2:ro
-      - ${HOST_PROJECT_ROOT}/data/docker_mesh/probe:/data/probe:ro
-      - ${HOST_PROJECT_ROOT}/data/docker_mesh/classes.json:/data/classes.json:ro
-      - ${HOST_PROJECT_ROOT}/outputs/docker_mesh/energy:/energy
+      - ${HOST_PROJECT_ROOT:?HOST_PROJECT_ROOT must be set to the repo's absolute host path}/config.yaml:/config/config.yaml:ro
+      - ${HOST_PROJECT_ROOT:?HOST_PROJECT_ROOT must be set to the repo's absolute host path}/data/docker_mesh/node_2:/data/node_2:ro
+      - ${HOST_PROJECT_ROOT:?HOST_PROJECT_ROOT must be set to the repo's absolute host path}/data/docker_mesh/probe:/data/probe:ro
+      - ${HOST_PROJECT_ROOT:?HOST_PROJECT_ROOT must be set to the repo's absolute host path}/data/docker_mesh/classes.json:/data/classes.json:ro
+      - ${HOST_PROJECT_ROOT:?HOST_PROJECT_ROOT must be set to the repo's absolute host path}/outputs/docker_mesh/energy:/energy
     networks: [mesh]
 
   controller:
@@ -92,19 +92,19 @@ services:
       dockerfile: docker/controller/Dockerfile
     image: crop-mesh-controller:latest
     ports:
-      - "9100:9100"
+      - "127.0.0.1:9100:9100"
     environment:
-      HOST_PROJECT_ROOT: ${HOST_PROJECT_ROOT}
+      HOST_PROJECT_ROOT: ${HOST_PROJECT_ROOT:?HOST_PROJECT_ROOT must be set to the repo's absolute host path}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ${HOST_PROJECT_ROOT}:/workspace
+      - ${HOST_PROJECT_ROOT:?HOST_PROJECT_ROOT must be set to the repo's absolute host path}:/workspace
     networks: [mesh]
 
   dashboard:
     build:
       context: ..
       dockerfile: docker/dashboard/Dockerfile
-    depends_on: [coordinator, node_0, node_1, node_2]
+    depends_on: [coordinator]
     ports:
       - "8501:8501"
     environment:
@@ -116,8 +116,8 @@ services:
       CONFIG_PATH: /config/config.yaml
       REFRESH_S: "3"
     volumes:
-      - ${HOST_PROJECT_ROOT}/config.yaml:/config/config.yaml:ro
-      - ${HOST_PROJECT_ROOT}/outputs/docker_mesh/energy:/energy:ro
+      - ${HOST_PROJECT_ROOT:?HOST_PROJECT_ROOT must be set to the repo's absolute host path}/config.yaml:/config/config.yaml:ro
+      - ${HOST_PROJECT_ROOT:?HOST_PROJECT_ROOT must be set to the repo's absolute host path}/outputs/docker_mesh/energy:/energy:ro
     networks: [mesh]
 
 networks:
