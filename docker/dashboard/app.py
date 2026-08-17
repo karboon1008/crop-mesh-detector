@@ -21,7 +21,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import httpx
 import pandas as pd
-import plotly.express as px
 import streamlit as st
 import streamlit.components.v1 as components
 
@@ -29,13 +28,11 @@ from src.config import Config
 from data import (
     build_export_payload,
     build_fairness_disclosure,
-    build_final_result_payload,
     build_log_lines,
     build_status_rows,
     is_run_complete,
     merge_transfer_rows,
     read_log_file,
-    rows_for_node,
     scenario_paths,
     to_json_str,
     SCENARIOS,
@@ -51,15 +48,7 @@ NODE_URL_TEMPLATE = os.environ.get("NODE_URL_TEMPLATE", "http://{node_id}:8000")
 NODE_BASE_URLS = {
     f"node_{i}": NODE_URL_TEMPLATE.format(node_id=f"node_{i}", index=i) for i in range(NUM_NODES)
 }
-COORDINATOR_EVENTS_URL = os.environ.get("COORDINATOR_EVENTS_URL", "http://coordinator:9000/events")
-COORDINATOR_LOG_URL = COORDINATOR_EVENTS_URL.rsplit("/", 1)[0] + "/log"
-MERGED_DB = os.environ.get("MERGED_DB", "/energy/merged.db")
 REFRESH_S = float(os.environ.get("REFRESH_S", "3"))
-
-# Each node writes its own db alongside merged.db (see docker-compose.yml's
-# per-node ENERGY_DB), so no extra env var is needed to find them.
-NODE_DB_PATHS = {node_id: str(Path(MERGED_DB).parent / f"{node_id}.db") for node_id in NODE_BASE_URLS}
-STATUS_PATH = Path(MERGED_DB).parent / "status.json"
 
 CONTROLLER_URL = os.environ.get("CONTROLLER_URL", "http://controller:9100")
 ENERGY_DIR = os.environ.get("ENERGY_DIR", "/energy")
@@ -71,14 +60,6 @@ SCENARIO_LABELS = {
     "disconnection": "Disconnection",
     "distribution_shift": "Distribution Shift",
 }
-
-CHART_METRICS = [
-    ("energy_kwh", "Compute energy per round"),
-    ("duration_s", "Round duration per round"),
-    ("knowledge_bytes_sent", "Estimated knowledge bytes sent per round"),
-    ("crop_accuracy", "Crop accuracy per round"),
-    ("disease_accuracy", "Disease accuracy per round"),
-]
 
 STAGE_COLORS = {
     "round_start": "#4fc3f7",
@@ -164,14 +145,6 @@ def _poll_health() -> dict:
     return health
 
 
-def _poll_json(url: str) -> list:
-    try:
-        resp = httpx.get(url, timeout=3.0)
-        return resp.json() if resp.status_code == 200 else []
-    except httpx.HTTPError:
-        return []
-
-
 def _controller_status() -> dict:
     try:
         resp = httpx.get(f"{CONTROLLER_URL}/status", timeout=3.0)
@@ -198,20 +171,6 @@ def _controller_stop() -> None:
         st.error(f"Could not reach controller: {exc}")
 
 
-def _read_status() -> dict | None:
-    if not STATUS_PATH.exists():
-        return None
-    try:
-        return json.loads(STATUS_PATH.read_text())
-    except (json.JSONDecodeError, OSError):
-        return None
-
-
-def _render_activity_panel(title: str, log_entries: list) -> None:
-    with st.expander(title, expanded=True):
-        components.html(_log_panel_html(log_entries, panel_key=title), height=280, scrolling=False)
-
-
 def _status_row_html(status_rows: list) -> str:
     items = []
     for row in status_rows:
@@ -236,7 +195,7 @@ def _render_tab(scenario: str, controller_status: dict) -> None:
     status_col.caption(f"state: {state}" + (f" ({controller_status['error_detail']})" if controller_status.get("error_detail") else ""))
 
     start_col, stop_col = st.columns([1, 1])
-    if start_col.button("Start", key=f"start_{scenario}", disabled=busy_elsewhere or state in ("starting", "stopping")):
+    if start_col.button("Start", key=f"start_{scenario}", disabled=running_here or busy_elsewhere or state in ("starting", "stopping")):
         _controller_start(scenario)
         st.rerun()
     if stop_col.button("Stop", key=f"stop_{scenario}", disabled=not running_here or state in ("starting", "stopping")):
