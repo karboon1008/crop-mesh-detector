@@ -50,16 +50,13 @@ def build_train_transform(image_size: int):
     """
     return transforms.Compose(
         [
-            transforms.RandomResizedCrop(image_size, scale=(0.6, 1.0), ratio=(0.8, 1.25)),
-            transforms.RandomHorizontalFlip(),
-            transforms.RandomVerticalFlip(p=0.2),
-            transforms.RandomRotation(30),
-            transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.05),
-            transforms.RandomPerspective(distortion_scale=0.2, p=0.3),
-            transforms.RandomApply([transforms.GaussianBlur(kernel_size=3)], p=0.2),
+            transforms.RandomResizedCrop(image_size, scale=(0.80, 1.0), ratio=(0.9, 1.10)),
+            transforms.RandomHorizontalFlip(p=0.5),
+            transforms.RandomVerticalFlip(p=0.1),
+            transforms.RandomRotation(20),
+            transforms.ColorJitter(brightness=0.15, contrast=0.15),
             transforms.ToTensor(),
             transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
-            transforms.RandomErasing(p=0.25, scale=(0.02, 0.15)),
         ]
     )
 
