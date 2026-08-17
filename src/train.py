@@ -33,6 +33,7 @@ from src.config import Config
 from src.data.plantvillage import (
     carve_global_test_set,
     carve_public_probe_set,
+    compute_crop_class_weights,
     compute_disease_class_weights,
     load_full_dataset,
     make_subset,
@@ -85,6 +86,7 @@ def build_dataloaders(cfg: Config, dataset):
     global_test_loader = DataLoader(make_subset(dataset, global_test_idx), batch_size=batch_size, shuffle=False)
 
     node_loaders = []
+    crop_class_weights = []
     disease_class_weights = []
     for shard in shards:
         train_idx, test_idx = train_test_split_indices(
@@ -95,21 +97,27 @@ def build_dataloaders(cfg: Config, dataset):
         )
         test_loader = DataLoader(make_subset(dataset, test_idx), batch_size=batch_size, shuffle=False)
         node_loaders.append((train_loader, test_loader))
+        crop_class_weights.append(
+            compute_crop_class_weights(dataset, train_idx)
+            if cfg.get("training.crop_class_balanced", False)
+            else None
+        )
         disease_class_weights.append(
             compute_disease_class_weights(dataset, train_idx)
             if cfg.get("training.disease_class_balanced", True)
             else None
         )
-    return probe_loader, global_test_loader, node_loaders, disease_class_weights
+    return probe_loader, global_test_loader, node_loaders, crop_class_weights, disease_class_weights
 
 
 def run_baseline(
     cfg, arch, node_loaders, global_test_loader, crop_classes, disease_classes, tracker, device,
-    disease_class_weights=None,
+    crop_class_weights=None, disease_class_weights=None,
 ):
     """Local-only training, no exchange at all — the comparison point
     the collaboration gain is measured against.
     """
+    crop_class_weights = crop_class_weights or [None] * len(node_loaders)
     disease_class_weights = disease_class_weights or [None] * len(node_loaders)
     evals = {}
     for i, (train_loader, test_loader) in enumerate(node_loaders):
@@ -122,7 +130,10 @@ def run_baseline(
             crop_classes=crop_classes, disease_classes=disease_classes,
             crop_loss_weight=cfg.get("training.crop_loss_weight", 1.0),
             disease_loss_weight=cfg.get("training.disease_loss_weight", 1.0),
+            crop_class_weights=crop_class_weights[i],
             disease_class_weights=disease_class_weights[i],
+            loss_type=cfg.get("training.loss_type", "cross_entropy"),
+            focal_gamma=cfg.get("training.focal_gamma", 2.0),
         )
         with tracker.track(f"{arch}_baseline_{node_id}"):
             node.local_train(cfg.get("training.baseline_epochs", 10), cfg.get("training.lr", 0.001))
@@ -137,8 +148,9 @@ def run_baseline(
 
 def run_mesh(
     cfg, arch, node_loaders, probe_loader, global_test_loader, crop_classes, disease_classes, tracker, device,
-    output_dir, disease_class_weights=None,
+    output_dir, crop_class_weights=None, disease_class_weights=None,
 ):
+    crop_class_weights = crop_class_weights or [None] * len(node_loaders)
     disease_class_weights = disease_class_weights or [None] * len(node_loaders)
     nodes = []
     for i, (train_loader, test_loader) in enumerate(node_loaders):
@@ -150,7 +162,10 @@ def run_mesh(
             crop_classes=crop_classes, disease_classes=disease_classes,
             crop_loss_weight=cfg.get("training.crop_loss_weight", 1.0),
             disease_loss_weight=cfg.get("training.disease_loss_weight", 1.0),
+            crop_class_weights=crop_class_weights[i],
             disease_class_weights=disease_class_weights[i],
+            loss_type=cfg.get("training.loss_type", "cross_entropy"),
+            focal_gamma=cfg.get("training.focal_gamma", 2.0),
         ))
 
     mesh = MeshSimulator(
@@ -251,7 +266,7 @@ def main():
         )
     )
 
-    probe_loader, global_test_loader, node_loaders, disease_class_weights = build_dataloaders(cfg, dataset)
+    probe_loader, global_test_loader, node_loaders, crop_class_weights, disease_class_weights = build_dataloaders(cfg, dataset)
 
     tracker = ComputeEnergyTracker(
         enabled=cfg.get("energy.track_with_codecarbon", True),
@@ -285,13 +300,13 @@ def main():
         baseline_evals = run_baseline(
             cfg, arch, node_loaders, global_test_loader,
             dataset.labels.crop_classes, dataset.labels.disease_classes, tracker, device,
-            disease_class_weights=disease_class_weights,
+            crop_class_weights=crop_class_weights, disease_class_weights=disease_class_weights,
         )
         print("-- mesh (prototype + logit exchange) --")
         mesh_evals, total_bytes = run_mesh(
             cfg, arch, node_loaders, probe_loader, global_test_loader,
             dataset.labels.crop_classes, dataset.labels.disease_classes, tracker, device, output_dir,
-            disease_class_weights=disease_class_weights,
+            crop_class_weights=crop_class_weights, disease_class_weights=disease_class_weights,
         )
         grand_total_bytes += total_bytes
         gain = compute_collaboration_gain(mesh_evals, baseline_evals)

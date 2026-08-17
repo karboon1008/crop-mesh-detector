@@ -350,17 +350,40 @@ def make_subset(dataset: PlantVillageDataset, indices: list[int], train: bool = 
     return TransformedSubset(dataset, indices, transform)
 
 
-def compute_disease_class_weights(dataset: PlantVillageDataset, indices: list[int]) -> torch.Tensor:
-    """Inverse-frequency class weights for the disease head's cross-entropy,
-    computed from this subset's own label counts.
-    """
-    num_disease = len(dataset.labels.disease_classes)
-    counts = torch.zeros(num_disease)
+def _count_labels(dataset: PlantVillageDataset, indices: list[int], pair_index: int, num_classes: int) -> torch.Tensor:
+    counts = torch.zeros(num_classes)
     targets = np.asarray(dataset.targets)[indices]
     for t in targets:
-        _, disease_idx = dataset.labels.class_to_crop_disease[int(t)]
-        counts[disease_idx] += 1
-    weights = torch.ones(num_disease)
+        pair = dataset.labels.class_to_crop_disease[int(t)]
+        counts[pair[pair_index]] += 1
+    return counts
+
+
+def _inverse_frequency_weights(counts: torch.Tensor) -> torch.Tensor:
+    """Inverse-frequency weights from raw per-class counts, computed on
+    whatever subset they were counted from (e.g. a single node's local,
+    non-IID shard) — this reweights the loss towards under-represented
+    classes in that subset without touching the subset's own label
+    distribution.
+    """
+    num_classes = counts.numel()
+    weights = torch.ones(num_classes)
     present = counts > 0
-    weights[present] = counts.sum() / (num_disease * counts[present])
+    weights[present] = counts.sum() / (num_classes * counts[present])
     return weights
+
+
+def compute_disease_class_weights(dataset: PlantVillageDataset, indices: list[int]) -> torch.Tensor:
+    """Inverse-frequency class weights for the disease head's loss,
+    computed from this subset's own label counts.
+    """
+    counts = _count_labels(dataset, indices, pair_index=1, num_classes=len(dataset.labels.disease_classes))
+    return _inverse_frequency_weights(counts)
+
+
+def compute_crop_class_weights(dataset: PlantVillageDataset, indices: list[int]) -> torch.Tensor:
+    """Inverse-frequency class weights for the crop head's loss,
+    computed from this subset's own label counts.
+    """
+    counts = _count_labels(dataset, indices, pair_index=0, num_classes=len(dataset.labels.crop_classes))
+    return _inverse_frequency_weights(counts)

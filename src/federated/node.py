@@ -44,7 +44,10 @@ class Node:
         disease_classes: list[str] | None = None,
         crop_loss_weight: float = 1.0,
         disease_loss_weight: float = 1.0,
+        crop_class_weights: torch.Tensor | None = None,
         disease_class_weights: torch.Tensor | None = None,
+        loss_type: str = "cross_entropy",
+        focal_gamma: float = 2.0,
     ):
         self.node_id = node_id
         self.model = model.to(device)
@@ -58,9 +61,14 @@ class Node:
         self.disease_classes = disease_classes or [f"disease_{i}" for i in range(model.disease_head.out_features)]
         self.crop_loss_weight = crop_loss_weight
         self.disease_loss_weight = disease_loss_weight
+        self.crop_class_weights = (
+            crop_class_weights.to(device) if crop_class_weights is not None else None
+        )
         self.disease_class_weights = (
             disease_class_weights.to(device) if disease_class_weights is not None else None
         )
+        self.loss_type = loss_type
+        self.focal_gamma = focal_gamma
 
     # local supervised training (data never leaves this method)
     def local_train(self, epochs: int, lr: float) -> float:
@@ -78,10 +86,10 @@ class Node:
 
                 optimizer.zero_grad()
                 crop_logits, disease_logits = self.model(images)
-                loss = self.crop_loss_weight * F.cross_entropy(
-                    crop_logits, crop_labels
-                ) + self.disease_loss_weight * F.cross_entropy(
-                    disease_logits, disease_labels, weight=self.disease_class_weights
+                loss = self.crop_loss_weight * _classification_loss(
+                    crop_logits, crop_labels, self.loss_type, self.crop_class_weights, self.focal_gamma
+                ) + self.disease_loss_weight * _classification_loss(
+                    disease_logits, disease_labels, self.loss_type, self.disease_class_weights, self.focal_gamma
                 )
                 loss.backward()
                 optimizer.step()
@@ -190,10 +198,10 @@ class Node:
                 disease_labels = disease_labels.to(self.device)
 
                 crop_logits, disease_logits, feats = self.model(images, return_features=True)
-                sup_loss = self.crop_loss_weight * F.cross_entropy(
-                    crop_logits, crop_labels
-                ) + self.disease_loss_weight * F.cross_entropy(
-                    disease_logits, disease_labels, weight=self.disease_class_weights
+                sup_loss = self.crop_loss_weight * _classification_loss(
+                    crop_logits, crop_labels, self.loss_type, self.crop_class_weights, self.focal_gamma
+                ) + self.disease_loss_weight * _classification_loss(
+                    disease_logits, disease_labels, self.loss_type, self.disease_class_weights, self.focal_gamma
                 )
                 proto_loss = _prototype_alignment_loss(
                     feats, crop_labels, disease_labels, consensus_prototypes, self.device
@@ -258,6 +266,19 @@ class Node:
                 },
             },
         }
+
+def _classification_loss(
+    logits: torch.Tensor,
+    labels: torch.Tensor,
+    loss_type: str,
+    weight: torch.Tensor | None,
+    gamma: float,
+) -> torch.Tensor:
+    if loss_type == "focal":
+        ce = F.cross_entropy(logits, labels, weight=weight, reduction="none")
+        p_t = torch.exp(-ce)
+        return ((1 - p_t) ** gamma * ce).mean()
+    return F.cross_entropy(logits, labels, weight=weight)
 
 
 # compute kl divergence loss
