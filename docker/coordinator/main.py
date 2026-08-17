@@ -97,8 +97,11 @@ def main() -> None:
     # db and the previous run's completion marker so the dashboard can't
     # show a stale "final results" from before this restart. Only the
     # coordinator ever writes these two paths.
+    log_file = os.environ.get("LOG_FILE")
     Path(energy_db).unlink(missing_ok=True)
     Path(status_path).unlink(missing_ok=True)
+    if log_file:
+        Path(log_file).unlink(missing_ok=True)
 
     runner = CoordinatorRunner(
         expected_nodes=expected_nodes,
@@ -109,6 +112,7 @@ def main() -> None:
         post_all=make_post_all(node_base_urls, round_timeout_s),
         health_check=make_health_check(node_base_urls),
         status_path=status_path,
+        log_file=log_file,
     )
 
     events_app = FastAPI()

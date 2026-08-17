@@ -102,7 +102,10 @@ def build_runner() -> NodeRunner:
     # old rounds/transfers under a "live" dashboard. Only this node ever
     # writes to its own db path, so deleting it here can't race another
     # container.
+    log_file = os.environ.get("LOG_FILE")
     Path(energy_db).unlink(missing_ok=True)
+    if log_file:
+        Path(log_file).unlink(missing_ok=True)
     cfg = Config.load(os.environ.get("CONFIG_PATH"))
 
     global_map = load_global_label_map(classes_json)
@@ -145,6 +148,7 @@ def build_runner() -> NodeRunner:
         node_id=node_id,
         node=node,
         shadow_node=shadow_node,
+        log_file=log_file,
         probe_loader=probe_loader,
         tracker=tracker,
         db_path=energy_db,
