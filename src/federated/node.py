@@ -66,6 +66,9 @@ class Node:
     def local_train(self, epochs: int, lr: float) -> float:
         self.model.train()
         optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(
+            optimizer, max_lr=lr, steps_per_epoch=len(self.train_loader), epochs=epochs
+        )
         total_loss, total_batches = 0.0, 0
         for _ in range(epochs):
             for images, crop_labels, disease_labels in self.train_loader:
@@ -82,6 +85,7 @@ class Node:
                 )
                 loss.backward()
                 optimizer.step()
+                scheduler.step()
                 total_loss += loss.item()
                 total_batches += 1
         return total_loss / max(1, total_batches)
@@ -151,6 +155,8 @@ class Node:
     ) -> dict[str, float]:
         self.model.train()
         optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
+        total_steps = epochs * (len(probe_loader) + len(self.train_loader))
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=lr, total_steps=total_steps)
         consensus_crop_logits = consensus_crop_logits.to(self.device)
         consensus_disease_logits = consensus_disease_logits.to(self.device)
 
@@ -172,6 +178,7 @@ class Node:
                 optimizer.zero_grad()
                 (kd_weight * kd_loss).backward()
                 optimizer.step()
+                scheduler.step()
 
                 kd_loss_sum += kd_loss.item()
                 kd_batches += 1
@@ -196,6 +203,7 @@ class Node:
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
+                scheduler.step()
                 sup_loss_sum += sup_loss.item()
                 proto_loss_sum += proto_loss.item()
                 sup_batches += 1
