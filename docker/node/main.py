@@ -128,6 +128,13 @@ def build_runner() -> NodeRunner:
         pretrained=cfg.get("models.pretrained", True),
     )
     node = Node(node_id, model, train_loader, test_loader, device="cpu")
+    shadow_model = build_model(
+        arch,
+        len(global_map.crop_classes),
+        len(global_map.disease_classes),
+        pretrained=cfg.get("models.pretrained", True),
+    )
+    shadow_node = Node(node_id, shadow_model, train_loader, test_loader, device="cpu")
     tracker = ComputeEnergyTracker(
         enabled=cfg.get("energy.track_with_codecarbon", False),
         output_dir="/tmp/codecarbon",
@@ -137,6 +144,7 @@ def build_runner() -> NodeRunner:
     return NodeRunner(
         node_id=node_id,
         node=node,
+        shadow_node=shadow_node,
         probe_loader=probe_loader,
         tracker=tracker,
         db_path=energy_db,

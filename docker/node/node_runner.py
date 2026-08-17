@@ -41,6 +41,7 @@ FetchAllKnowledge = Callable[[list, dict, int], dict]
 class NodeRunner:
     node_id: str
     node: Node
+    shadow_node: Node
     probe_loader: object
     tracker: ComputeEnergyTracker
     db_path: str
@@ -90,6 +91,23 @@ class NodeRunner:
 
     def handle_round_start(self, round_idx: int) -> dict:
         self._log("round_start", f"round {round_idx}: received, starting local_train")
+        # Shadow (local_only) arm runs fully BEFORE the mesh arm, sequentially
+        # on the same CPU -- never concurrently. Running them concurrently
+        # would have both contend for the same cores, inflating both
+        # ComputeEnergyTracker.track() durations unpredictably and corrupting
+        # the energy figures this run's Axis A evidence depends on. This
+        # mirrors src/scenarios/harness.py's run_scenario() ordering exactly
+        # (baseline arm fully computed, then the mesh arm), so the two are
+        # honestly comparable under the same round_kwargs.
+        with self.tracker.track(f"{self.node_id}_baseline_round_{round_idx}") as baseline_energy_record:
+            self.shadow_node.local_train(self.local_epochs, self.lr)
+            baseline_eval = self.shadow_node.evaluate()
+        self._log(
+            "round_start",
+            f"round {round_idx}: local_only baseline done, "
+            f"crop_acc={baseline_eval['crop_accuracy']:.4f} disease_acc={baseline_eval['disease_accuracy']:.4f}",
+        )
+
         # compute_knowledge runs INSIDE the tracked scope: it is a full
         # forward pass over the probe set, a real compute cost belonging to
         # this round. The in-process pipeline (src/train.py) tracks the whole
@@ -115,6 +133,10 @@ class NodeRunner:
             duration_s=energy_record["duration_s"],
             energy_method=energy_record["method"],
             knowledge_bytes_sent=len(data),
+            baseline_crop_accuracy=baseline_eval["crop_accuracy"],
+            baseline_disease_accuracy=baseline_eval["disease_accuracy"],
+            baseline_energy_kwh=baseline_energy_record["energy_kwh"],
+            baseline_duration_s=baseline_energy_record["duration_s"],
         )
         self._log(
             "round_start",
@@ -126,6 +148,10 @@ class NodeRunner:
             "energy_kwh": energy_record["energy_kwh"],
             "duration_s": energy_record["duration_s"],
             "energy_method": energy_record["method"],
+            "baseline_crop_accuracy": baseline_eval["crop_accuracy"],
+            "baseline_disease_accuracy": baseline_eval["disease_accuracy"],
+            "baseline_energy_kwh": baseline_energy_record["energy_kwh"],
+            "baseline_duration_s": baseline_energy_record["duration_s"],
         }
 
     def get_knowledge_bytes(self, round_idx: int) -> bytes | None:

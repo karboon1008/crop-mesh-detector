@@ -18,6 +18,13 @@ from src.federated.node import KnowledgePayload, Node
 from src.models.factory import build_model
 
 
+def _make_shadow_node(synthetic_dataset, train_loader, test_loader):
+    num_crop = len(synthetic_dataset.labels.crop_classes)
+    num_disease = len(synthetic_dataset.labels.disease_classes)
+    shadow_model = build_model("mobilenet_v3_small", num_crop, num_disease, pretrained=False)
+    return Node("node_0", shadow_model, train_loader, test_loader, device="cpu")
+
+
 def _make_runner(tmp_path, synthetic_dataset, fetch_all_knowledge=None):
     train_idx, test_idx = train_test_split_indices(list(range(len(synthetic_dataset))), 0.3, seed=1)
     train_loader = DataLoader(make_subset(synthetic_dataset, train_idx), batch_size=4, shuffle=True)
@@ -27,10 +34,12 @@ def _make_runner(tmp_path, synthetic_dataset, fetch_all_knowledge=None):
     num_disease = len(synthetic_dataset.labels.disease_classes)
     model = build_model("mobilenet_v3_small", num_crop, num_disease, pretrained=False)
     node = Node("node_0", model, train_loader, test_loader, device="cpu")
+    shadow_node = _make_shadow_node(synthetic_dataset, train_loader, test_loader)
     tracker = ComputeEnergyTracker(enabled=False, output_dir=tmp_path, fallback_power_watts=15.0)
     runner = NodeRunner(
         node_id="node_0",
         node=node,
+        shadow_node=shadow_node,
         probe_loader=probe_loader,
         tracker=tracker,
         db_path=str(tmp_path / "node_0.db"),
@@ -50,6 +59,28 @@ def test_handle_round_start_returns_response_body_and_writes_db(tmp_path, synthe
     rows = sqlite_store.read_all(tmp_path / "node_0.db")
     assert len(rows) == 1
     assert rows[0]["knowledge_bytes_sent"] == response["size_bytes"]
+
+
+def test_handle_round_start_returns_baseline_fields_and_writes_them(tmp_path, synthetic_dataset):
+    runner, _ = _make_runner(tmp_path, synthetic_dataset)
+    response = runner.handle_round_start(0)
+
+    assert "baseline_crop_accuracy" in response
+    assert "baseline_disease_accuracy" in response
+    assert response["baseline_energy_kwh"] is not None
+    assert response["baseline_duration_s"] is not None
+
+    rows = sqlite_store.read_all(tmp_path / "node_0.db")
+    assert rows[0]["baseline_crop_accuracy"] == response["baseline_crop_accuracy"]
+
+
+def test_shadow_model_never_receives_distilled_knowledge(tmp_path, synthetic_dataset):
+    # The shadow model must never call .distill(...) -- handle_round_gather
+    # must not touch it at all. Patch it to raise if ever called.
+    runner, _ = _make_runner(tmp_path, synthetic_dataset)
+    runner.shadow_node.distill = lambda *a, **k: (_ for _ in ()).throw(AssertionError("shadow must not distill"))
+    runner.handle_round_start(0)
+    runner.handle_round_gather(0, ["node_0"], {})  # must not raise
 
 
 def test_get_knowledge_bytes_returns_none_for_a_different_round(tmp_path, synthetic_dataset):
