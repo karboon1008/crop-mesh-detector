@@ -27,9 +27,11 @@ import json
 from pathlib import Path
 
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import ConcatDataset, DataLoader
 
 from src.config import Config
+from src.data.mixing import MixedDomainBatchSampler
+from src.data.plantdoc import load_plantdoc_dataset
 from src.data.plantvillage import (
     carve_global_test_set,
     carve_public_probe_set,
@@ -54,6 +56,21 @@ from src.reporting import build_per_class_rows, build_round_log_rows, plot_train
 
 
 def build_dataloaders(cfg: Config, dataset):
+    plantdoc_dataset = load_plantdoc_dataset(
+        cfg.get("data.plantdoc_root"),
+        dataset.labels.crop_classes,
+        dataset.labels.disease_classes,
+        dataset.labels.class_to_crop_disease,
+        cfg.get("data.image_size", 160),
+    )
+    if plantdoc_dataset is not None:
+        print(
+            f"Loaded PlantDoc: {len(plantdoc_dataset)} images across "
+            f"{len(set(plantdoc_dataset.raw_labels))} classes "
+            f"(mixed at {cfg.get('data.plantvillage_batch_fraction', 0.85):.0%} PlantVillage / "
+            f"{1 - cfg.get('data.plantvillage_batch_fraction', 0.85):.0%} PlantDoc per training batch)"
+        )
+
     probe_idx, remaining_idx = carve_public_probe_set(
         dataset,
         cfg.get("data.probe_set_fraction", 0.05),
@@ -88,13 +105,25 @@ def build_dataloaders(cfg: Config, dataset):
     node_loaders = []
     crop_class_weights = []
     disease_class_weights = []
-    for shard in shards:
+    for node_id, shard in enumerate(shards):
         train_idx, test_idx = train_test_split_indices(
             shard, cfg.get("data.test_fraction", 0.15), cfg.get("data.seed", 42)
         )
-        train_loader = DataLoader(
-            make_subset(dataset, train_idx, train=True), batch_size=batch_size, shuffle=True
-        )
+        train_subset = make_subset(dataset, train_idx, train=True)
+        if plantdoc_dataset is not None:
+            train_loader = DataLoader(
+                ConcatDataset([train_subset, plantdoc_dataset]),
+                batch_sampler=MixedDomainBatchSampler(
+                    primary_len=len(train_subset),
+                    secondary_len=len(plantdoc_dataset),
+                    secondary_labels=plantdoc_dataset.raw_labels,
+                    batch_size=batch_size,
+                    primary_fraction=cfg.get("data.plantvillage_batch_fraction", 0.85),
+                    seed=cfg.get("data.seed", 42) + node_id,
+                ),
+            )
+        else:
+            train_loader = DataLoader(train_subset, batch_size=batch_size, shuffle=True)
         test_loader = DataLoader(make_subset(dataset, test_idx), batch_size=batch_size, shuffle=False)
         node_loaders.append((train_loader, test_loader))
         crop_class_weights.append(
