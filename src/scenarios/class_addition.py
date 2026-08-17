@@ -72,7 +72,7 @@ def make_class_addition_hook(
             return []
         target = next(n for n in nodes if n.node_id == target_node)
         target.train_loader = DataLoader(
-            ConcatDataset([target.train_loader.dataset, make_subset(dataset, reserve_train_idx)]),
+            ConcatDataset([target.train_loader.dataset, make_subset(dataset, reserve_train_idx, train=True)]),
             batch_size=batch_size, shuffle=True,
         )
         target.test_loader = DataLoader(
@@ -129,7 +129,7 @@ def main():
     if source_crop not in dataset.labels.crop_classes:
         raise ValueError(f"source_crop '{source_crop}' is not a known crop: {dataset.labels.crop_classes}")
 
-    probe_loader, _global_test_loader, node_loaders = build_dataloaders(cfg, dataset)
+    probe_loader, _global_test_loader, node_loaders, _disease_class_weights = build_dataloaders(cfg, dataset)
     arch = args.arch or cfg.get("models.architectures", ["mobilenet_v3_small"])[0]
     batch_size = cfg.get("training.batch_size", 32)
 
@@ -143,7 +143,7 @@ def main():
         cfg.get("data.test_fraction", 0.15),
     )
     node_loaders[source_idx] = (
-        DataLoader(make_subset(dataset, remaining_source), batch_size=batch_size, shuffle=True),
+        DataLoader(make_subset(dataset, remaining_source, train=True), batch_size=batch_size, shuffle=True),
         source_test_loader,
     )
 

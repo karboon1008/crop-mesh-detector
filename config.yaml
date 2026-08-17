@@ -43,6 +43,9 @@ training:
     mobilevit_xxs: 3
   distill_epochs_per_round: 2     # epochs spent distilling towards consensus knowledge
   rounds: 5                       # number of mesh exchange rounds
+  crop_loss_weight: 1.0
+  disease_loss_weight: 1.5        # upweights disease cross-entropy relative to crop
+  disease_class_balanced: true    # inverse-frequency per-class weights within the disease loss (see compute_disease_class_weights)
   baseline_epochs: 10             # epochs for the local-only baseline (aligned compute budget)
   batch_size: 32
   lr: 0.001

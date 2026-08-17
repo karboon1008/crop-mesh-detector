@@ -103,7 +103,7 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     output_dir = Path(cfg.get("output.dir", "outputs"))
     dataset = load_full_dataset(cfg.get("data.root"), cfg.get("data.image_size", 160))
-    probe_loader, _global_test_loader, node_loaders = build_dataloaders(cfg, dataset)
+    probe_loader, _global_test_loader, node_loaders, _disease_class_weights = build_dataloaders(cfg, dataset)
     arch = args.arch or cfg.get("models.architectures", ["mobilenet_v3_small"])[0]
     batch_size = cfg.get("training.batch_size", 32)
 

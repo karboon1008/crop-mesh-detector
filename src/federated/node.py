@@ -42,6 +42,9 @@ class Node:
         active: bool = True,
         crop_classes: list[str] | None = None,
         disease_classes: list[str] | None = None,
+        crop_loss_weight: float = 1.0,
+        disease_loss_weight: float = 1.0,
+        disease_class_weights: torch.Tensor | None = None,
     ):
         self.node_id = node_id
         self.model = model.to(device)
@@ -53,6 +56,11 @@ class Node:
         # evaluate() — falls back to positional labels if not provided.
         self.crop_classes = crop_classes or [f"crop_{i}" for i in range(model.crop_head.out_features)]
         self.disease_classes = disease_classes or [f"disease_{i}" for i in range(model.disease_head.out_features)]
+        self.crop_loss_weight = crop_loss_weight
+        self.disease_loss_weight = disease_loss_weight
+        self.disease_class_weights = (
+            disease_class_weights.to(device) if disease_class_weights is not None else None
+        )
 
     # local supervised training (data never leaves this method)
     def local_train(self, epochs: int, lr: float) -> float:
@@ -67,8 +75,10 @@ class Node:
 
                 optimizer.zero_grad()
                 crop_logits, disease_logits = self.model(images)
-                loss = F.cross_entropy(crop_logits, crop_labels) + F.cross_entropy(
-                    disease_logits, disease_labels
+                loss = self.crop_loss_weight * F.cross_entropy(
+                    crop_logits, crop_labels
+                ) + self.disease_loss_weight * F.cross_entropy(
+                    disease_logits, disease_labels, weight=self.disease_class_weights
                 )
                 loss.backward()
                 optimizer.step()
@@ -173,8 +183,10 @@ class Node:
                 disease_labels = disease_labels.to(self.device)
 
                 crop_logits, disease_logits, feats = self.model(images, return_features=True)
-                sup_loss = F.cross_entropy(crop_logits, crop_labels) + F.cross_entropy(
-                    disease_logits, disease_labels
+                sup_loss = self.crop_loss_weight * F.cross_entropy(
+                    crop_logits, crop_labels
+                ) + self.disease_loss_weight * F.cross_entropy(
+                    disease_logits, disease_labels, weight=self.disease_class_weights
                 )
                 proto_loss = _prototype_alignment_loss(
                     feats, crop_labels, disease_labels, consensus_prototypes, self.device

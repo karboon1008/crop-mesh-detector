@@ -23,13 +23,45 @@ import random
 from dataclasses import dataclass, field
 from pathlib import Path
 import numpy as np
-from torch.utils.data import Dataset, Subset
+import torch
+from torch.utils.data import Dataset
 from torchvision import transforms
 from torchvision.datasets import ImageFolder
 
 # mobilenet & efficient net is trained on imagenet dataset so they share the one normalization convention
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
+
+
+def build_eval_transform(image_size: int):
+    return transforms.Compose(
+        [
+            transforms.Resize((image_size, image_size)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
+        ]
+    )
+
+
+def build_train_transform(image_size: int):
+    """Training-only augmentation. Resize/Normalize, random
+    crop+zoom, rotation/flip, color jitter, perspective skew, blur, and
+    patch erasure. Applied to train splits only.
+    """
+    return transforms.Compose(
+        [
+            transforms.RandomResizedCrop(image_size, scale=(0.6, 1.0), ratio=(0.8, 1.25)),
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomVerticalFlip(p=0.2),
+            transforms.RandomRotation(30),
+            transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.05),
+            transforms.RandomPerspective(distortion_scale=0.2, p=0.3),
+            transforms.RandomApply([transforms.GaussianBlur(kernel_size=3)], p=0.2),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
+            transforms.RandomErasing(p=0.25, scale=(0.02, 0.15)),
+        ]
+    )
 
 
 def _parse_crop_disease(class_name: str) -> tuple[str, str]:
@@ -60,13 +92,8 @@ class PlantVillageDataset(Dataset):
     """Wraps torchvision's ImageFolder, exposing (image, crop_label, disease_label)."""
 
     def __init__(self, root: str | Path, image_size: int = 160):
-        self.transform = transforms.Compose(
-            [
-                transforms.Resize((image_size, image_size)),
-                transforms.ToTensor(),
-                transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
-            ]
-        )
+        self.transform = build_eval_transform(image_size)
+        self.train_transform = build_train_transform(image_size)
         self.base = ImageFolder(str(root))
         self.labels = self._build_label_maps(self.base.classes)
 
@@ -300,5 +327,43 @@ def train_test_split_indices(
     return shuffled[n_test:], shuffled[:n_test]
 
 
-def make_subset(dataset: PlantVillageDataset, indices: list[int]) -> Subset:
-    return Subset(dataset, indices)
+class TransformedSubset(Dataset):
+    def __init__(self, dataset: PlantVillageDataset, indices: list[int], transform):
+        self.dataset = dataset
+        self.indices = indices
+        self.transform = transform
+
+    def __len__(self) -> int:
+        return len(self.indices)
+
+    def __getitem__(self, i: int):
+        idx = self.indices[i]
+        image, class_idx = self.dataset.base[idx]  # raw PIL image, ImageFolder has no transform of its own
+        image = self.transform(image)
+        crop_idx, disease_idx = self.dataset.labels.class_to_crop_disease[class_idx]
+        return image, crop_idx, disease_idx
+
+
+def make_subset(dataset: PlantVillageDataset, indices: list[int], train: bool = False) -> Dataset:
+    """train=True applies the dataset's augmentation transform (for a node's
+    training split); train=False (default) applies the plain eval transform
+    (test/probe/global-test splits, so accuracy stays comparable/deterministic).
+    """
+    transform = dataset.train_transform if train else dataset.transform
+    return TransformedSubset(dataset, indices, transform)
+
+
+def compute_disease_class_weights(dataset: PlantVillageDataset, indices: list[int]) -> torch.Tensor:
+    """Inverse-frequency class weights for the disease head's cross-entropy,
+    computed from this subset's own label counts.
+    """
+    num_disease = len(dataset.labels.disease_classes)
+    counts = torch.zeros(num_disease)
+    targets = np.asarray(dataset.targets)[indices]
+    for t in targets:
+        _, disease_idx = dataset.labels.class_to_crop_disease[int(t)]
+        counts[disease_idx] += 1
+    weights = torch.ones(num_disease)
+    present = counts > 0
+    weights[present] = counts.sum() / (num_disease * counts[present])
+    return weights
