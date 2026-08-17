@@ -86,6 +86,10 @@ class CoordinatorRunner:
                 energy_method=r["energy_method"],
                 knowledge_bytes_sent=r["size_bytes"] * max(0, len(active) - 1),
                 active=1,
+                baseline_crop_accuracy=r["baseline_crop_accuracy"],
+                baseline_disease_accuracy=r["baseline_disease_accuracy"],
+                baseline_energy_kwh=r["baseline_energy_kwh"],
+                baseline_duration_s=r["baseline_duration_s"],
             )
 
         gather_body = {

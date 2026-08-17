@@ -48,7 +48,11 @@ def test_run_round_writes_energy_and_eval_rows_from_response_bodies(tmp_path):
     def post_all(node_ids, path, body):
         if path == "/round/start":
             return {
-                n: {"energy_kwh": 0.01, "duration_s": 1.0, "energy_method": "proxy_wall_power", "size_bytes": 100}
+                n: {
+                    "energy_kwh": 0.01, "duration_s": 1.0, "energy_method": "proxy_wall_power", "size_bytes": 100,
+                    "baseline_crop_accuracy": 0.0, "baseline_disease_accuracy": 0.0,
+                    "baseline_energy_kwh": 0.0, "baseline_duration_s": 0.0,
+                }
                 for n in node_ids
             }
         assert path == "/round/gather"
@@ -72,7 +76,11 @@ def test_run_round_multiplies_knowledge_bytes_by_the_number_of_fetching_peers(tm
     def post_all(node_ids, path, body):
         if path == "/round/start":
             return {
-                n: {"energy_kwh": 0.0, "duration_s": 0.0, "energy_method": "x", "size_bytes": 100}
+                n: {
+                    "energy_kwh": 0.0, "duration_s": 0.0, "energy_method": "x", "size_bytes": 100,
+                    "baseline_crop_accuracy": 0.0, "baseline_disease_accuracy": 0.0,
+                    "baseline_energy_kwh": 0.0, "baseline_duration_s": 0.0,
+                }
                 for n in node_ids
             }
         return {n: {"crop_accuracy": 0.0, "disease_accuracy": 0.0} for n in node_ids}
@@ -98,7 +106,11 @@ def test_run_round_records_zero_knowledge_bytes_when_only_one_node_is_active(tmp
     def post_all(node_ids, path, body):
         if path == "/round/start":
             return {
-                "node_0": {"energy_kwh": 0.0, "duration_s": 0.0, "energy_method": "x", "size_bytes": 100},
+                "node_0": {
+                    "energy_kwh": 0.0, "duration_s": 0.0, "energy_method": "x", "size_bytes": 100,
+                    "baseline_crop_accuracy": 0.0, "baseline_disease_accuracy": 0.0,
+                    "baseline_energy_kwh": 0.0, "baseline_duration_s": 0.0,
+                },
                 "node_1": None,
             }
         return {n: {"crop_accuracy": 0.0, "disease_accuracy": 0.0} for n in node_ids}
@@ -115,7 +127,11 @@ def test_run_round_excludes_a_node_that_failed_round_start(tmp_path):
     def post_all(node_ids, path, body):
         if path == "/round/start":
             return {
-                "node_0": {"energy_kwh": 0.01, "duration_s": 1.0, "energy_method": "x", "size_bytes": 10},
+                "node_0": {
+                    "energy_kwh": 0.01, "duration_s": 1.0, "energy_method": "x", "size_bytes": 10,
+                    "baseline_crop_accuracy": 0.0, "baseline_disease_accuracy": 0.0,
+                    "baseline_energy_kwh": 0.0, "baseline_duration_s": 0.0,
+                },
                 "node_1": None,  # timed out / errored
             }
         assert set(body["active_nodes"]) == {"node_0"}
@@ -133,7 +149,11 @@ def test_run_all_rounds_calls_run_round_for_every_configured_round(tmp_path):
         if path == "/round/start":
             seen_rounds.append(body["round_idx"])
             return {
-                n: {"energy_kwh": 0.0, "duration_s": 0.0, "energy_method": "x", "size_bytes": 1} for n in node_ids
+                n: {
+                    "energy_kwh": 0.0, "duration_s": 0.0, "energy_method": "x", "size_bytes": 1,
+                    "baseline_crop_accuracy": 0.0, "baseline_disease_accuracy": 0.0,
+                    "baseline_energy_kwh": 0.0, "baseline_duration_s": 0.0,
+                } for n in node_ids
             }
         return {n: {"crop_accuracy": 0.0, "disease_accuracy": 0.0} for n in node_ids}
 
@@ -144,7 +164,13 @@ def test_run_all_rounds_calls_run_round_for_every_configured_round(tmp_path):
 
 def _stub_post_all(node_ids, path, body):
     if path == "/round/start":
-        return {n: {"energy_kwh": 0.0, "duration_s": 0.0, "energy_method": "x", "size_bytes": 1} for n in node_ids}
+        return {
+            n: {
+                "energy_kwh": 0.0, "duration_s": 0.0, "energy_method": "x", "size_bytes": 1,
+                "baseline_crop_accuracy": 0.0, "baseline_disease_accuracy": 0.0,
+                "baseline_energy_kwh": 0.0, "baseline_duration_s": 0.0,
+            } for n in node_ids
+        }
     return {n: {"crop_accuracy": 0.0, "disease_accuracy": 0.0} for n in node_ids}
 
 
@@ -182,3 +208,27 @@ def test_run_all_rounds_skips_status_file_when_status_path_is_none(tmp_path):
     runner = _make_runner(tmp_path, _stub_post_all, num_rounds=1)
     runner.run_all_rounds()
     assert not (tmp_path / "status.json").exists()
+
+
+def test_run_round_persists_baseline_fields_from_round_start_response(tmp_path):
+    def post_all(node_ids, path, body):
+        if path == "/round/start":
+            return {
+                n: {
+                    "energy_kwh": 0.01, "duration_s": 1.0, "energy_method": "proxy_wall_power",
+                    "size_bytes": 100,
+                    "baseline_crop_accuracy": 0.55, "baseline_disease_accuracy": 0.45,
+                    "baseline_energy_kwh": 0.009, "baseline_duration_s": 0.9,
+                }
+                for n in node_ids
+            }
+        return {n: {"crop_accuracy": 0.5, "disease_accuracy": 0.6} for n in node_ids}
+
+    runner = _make_runner(tmp_path, post_all)
+    runner.run_round(0)
+
+    rows = {r["node_id"]: r for r in sqlite_store.read_all(str(tmp_path / "merged.db"))}
+    assert rows["node_0"]["baseline_crop_accuracy"] == 0.55
+    assert rows["node_0"]["baseline_disease_accuracy"] == 0.45
+    assert rows["node_0"]["baseline_energy_kwh"] == 0.009
+    assert rows["node_0"]["baseline_duration_s"] == 0.9
