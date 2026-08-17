@@ -44,14 +44,20 @@ class CoordinatorRunner:
     # finishes -- None (the default, and what every existing test uses)
     # skips this entirely.
     status_path: str | None = None
+    log_file: str | None = None
     activity_log: list = field(default_factory=list, init=False)
+    _log_dir_ready: bool = field(default=False, init=False)
 
     def _log(self, message: str) -> None:
-        # Pure in-memory append, no I/O -- negligible cost, and irrelevant to
-        # energy accounting anyway since the coordinator itself is never
-        # inside a ComputeEnergyTracker scope.
-        self.activity_log.append({"ts": time.time(), "message": message})
+        entry = {"ts": time.time(), "message": message}
+        self.activity_log.append(entry)
         del self.activity_log[:-MAX_ACTIVITY_LOG]
+        if self.log_file:
+            if not self._log_dir_ready:
+                Path(self.log_file).parent.mkdir(parents=True, exist_ok=True)
+                self._log_dir_ready = True
+            with open(self.log_file, "a") as f:
+                f.write(json.dumps(entry) + "\n")
 
     def wait_until_all_online(self, sleep_fn=time.sleep, poll_interval_s: float = 1.0) -> None:
         self._log(f"waiting for {self.expected_nodes} to come online...")

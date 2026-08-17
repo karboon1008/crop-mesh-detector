@@ -1,6 +1,7 @@
 # tests/test_node_runner.py
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -150,3 +151,16 @@ def test_activity_log_is_bounded(tmp_path, synthetic_dataset):
         runner._log("test", f"entry {i}")
     assert len(runner.activity_log) == 300
     assert runner.activity_log[-1]["message"] == "entry 349"
+
+
+def test_log_file_receives_one_json_line_per_log_call(tmp_path, synthetic_dataset):
+    log_path = tmp_path / "node_0.log"
+    runner, _ = _make_runner(tmp_path, synthetic_dataset)
+    runner.log_file = str(log_path)
+    runner._log("round_start", "hello")
+
+    lines = log_path.read_text().strip().splitlines()
+    assert len(lines) == 1
+    entry = json.loads(lines[0])
+    assert entry["stage"] == "round_start"
+    assert entry["message"] == "hello"

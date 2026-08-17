@@ -210,6 +210,18 @@ def test_run_all_rounds_skips_status_file_when_status_path_is_none(tmp_path):
     assert not (tmp_path / "status.json").exists()
 
 
+def test_log_file_receives_one_json_line_per_log_call(tmp_path):
+    log_path = tmp_path / "coordinator.log"
+    runner = _make_runner(tmp_path, lambda *a: {})
+    runner.log_file = str(log_path)
+    runner._log("hello")
+
+    lines = log_path.read_text().strip().splitlines()
+    assert len(lines) == 1
+    entry = json.loads(lines[0])
+    assert entry["message"] == "hello"
+
+
 def test_run_round_persists_baseline_fields_from_round_start_response(tmp_path):
     def post_all(node_ids, path, body):
         if path == "/round/start":

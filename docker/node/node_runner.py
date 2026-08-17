@@ -7,8 +7,10 @@ See docker/node/main.py for the real FastAPI + httpx wiring.
 
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable
 
 from src.energy import sqlite_store
@@ -56,17 +58,23 @@ class NodeRunner:
     proto_weight: float = 0.5
     kd_weight: float = 0.5
     temperature: float = 2.0
+    log_file: str | None = None
     _last_round_idx: int | None = field(default=None, init=False)
     _last_knowledge_bytes: bytes | None = field(default=None, init=False)
     activity_log: list = field(default_factory=list, init=False)
     _last_progress_ts: dict = field(default_factory=dict, init=False)
+    _log_dir_ready: bool = field(default=False, init=False)
 
     def _log(self, stage: str, message: str) -> None:
-        # Pure in-memory append -- no disk/network I/O -- so calling this
-        # from inside a tracked energy scope adds only a few microseconds,
-        # immeasurable against minutes-long training.
-        self.activity_log.append({"ts": time.time(), "stage": stage, "message": message})
+        entry = {"ts": time.time(), "stage": stage, "message": message}
+        self.activity_log.append(entry)
         del self.activity_log[:-MAX_ACTIVITY_LOG]
+        if self.log_file:
+            if not self._log_dir_ready:
+                Path(self.log_file).parent.mkdir(parents=True, exist_ok=True)
+                self._log_dir_ready = True
+            with open(self.log_file, "a") as f:
+                f.write(json.dumps(entry) + "\n")
 
     def _make_progress_cb(self, phase_key: str) -> Callable[[dict], None]:
         """Builds a throttled progress_cb for Node.local_train/distill: only
