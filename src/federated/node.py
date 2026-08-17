@@ -5,10 +5,17 @@ exposing images, labels-in-bulk, or model weights to anyone else.
 
 from __future__ import annotations
 from dataclasses import dataclass
+from typing import Callable
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
+
+# Called with a small dict of progress info after every batch, when provided.
+# Deliberately cheap to invoke (dict + a few numbers) -- callers that care
+# about wall-clock cost (e.g. inside a tracked energy scope) are expected to
+# throttle on their own side rather than this method skipping calls.
+ProgressCallback = Callable[[dict], None]
 
 Prototypes = dict[tuple[str, int], torch.Tensor]
 
@@ -48,12 +55,13 @@ class Node:
         self.active = active
 
     # local supervised training (data never leaves this method)
-    def local_train(self, epochs: int, lr: float) -> float:
+    def local_train(self, epochs: int, lr: float, progress_cb: ProgressCallback | None = None) -> float:
         self.model.train()
         optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
         total_loss, total_batches = 0.0, 0
-        for _ in range(epochs):
-            for images, crop_labels, disease_labels in self.train_loader:
+        num_batches = len(self.train_loader)
+        for epoch in range(epochs):
+            for batch_idx, (images, crop_labels, disease_labels) in enumerate(self.train_loader):
                 images = images.to(self.device)
                 crop_labels = crop_labels.to(self.device)
                 disease_labels = disease_labels.to(self.device)
@@ -67,6 +75,17 @@ class Node:
                 optimizer.step()
                 total_loss += loss.item()
                 total_batches += 1
+                if progress_cb is not None:
+                    progress_cb(
+                        {
+                            "phase": "local_train",
+                            "epoch": epoch + 1,
+                            "epochs": epochs,
+                            "batch": batch_idx + 1,
+                            "num_batches": num_batches,
+                            "loss": loss.item(),
+                        }
+                    )
         return total_loss / max(1, total_batches)
 
     # knowledge extraction: prototypes + public-probe logits
@@ -131,6 +150,7 @@ class Node:
         proto_weight: float,
         kd_weight: float,
         temperature: float,
+        progress_cb: ProgressCallback | None = None,
     ) -> dict[str, float]:
         """Returns per-component average losses (kd_loss, sup_loss, proto_loss,
         total_loss) instead of one blended number, so kd_weight/proto_weight
@@ -141,9 +161,11 @@ class Node:
         consensus_crop_logits = consensus_crop_logits.to(self.device)
         consensus_disease_logits = consensus_disease_logits.to(self.device)
 
+        num_kd_batches = len(probe_loader)
+        num_sup_batches = len(self.train_loader)
         kd_loss_sum, kd_batches = 0.0, 0
         sup_loss_sum, proto_loss_sum, sup_batches = 0.0, 0.0, 0
-        for _ in range(epochs):
+        for epoch in range(epochs):
             # (a) knowledge-distillation using the shared public probe dataset
             for batch_idx, (images, _, _) in enumerate(probe_loader):
                 images = images.to(self.device)
@@ -162,9 +184,20 @@ class Node:
 
                 kd_loss_sum += kd_loss.item()
                 kd_batches += 1
+                if progress_cb is not None:
+                    progress_cb(
+                        {
+                            "phase": "distill_kd",
+                            "epoch": epoch + 1,
+                            "epochs": epochs,
+                            "batch": batch_idx + 1,
+                            "num_batches": num_kd_batches,
+                            "loss": kd_loss.item(),
+                        }
+                    )
 
             # (b) supervised learning + prototype alignment on local labeled data only
-            for images, crop_labels, disease_labels in self.train_loader:
+            for batch_idx, (images, crop_labels, disease_labels) in enumerate(self.train_loader):
                 images = images.to(self.device)
                 crop_labels = crop_labels.to(self.device)
                 disease_labels = disease_labels.to(self.device)
@@ -184,6 +217,17 @@ class Node:
                 sup_loss_sum += sup_loss.item()
                 proto_loss_sum += proto_loss.item()
                 sup_batches += 1
+                if progress_cb is not None:
+                    progress_cb(
+                        {
+                            "phase": "distill_sup",
+                            "epoch": epoch + 1,
+                            "epochs": epochs,
+                            "batch": batch_idx + 1,
+                            "num_batches": num_sup_batches,
+                            "loss": sup_loss.item() + proto_loss.item(),
+                        }
+                    )
 
         return {
             "kd_loss": kd_loss_sum / max(1, kd_batches),

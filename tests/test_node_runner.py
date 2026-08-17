@@ -94,3 +94,28 @@ def test_handle_round_gather_with_no_peers_still_evaluates(tmp_path, synthetic_d
     runner, _ = _make_runner(tmp_path, synthetic_dataset)
     response = runner.handle_round_gather(0, ["node_0"], {})
     assert "crop_accuracy" in response
+
+
+def test_handle_round_start_records_activity_log_entries(tmp_path, synthetic_dataset):
+    runner, _ = _make_runner(tmp_path, synthetic_dataset)
+    runner.handle_round_start(0)
+
+    assert len(runner.activity_log) >= 2
+    assert all("ts" in e and "stage" in e and "message" in e for e in runner.activity_log)
+    assert any("round 0" in e["message"] for e in runner.activity_log)
+
+
+def test_handle_round_gather_records_activity_log_entries(tmp_path, synthetic_dataset):
+    runner, _ = _make_runner(tmp_path, synthetic_dataset)
+    runner.handle_round_gather(0, ["node_0"], {})
+
+    stages = [e["stage"] for e in runner.activity_log]
+    assert "round_gather" in stages
+
+
+def test_activity_log_is_bounded(tmp_path, synthetic_dataset):
+    runner, _ = _make_runner(tmp_path, synthetic_dataset)
+    for i in range(350):
+        runner._log("test", f"entry {i}")
+    assert len(runner.activity_log) == 300
+    assert runner.activity_log[-1]["message"] == "entry 349"

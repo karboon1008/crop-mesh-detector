@@ -1,6 +1,7 @@
 # tests/test_coordinator_runner.py
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -139,3 +140,45 @@ def test_run_all_rounds_calls_run_round_for_every_configured_round(tmp_path):
     runner = _make_runner(tmp_path, post_all, num_rounds=3)
     runner.run_all_rounds()
     assert seen_rounds == [0, 1, 2]
+
+
+def _stub_post_all(node_ids, path, body):
+    if path == "/round/start":
+        return {n: {"energy_kwh": 0.0, "duration_s": 0.0, "energy_method": "x", "size_bytes": 1} for n in node_ids}
+    return {n: {"crop_accuracy": 0.0, "disease_accuracy": 0.0} for n in node_ids}
+
+
+def test_run_round_records_activity_log_entries(tmp_path):
+    runner = _make_runner(tmp_path, _stub_post_all)
+    runner.run_round(0)
+
+    stages = " ".join(e["message"] for e in runner.activity_log)
+    assert "round 0" in stages
+    assert all("ts" in e and "message" in e for e in runner.activity_log)
+
+
+def test_run_all_rounds_writes_status_file_when_status_path_set(tmp_path):
+    status_path = tmp_path / "status.json"
+    runner = CoordinatorRunner(
+        expected_nodes=["node_0", "node_1"],
+        node_base_urls={"node_0": "http://node_0:8000", "node_1": "http://node_1:8000"},
+        num_rounds=2,
+        round_timeout_s=30,
+        db_path=str(tmp_path / "merged.db"),
+        post_all=_stub_post_all,
+        health_check=lambda n: True,
+        status_path=str(status_path),
+    )
+    runner.run_all_rounds()
+
+    assert status_path.exists()
+    status = json.loads(status_path.read_text())
+    assert status["all_rounds_complete"] is True
+    assert status["num_rounds"] == 2
+    assert "completed_at" in status
+
+
+def test_run_all_rounds_skips_status_file_when_status_path_is_none(tmp_path):
+    runner = _make_runner(tmp_path, _stub_post_all, num_rounds=1)
+    runner.run_all_rounds()
+    assert not (tmp_path / "status.json").exists()

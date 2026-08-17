@@ -77,7 +77,15 @@ scenarios:
     severity: 0.5
 
 docker_mesh:
-  round_timeout_s: 300
+  # node_2's shard (Tomato-heavy, per manual_node_crops) is ~3x node_0's and
+  # ~2x node_1's batch count. Measured: node_2's /round/start (1 local
+  # epoch + compute_knowledge) took ~4330s under 3-way CPU contention on a
+  # 16-core host -- comfortably over the old 300s/3600s values. Sized here
+  # for roughly double that (to cover local_epochs_per_round/
+  # distill_epochs_per_round going from 1 back to their original 2) plus
+  # safety margin, since round_timeout_s is the per-HTTP-call timeout for
+  # BOTH /round/start and /round/gather.
+  round_timeout_s: 21600
   data_dir: "data/docker_mesh"
   energy_db_dir: "outputs/docker_mesh/energy"
   dashboard_refresh_s: 3

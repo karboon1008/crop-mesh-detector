@@ -18,6 +18,14 @@ from src.federated.node import KnowledgePayload, Node
 
 from knowledge_codec import decode_knowledge, encode_knowledge
 
+MAX_ACTIVITY_LOG = 300
+# Minimum wall-clock gap between two recorded progress-heartbeat lines from
+# the SAME training phase, so a fast batch loop doesn't spam the log. This
+# throttle is what keeps the added overhead negligible relative to the
+# minutes-long training it's reporting on -- the dashboard only needs an
+# update every so often, not every batch.
+PROGRESS_LOG_INTERVAL_S = 10.0
+
 
 def _now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -49,8 +57,39 @@ class NodeRunner:
     temperature: float = 2.0
     _last_round_idx: int | None = field(default=None, init=False)
     _last_knowledge_bytes: bytes | None = field(default=None, init=False)
+    activity_log: list = field(default_factory=list, init=False)
+    _last_progress_ts: dict = field(default_factory=dict, init=False)
+
+    def _log(self, stage: str, message: str) -> None:
+        # Pure in-memory append -- no disk/network I/O -- so calling this
+        # from inside a tracked energy scope adds only a few microseconds,
+        # immeasurable against minutes-long training.
+        self.activity_log.append({"ts": time.time(), "stage": stage, "message": message})
+        del self.activity_log[:-MAX_ACTIVITY_LOG]
+
+    def _make_progress_cb(self, phase_key: str) -> Callable[[dict], None]:
+        """Builds a throttled progress_cb for Node.local_train/distill: only
+        actually logs once every PROGRESS_LOG_INTERVAL_S per phase_key, so
+        the added overhead stays negligible no matter how fast the batch
+        loop runs.
+        """
+
+        def _cb(info: dict) -> None:
+            now = time.time()
+            last = self._last_progress_ts.get(phase_key, 0.0)
+            if now - last < PROGRESS_LOG_INTERVAL_S:
+                return
+            self._last_progress_ts[phase_key] = now
+            self._log(
+                info["phase"],
+                f"epoch {info['epoch']}/{info['epochs']} "
+                f"batch {info['batch']}/{info['num_batches']} loss={info['loss']:.4f}",
+            )
+
+        return _cb
 
     def handle_round_start(self, round_idx: int) -> dict:
+        self._log("round_start", f"round {round_idx}: received, starting local_train")
         # compute_knowledge runs INSIDE the tracked scope: it is a full
         # forward pass over the probe set, a real compute cost belonging to
         # this round. The in-process pipeline (src/train.py) tracks the whole
@@ -58,7 +97,10 @@ class NodeRunner:
         # to that baseline -- especially under the proxy_wall_power fallback,
         # which is linear in tracked wall time.
         with self.tracker.track(f"{self.node_id}_round_{round_idx}") as energy_record:
-            self.node.local_train(self.local_epochs, self.lr)
+            self.node.local_train(
+                self.local_epochs, self.lr, progress_cb=self._make_progress_cb(f"round_{round_idx}_local_train")
+            )
+            self._log("round_start", f"round {round_idx}: local_train done, computing knowledge")
             knowledge = self.node.compute_knowledge(self.probe_loader)
         data = encode_knowledge(round_idx, knowledge)
         self._last_round_idx = round_idx
@@ -74,6 +116,10 @@ class NodeRunner:
             energy_method=energy_record["method"],
             knowledge_bytes_sent=len(data),
         )
+        self._log(
+            "round_start",
+            f"round {round_idx}: knowledge ready ({len(data)} bytes), responding to coordinator",
+        )
         return {
             "round_idx": round_idx,
             "size_bytes": len(data),
@@ -88,6 +134,7 @@ class NodeRunner:
         return self._last_knowledge_bytes
 
     def handle_round_gather(self, round_idx: int, active_nodes: list, peer_bases: dict) -> dict:
+        self._log("round_gather", f"round {round_idx}: received, fetching knowledge from {len(active_nodes) - 1} peer(s)")
         peer_ids = [n for n in active_nodes if n != self.node_id]
         fetched = self.fetch_all_knowledge(peer_ids, peer_bases, round_idx)
 
@@ -100,6 +147,7 @@ class NodeRunner:
             if peer_round_idx != round_idx:
                 continue  # defensive: peer returned data for a different round
             peers.append(knowledge)
+        self._log("round_gather", f"round {round_idx}: got {len(peers)}/{len(peer_ids)} peer payload(s)")
 
         if peers:
             consensus_prototypes = aggregate_prototypes(
@@ -137,6 +185,7 @@ class NodeRunner:
             # the local_train + compute_knowledge figure entirely. Closing
             # this gap properly needs accumulating upsert semantics (or a
             # per-phase energy column), which is a schema change.
+            self._log("round_gather", f"round {round_idx}: distilling towards peer consensus")
             self.node.distill(
                 consensus_prototypes,
                 consensus_crop_logits,
@@ -147,8 +196,10 @@ class NodeRunner:
                 proto_weight=self.proto_weight,
                 kd_weight=self.kd_weight,
                 temperature=self.temperature,
+                progress_cb=self._make_progress_cb(f"round_{round_idx}_distill"),
             )
 
+        self._log("round_gather", f"round {round_idx}: evaluating")
         eval_result = self.node.evaluate()
         sqlite_store.upsert_row(
             self.db_path,
@@ -158,5 +209,10 @@ class NodeRunner:
             crop_accuracy=eval_result["crop_accuracy"],
             disease_accuracy=eval_result["disease_accuracy"],
             active=1,
+        )
+        self._log(
+            "round_gather",
+            f"round {round_idx}: done, crop_acc={eval_result['crop_accuracy']:.4f} "
+            f"disease_acc={eval_result['disease_accuracy']:.4f}",
         )
         return {"round_idx": round_idx, **eval_result}

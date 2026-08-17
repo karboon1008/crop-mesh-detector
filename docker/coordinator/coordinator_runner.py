@@ -10,11 +10,15 @@ asyncio/httpx wiring.
 
 from __future__ import annotations
 
+import json
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable
 
 from src.energy import sqlite_store
+
+MAX_ACTIVITY_LOG = 300
 
 
 def _now_iso() -> str:
@@ -36,14 +40,30 @@ class CoordinatorRunner:
     db_path: str
     post_all: PostAll
     health_check: HealthCheck
+    # Where to write a small completion marker JSON once run_all_rounds
+    # finishes -- None (the default, and what every existing test uses)
+    # skips this entirely.
+    status_path: str | None = None
+    activity_log: list = field(default_factory=list, init=False)
+
+    def _log(self, message: str) -> None:
+        # Pure in-memory append, no I/O -- negligible cost, and irrelevant to
+        # energy accounting anyway since the coordinator itself is never
+        # inside a ComputeEnergyTracker scope.
+        self.activity_log.append({"ts": time.time(), "message": message})
+        del self.activity_log[:-MAX_ACTIVITY_LOG]
 
     def wait_until_all_online(self, sleep_fn=time.sleep, poll_interval_s: float = 1.0) -> None:
+        self._log(f"waiting for {self.expected_nodes} to come online...")
         while not all(self.health_check(n) for n in self.expected_nodes):
             sleep_fn(poll_interval_s)
+        self._log("all nodes online")
 
     def run_round(self, round_idx: int) -> list:
+        self._log(f"round {round_idx}: dispatching /round/start to {self.expected_nodes}")
         start_results = self.post_all(self.expected_nodes, "/round/start", {"round_idx": round_idx})
         active = sorted(n for n, r in start_results.items() if r is not None)
+        self._log(f"round {round_idx}: {len(active)}/{len(self.expected_nodes)} node(s) active after /round/start")
         for node_id in active:
             r = start_results[node_id]
             # r["size_bytes"] is the size of ONE serialized knowledge payload.
@@ -73,7 +93,9 @@ class CoordinatorRunner:
             "active_nodes": active,
             "peer_bases": {n: self.node_base_urls[n] for n in active},
         }
+        self._log(f"round {round_idx}: dispatching /round/gather to {active}")
         gather_results = self.post_all(active, "/round/gather", gather_body)
+        self._log(f"round {round_idx}: /round/gather complete")
         for node_id in active:
             r = gather_results.get(node_id)
             if r is None:
@@ -91,3 +113,16 @@ class CoordinatorRunner:
     def run_all_rounds(self) -> None:
         for round_idx in range(self.num_rounds):
             self.run_round(round_idx)
+        self._log(f"all {self.num_rounds} round(s) complete")
+        if self.status_path is not None:
+            Path(self.status_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(self.status_path).write_text(
+                json.dumps(
+                    {
+                        "all_rounds_complete": True,
+                        "num_rounds": self.num_rounds,
+                        "completed_at": _now_iso(),
+                    },
+                    indent=2,
+                )
+            )

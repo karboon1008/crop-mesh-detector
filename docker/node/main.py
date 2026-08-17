@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+import time
 from pathlib import Path
 
 # In the container, /app has src/ copied alongside this file, so this
@@ -35,10 +36,15 @@ from src.data.plantvillage import (
     make_subset,
     train_test_split_indices,
 )
+from src.energy import sqlite_store
 from src.energy.tracker import ComputeEnergyTracker
 from src.federated.node import Node
 from src.models.factory import build_model
 from node_runner import NodeRunner
+
+
+def _now_iso() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
 async def _fetch_one(client: httpx.AsyncClient, peer_id: str, base_url: str | None, round_idx: int):
@@ -54,6 +60,18 @@ async def _fetch_one(client: httpx.AsyncClient, peer_id: str, base_url: str | No
         resp = await client.get(f"{base_url}/knowledge/{round_idx}", timeout=30.0)
         if resp.status_code != 200:
             return peer_id, None
+        # Recorded here (the fetching side), never inside a ComputeEnergyTracker
+        # scope -- handle_round_gather's fetch/distill/evaluate work is already
+        # outside the tracked block (see node_runner.py's ENERGY SCOPE CAVEAT),
+        # so this write has no effect on any reported energy_kwh figure.
+        sqlite_store.record_transfer(
+            runner.db_path,
+            round_idx,
+            from_node=peer_id,
+            to_node=runner.node_id,
+            size_bytes=len(resp.content),
+            fetched_at=_now_iso(),
+        )
         return peer_id, resp.content
     except httpx.HTTPError:
         return peer_id, None
@@ -79,6 +97,12 @@ def build_runner() -> NodeRunner:
     probe_root = os.environ["PROBE_ROOT"]
     classes_json = os.environ["CLASSES_JSON"]
     energy_db = os.environ["ENERGY_DB"]
+    # Every container start is a fresh run, not a resume -- a stale db left
+    # over from a previous run (same bind-mounted /energy dir) would show
+    # old rounds/transfers under a "live" dashboard. Only this node ever
+    # writes to its own db path, so deleting it here can't race another
+    # container.
+    Path(energy_db).unlink(missing_ok=True)
     cfg = Config.load(os.environ.get("CONFIG_PATH"))
 
     global_map = load_global_label_map(classes_json)
@@ -137,6 +161,11 @@ app = FastAPI()
 @app.get("/health")
 def health():
     return {"node_id": runner.node_id, "status": "online"}
+
+
+@app.get("/log")
+def get_log():
+    return runner.activity_log[-200:]
 
 
 def _require(body: dict, *keys: str) -> None:

@@ -92,6 +92,13 @@ def main() -> None:
     }
     round_timeout_s = cfg.get("docker_mesh.round_timeout_s", 300)
     energy_db = os.environ["ENERGY_DB"]
+    status_path = str(Path(energy_db).parent / "status.json")
+    # Every container start is a fresh run, not a resume -- wipe the merged
+    # db and the previous run's completion marker so the dashboard can't
+    # show a stale "final results" from before this restart. Only the
+    # coordinator ever writes these two paths.
+    Path(energy_db).unlink(missing_ok=True)
+    Path(status_path).unlink(missing_ok=True)
 
     runner = CoordinatorRunner(
         expected_nodes=expected_nodes,
@@ -101,6 +108,7 @@ def main() -> None:
         db_path=energy_db,
         post_all=make_post_all(node_base_urls, round_timeout_s),
         health_check=make_health_check(node_base_urls),
+        status_path=status_path,
     )
 
     events_app = FastAPI()
@@ -108,6 +116,10 @@ def main() -> None:
     @events_app.get("/events")
     def get_events():
         return events[-MAX_EVENTS:]
+
+    @events_app.get("/log")
+    def get_log():
+        return runner.activity_log[-200:]
 
     server_thread = threading.Thread(
         target=lambda: uvicorn.run(events_app, host="0.0.0.0", port=9000), daemon=True

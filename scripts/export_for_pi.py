@@ -107,7 +107,9 @@ def export_one(
     quantize_dynamic(
         str(fp32_path), str(quantized_path), weight_type=QuantType.QInt8, op_types_to_quantize=["MatMul", "Gemm"]
     )
-    fp32_path.unlink()
+    # model_fp32.onnx is kept (not deleted) — it's the correct input for other
+    # export paths that do their own quantization, e.g. scripts/export_for_k210.py,
+    # which needs a plain float graph rather than this onnxruntime-int8 one.
 
     manifest = {
         "arch": arch,
