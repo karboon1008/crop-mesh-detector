@@ -17,6 +17,8 @@ codecarbon>=2.3       # measured compute energy -> kWh / CO2e
 # Recent torch versions import an onnxscript-based compatibility shim inside
 # torch.onnx.export() unconditionally, even on the legacy exporter path — so
 # this is needed even though nothing here calls onnxscript directly.
+# Note: onnxruntime is also a hard runtime dependency of
+# apps/crop_disease_detection/inference.py, not just an export-script tool.
 onnx>=1.15
 onnxruntime>=1.16
 onnxscript>=0.1

@@ -1,7 +1,8 @@
 """Crop Disease Detection -- single-page Streamlit app. Captures a photo
 from the browser's webcam, classifies it with the ONNX model in
-apps/model/model.onnx, shows a colour-coded result, and logs every capture
-to a local SQLite DB (apps/crop_disease_detection/data/detections.db).
+apps/model/model.onnx, shows a colour-coded result, and logs each
+successfully classified capture to a local SQLite DB
+(apps/crop_disease_detection/data/detections.db).
 
 Run:
     streamlit run apps/crop_disease_detection/app.py
@@ -11,8 +12,11 @@ shape as documented in inference.py), then restart this command.
 """
 from __future__ import annotations
 
+import sys
 from datetime import datetime
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import streamlit as st
 from PIL import Image
@@ -63,8 +67,12 @@ with right:
                 image = Image.open(photo)
                 result = inference.predict(session, image)
             except Exception as e:
+                # Don't update last_photo_id/last_result here: leaving them
+                # unchanged means the guard above stays true on every
+                # following rerun of this same failed photo, so inference is
+                # retried (and this st.error keeps re-rendering the failure)
+                # instead of going silently blank, until a new photo arrives.
                 st.error(f"Could not run detection on this photo: {e}")
-                result = None
             else:
                 captured_at = datetime.now().isoformat(timespec="seconds")
                 db.save_detection(
@@ -76,8 +84,8 @@ with right:
                     result["disease_confidence"],
                     result["tier"],
                 )
-            st.session_state["last_photo_id"] = photo.file_id
-            st.session_state["last_result"] = result
+                st.session_state["last_photo_id"] = photo.file_id
+                st.session_state["last_result"] = result
 
         result = st.session_state.get("last_result")
         if result is not None:
@@ -98,6 +106,6 @@ with right:
 st.subheader("Recent detections")
 rows = db.get_recent(DB_PATH, limit=20)
 if rows:
-    st.dataframe(rows, use_container_width=True)
+    st.dataframe(rows)
 else:
     st.caption("No detections logged yet.")
