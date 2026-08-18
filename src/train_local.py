@@ -107,6 +107,9 @@ def main():
     )
     print(f"Per-node local-training epochs (size-scaled): {baseline_epochs_per_node}")
 
+    min_pair_accuracy = cfg.get("training.min_local_pair_accuracy", 0.3)
+    flagged = []  # (arch, node_id, pair_accuracy) below the sanity floor — printed as a banner at the end
+
     architectures = [args.arch] if args.arch else cfg.get("models.architectures", [])
     for arch in architectures:
         print(f"\n=== Architecture: {arch} (stage 1: local-only) ===")
@@ -117,6 +120,7 @@ def main():
             crop_class_weights=crop_class_weights, disease_class_weights=disease_class_weights,
             epochs_per_node=baseline_epochs_per_node, checkpoint_dir=checkpoint_dir,
             pair_class_names=dataset.base.classes, class_to_crop_disease=dataset.labels.class_to_crop_disease,
+            resume=not args.fresh,
         )
 
         sample_model = build_model(arch, num_crop, num_disease, pretrained=False)
@@ -129,10 +133,14 @@ def main():
         all_results[arch] = arch_result
         (stage_dir / f"results_{arch}.json").write_text(json.dumps(arch_result, indent=2))
         for node_id, node_eval in evals.items():
+            pair_accuracy = node_eval["pair_accuracy"]
+            flag = " ⚠ BELOW FLOOR" if pair_accuracy < min_pair_accuracy else ""
             print(
-                f"  {node_id}: local disease_accuracy={node_eval['disease_accuracy']:.3f} "
-                f"global disease_accuracy={node_eval['global']['disease_accuracy']:.3f}"
+                f"  {node_id}: local pair_accuracy={pair_accuracy:.3f} disease_accuracy={node_eval['disease_accuracy']:.3f} "
+                f"global disease_accuracy={node_eval['global']['disease_accuracy']:.3f}{flag}"
             )
+            if pair_accuracy < min_pair_accuracy:
+                flagged.append((arch, node_id, pair_accuracy))
 
     results_summary_path.write_text(json.dumps(all_results, indent=2))
 
@@ -144,8 +152,18 @@ def main():
 
     print(
         f"\nStage 1 done. Results, manifest, and checkpoints written to {stage_dir}/ "
-        f"(now covering {len(all_results)} architecture(s): {list(all_results.keys())}).\n"
-        f"Inspect {results_summary_path} — if the local models look good, run:\n"
+        f"(now covering {len(all_results)} architecture(s): {list(all_results.keys())})."
+    )
+    if flagged:
+        print(
+            f"\n⚠ {len(flagged)} node(s) below the local pair_accuracy floor "
+            f"({min_pair_accuracy}) — review before proceeding to stage 2:"
+        )
+        for arch, node_id, pair_accuracy in flagged:
+            print(f"    {arch} / {node_id}: pair_accuracy={pair_accuracy:.3f}")
+    else:
+        print(f"\nAll nodes cleared the local pair_accuracy floor ({min_pair_accuracy}) — safe to proceed:")
+    print(
         f"    python -m src.train_mesh --config {args.config or 'config.yaml'}"
     )
 

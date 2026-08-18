@@ -66,6 +66,8 @@ training:
   baseline_epochs: 10             # epochs for the local-only baseline (aligned compute budget), for a median-sized node
   max_epochs_per_node: 40         # cap on the size-scaled epoch count (see scale_epochs_by_node_size) for small nodes
   early_stopping_patience: 5      # stage-1 local-only training only: stop if pair_accuracy hasn't improved for this many epochs
+  weight_decay: 0.0001            # stage-1 local-only training only: Adam L2 penalty, a second overfitting guard alongside early stopping
+  min_local_pair_accuracy: 0.6    # stage-1 sanity floor: src.train_local flags any node below this local pair_accuracy as "needs review"
   batch_size: 32
   lr: 0.001
   distill_lr: 0.0005

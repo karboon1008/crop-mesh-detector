@@ -173,13 +173,17 @@ def check_manifest_match(expected: dict, actual: dict, expected_path) -> None:
 def run_baseline(
     cfg, arch, node_loaders, global_test_loader, crop_classes, disease_classes, tracker, device,
     crop_class_weights=None, disease_class_weights=None, epochs_per_node=None, checkpoint_dir=None,
-    pair_class_names=None, class_to_crop_disease=None,
+    pair_class_names=None, class_to_crop_disease=None, resume=False,
 ):
     """Local-only training, no exchange at all — the comparison point
     the collaboration gain is measured against. If `checkpoint_dir` is
     given, each node's trained model is saved there as `<node_id>.pt` —
     used by src/train_mesh.py (stage 2) to warm-start from these exact
-    weights instead of a fresh random init.
+    weights instead of a fresh random init. If `resume` is also True and
+    a node's checkpoint already exists there, that node is loaded and
+    re-evaluated instead of retrained — so a partial run (e.g. an HPC job
+    that hit its walltime after node 8 of 13) can pick back up rather than
+    retraining every node from scratch.
     """
     crop_class_weights = crop_class_weights or [None] * len(node_loaders)
     disease_class_weights = disease_class_weights or [None] * len(node_loaders)
@@ -204,11 +208,19 @@ def run_baseline(
             focal_gamma=cfg.get("training.focal_gamma", 2.0),
             pair_class_names=pair_class_names, class_to_crop_disease=class_to_crop_disease,
         )
-        with tracker.track(f"{arch}_baseline_{node_id}"):
-            node.local_train(
-                epochs_per_node[i], cfg.get("training.lr", 0.001),
-                val_loader=test_loader, patience=cfg.get("training.early_stopping_patience", 5),
-            )
+        ckpt_path = checkpoint_dir / f"{node_id}.pt" if checkpoint_dir is not None else None
+        if resume and ckpt_path is not None and ckpt_path.exists():
+            print(f"  {node_id}: checkpoint already exists at {ckpt_path}, skipping retraining (resume)")
+            node.model.load_state_dict(torch.load(ckpt_path, map_location=device))
+        else:
+            with tracker.track(f"{arch}_baseline_{node_id}"):
+                node.local_train(
+                    epochs_per_node[i], cfg.get("training.lr", 0.001),
+                    val_loader=test_loader, patience=cfg.get("training.early_stopping_patience", 5),
+                    weight_decay=cfg.get("training.weight_decay", 0.0),
+                )
+            if ckpt_path is not None:
+                torch.save(node.model.state_dict(), ckpt_path)
         # top-level metrics: this node's own (skewed) local test split. Note
         # this is the SAME split early stopping just validated against, so
         # this number is a little optimistic — global_test_loader below is
@@ -218,8 +230,6 @@ def run_baseline(
         node_eval = node.evaluate()
         node_eval["global"] = node.evaluate(global_test_loader)
         evals[node_id] = node_eval
-        if checkpoint_dir is not None:
-            torch.save(node.model.state_dict(), checkpoint_dir / f"{node_id}.pt")
     return evals
 
 

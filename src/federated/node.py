@@ -88,6 +88,7 @@ class Node:
     # local supervised training (data never leaves this method)
     def local_train(
         self, epochs: int, lr: float, val_loader: DataLoader | None = None, patience: int | None = None,
+        weight_decay: float = 0.0,
     ) -> float:
         """If `val_loader` and `patience` are both given, evaluates this
         node's pair_accuracy (crop AND disease both correct — see
@@ -98,14 +99,17 @@ class Node:
         src.train.scale_epochs_by_node_size) doesn't just overfit through
         all of them. The mesh's own per-round local_train calls (1-3
         epochs) don't pass these, so this is opt-in and only used by
-        src.train.run_baseline's stage-1 local-only training.
+        src.train.run_baseline's stage-1 local-only training. `weight_decay`
+        (Adam's L2 penalty) is a second, complementary guard against the
+        same small-node overfitting risk — also opt-in (default 0, i.e.
+        today's behaviour), also stage-1-only in practice.
         """
         early_stopping = val_loader is not None and patience is not None
         if early_stopping and self.pair_to_class_idx is None:
             raise ValueError(
                 "local_train early stopping needs pair_class_names/class_to_crop_disease set on this Node"
             )
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=lr, weight_decay=weight_decay)
         scheduler = torch.optim.lr_scheduler.OneCycleLR(
             optimizer, max_lr=lr, steps_per_epoch=len(self.train_loader), epochs=epochs
         )
