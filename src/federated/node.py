@@ -48,6 +48,8 @@ class Node:
         disease_class_weights: torch.Tensor | None = None,
         loss_type: str = "cross_entropy",
         focal_gamma: float = 2.0,
+        pair_class_names: list[str] | None = None,
+        class_to_crop_disease: dict[int, tuple[int, int]] | None = None,
     ):
         self.node_id = node_id
         self.model = model.to(device)
@@ -69,16 +71,48 @@ class Node:
         )
         self.loss_type = loss_type
         self.focal_gamma = focal_gamma
+        # crop_accuracy and disease_accuracy are scored independently, so a
+        # model can get disease_accuracy right by pattern-matching lesion
+        # texture while guessing the wrong crop, and that never shows up.
+        # pair_class_names/class_to_crop_disease (dataset.base.classes /
+        # dataset.labels.class_to_crop_disease) let evaluate() also score
+        # the JOINT (crop, disease) pair per sample — the real test of
+        # whether mesh knowledge transfer generalizes a node to another
+        # node's crop, not just its disease vocabulary. Optional: without
+        # them, evaluate() only reports the two independent accuracies.
+        self.pair_class_names = pair_class_names
+        self.pair_to_class_idx = (
+            {pair: idx for idx, pair in class_to_crop_disease.items()} if class_to_crop_disease else None
+        )
 
     # local supervised training (data never leaves this method)
-    def local_train(self, epochs: int, lr: float) -> float:
-        self.model.train()
+    def local_train(
+        self, epochs: int, lr: float, val_loader: DataLoader | None = None, patience: int | None = None,
+    ) -> float:
+        """If `val_loader` and `patience` are both given, evaluates this
+        node's pair_accuracy (crop AND disease both correct — see
+        evaluate()) on `val_loader` after every epoch, keeps the
+        best-scoring epoch's weights, and stops early once `patience`
+        epochs pass with no improvement — so a node whose epoch count was
+        scaled up for having a small local shard (see
+        src.train.scale_epochs_by_node_size) doesn't just overfit through
+        all of them. The mesh's own per-round local_train calls (1-3
+        epochs) don't pass these, so this is opt-in and only used by
+        src.train.run_baseline's stage-1 local-only training.
+        """
+        early_stopping = val_loader is not None and patience is not None
+        if early_stopping and self.pair_to_class_idx is None:
+            raise ValueError(
+                "local_train early stopping needs pair_class_names/class_to_crop_disease set on this Node"
+            )
         optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
         scheduler = torch.optim.lr_scheduler.OneCycleLR(
             optimizer, max_lr=lr, steps_per_epoch=len(self.train_loader), epochs=epochs
         )
+        best_score, best_state, epochs_without_improvement = -1.0, None, 0
         total_loss, total_batches = 0.0, 0
-        for _ in range(epochs):
+        for _epoch in range(epochs):
+            self.model.train()
             for images, crop_labels, disease_labels in self.train_loader:
                 images = images.to(self.device)
                 crop_labels = crop_labels.to(self.device)
@@ -96,6 +130,20 @@ class Node:
                 scheduler.step()
                 total_loss += loss.item()
                 total_batches += 1
+
+            if early_stopping:
+                val_score = self.evaluate(val_loader)["pair_accuracy"]
+                if val_score > best_score:
+                    best_score = val_score
+                    best_state = {k: v.detach().clone() for k, v in self.model.state_dict().items()}
+                    epochs_without_improvement = 0
+                else:
+                    epochs_without_improvement += 1
+                    if epochs_without_improvement >= patience:
+                        break
+
+        if early_stopping and best_state is not None:
+            self.model.load_state_dict(best_state)
         return total_loss / max(1, total_batches)
 
     # knowledge extraction: prototypes + public-probe logits
@@ -242,13 +290,21 @@ class Node:
         total = max(1, len(crop_true))
         correct_crop = sum(t == p for t, p in zip(crop_true, crop_pred))
         correct_disease = sum(t == p for t, p in zip(disease_true, disease_pred))
+        # Both heads right on the SAME sample — the two accuracies above
+        # can each look fine while the model rarely gets the full class
+        # right (e.g. correct disease, wrong crop), which is exactly the
+        # failure mode that matters for cross-node generalization.
+        correct_pair = sum(
+            cp == ct and dp == dt for cp, ct, dp, dt in zip(crop_pred, crop_true, disease_pred, disease_true)
+        )
 
         crop_metrics = head_metrics(crop_true, crop_pred, self.crop_classes)
         disease_metrics = head_metrics(disease_true, disease_pred, self.disease_classes)
 
-        return {
+        result = {
             "crop_accuracy": correct_crop / total,
             "disease_accuracy": correct_disease / total,
+            "pair_accuracy": correct_pair / total,
             "crop_macro_precision": crop_metrics["macro_precision"],
             "crop_macro_recall": crop_metrics["macro_recall"],
             "crop_macro_f1": crop_metrics["macro_f1"],
@@ -266,6 +322,28 @@ class Node:
                 },
             },
         }
+
+        if self.pair_to_class_idx is not None and self.pair_class_names is not None:
+            # The two heads predict independently, so a predicted
+            # (crop, disease) combo can be one that never occurs in the
+            # real 27-class label space (e.g. Peach + Tomato_mosaic_virus)
+            # — bucket those as "invalid_combo" rather than crashing or
+            # silently dropping them, since predicting a nonsense combo is
+            # itself a real failure worth counting.
+            invalid_idx = len(self.pair_class_names)
+            pair_class_names = self.pair_class_names + ["invalid_combo"]
+            pair_true = [self.pair_to_class_idx[(c, d)] for c, d in zip(crop_true, disease_true)]
+            pair_pred = [self.pair_to_class_idx.get((c, d), invalid_idx) for c, d in zip(crop_pred, disease_pred)]
+            pair_metrics = head_metrics(pair_true, pair_pred, pair_class_names)
+            result["pair_macro_precision"] = pair_metrics["macro_precision"]
+            result["pair_macro_recall"] = pair_metrics["macro_recall"]
+            result["pair_macro_f1"] = pair_metrics["macro_f1"]
+            result["detail"]["pair"] = {
+                "per_class": pair_metrics["per_class"],
+                "confusion_matrix": pair_metrics["confusion_matrix"],
+            }
+
+        return result
 
 def _classification_loss(
     logits: torch.Tensor,

@@ -45,8 +45,7 @@ def build_eval_transform(image_size: int):
 
 def build_train_transform(image_size: int):
     """Training-only augmentation. Resize/Normalize, random
-    crop+zoom, rotation/flip, color jitter, perspective skew, blur, and
-    patch erasure. Applied to train splits only.
+    crop+zoom, rotation/flip, color jitter. Applied to train splits only.
     """
     return transforms.Compose(
         [
@@ -85,13 +84,30 @@ class LabelMaps:
     class_to_crop_disease: dict[int, tuple[int, int]] = field(default_factory=dict)
 
 
+class _FilteredImageFolder(ImageFolder):
+    """ImageFolder restricted to a subset of its class subdirectories,
+    so excluded classes are never scanned in the first place.
+    """
+
+    def __init__(self, root: str, allowed_classes: set[str] | None = None):
+        self._allowed_classes = allowed_classes
+        super().__init__(root)
+
+    def find_classes(self, directory: str) -> tuple[list[str], dict[str, int]]:
+        classes, _ = super().find_classes(directory)
+        if self._allowed_classes is not None:
+            classes = [c for c in classes if c in self._allowed_classes]
+        class_to_idx = {c: i for i, c in enumerate(classes)}
+        return classes, class_to_idx
+
+
 class PlantVillageDataset(Dataset):
     """Wraps torchvision's ImageFolder, exposing (image, crop_label, disease_label)."""
 
-    def __init__(self, root: str | Path, image_size: int = 160):
+    def __init__(self, root: str | Path, image_size: int = 160, allowed_classes: set[str] | None = None):
         self.transform = build_eval_transform(image_size)
         self.train_transform = build_train_transform(image_size)
-        self.base = ImageFolder(str(root))
+        self.base = _FilteredImageFolder(str(root), allowed_classes=allowed_classes)
         self.labels = self._build_label_maps(self.base.classes)
 
     @staticmethod
@@ -128,6 +144,10 @@ class PlantVillageDataset(Dataset):
 
 
 def load_full_dataset(root: str | Path, image_size: int = 160) -> PlantVillageDataset:
+    """Loads PlantVillage restricted to classes that have PlantDoc
+    real-world coverage (see plantdoc.overlapping_plantvillage_classes) —
+    PlantVillage-only classes carry no domain-shift signal for this project.
+    """
     root = Path(root)
     if not root.exists():
         raise FileNotFoundError(
@@ -135,7 +155,9 @@ def load_full_dataset(root: str | Path, image_size: int = 160) -> PlantVillageDa
             f"'python scripts/download_plantvillage.py' first, or point "
             f"config.yaml's data.root at your existing copy."
         )
-    return PlantVillageDataset(root, image_size=image_size)
+    from src.data.plantdoc import overlapping_plantvillage_classes  # local import: avoids a plantdoc<->plantvillage cycle
+
+    return PlantVillageDataset(root, image_size=image_size, allowed_classes=overlapping_plantvillage_classes())
 
 
 def _stratified_carve(
@@ -315,13 +337,28 @@ def _manual_partition(
 
 
 def train_test_split_indices(
-    indices: list[int], test_fraction: float, seed: int
+    dataset: PlantVillageDataset, indices: list[int], test_fraction: float, seed: int
 ) -> tuple[list[int], list[int]]:
+    """Splits `indices` into (train, test), stratified by original class
+    (crop+disease pair) so each class's train/test ratio stays close to
+    `test_fraction` instead of drifting under one global shuffle — matters
+    most for a node covering several disease classes of very different
+    sizes (see _stratified_carve for the equivalent probe/global-test carve).
+    """
     rng = random.Random(seed)
-    shuffled = indices.copy()
-    rng.shuffle(shuffled)
-    n_test = max(1, int(len(shuffled) * test_fraction)) if len(shuffled) > 1 else 0
-    return shuffled[n_test:], shuffled[:n_test]
+    targets = np.asarray(dataset.targets)[indices]
+    train_idx: list[int] = []
+    test_idx: list[int] = []
+    for cls in sorted(set(targets.tolist())):
+        cls_indices = [indices[i] for i in range(len(indices)) if targets[i] == cls]
+        rng.shuffle(cls_indices)
+        count = len(cls_indices)
+        n_test = 0 if count <= 1 else min(max(1, round(count * test_fraction)), count - 1)
+        test_idx.extend(cls_indices[:n_test])
+        train_idx.extend(cls_indices[n_test:])
+    rng.shuffle(train_idx)
+    rng.shuffle(test_idx)
+    return train_idx, test_idx
 
 
 class TransformedSubset(Dataset):

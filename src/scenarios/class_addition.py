@@ -17,7 +17,8 @@ import torch
 from torch.utils.data import ConcatDataset, DataLoader
 
 from src.config import Config
-from src.data.plantvillage import load_full_dataset, make_subset, train_test_split_indices
+from src.data.merged import load_merged_dataset
+from src.data.plantvillage import make_subset, train_test_split_indices
 from src.federated.mesh import MeshSimulator
 from src.scenarios.harness import (
     ScenarioEvent,
@@ -52,7 +53,7 @@ def carve_reserve_pool(dataset, source_train_indices, source_crop, reserve_fract
     n_reserve = max(1, int(len(shuffled) * reserve_fraction))
     reserve = set(shuffled[:n_reserve])
     remaining_source = [idx for idx in source_train_indices if idx not in reserve]
-    reserve_train_idx, reserve_test_idx = train_test_split_indices(list(reserve), test_fraction, seed)
+    reserve_train_idx, reserve_test_idx = train_test_split_indices(dataset, list(reserve), test_fraction, seed)
     return remaining_source, reserve_train_idx, reserve_test_idx
 
 
@@ -125,7 +126,9 @@ def main():
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     output_dir = Path(cfg.get("output.dir", "outputs"))
-    dataset = load_full_dataset(cfg.get("data.root"), cfg.get("data.image_size", 160))
+    dataset = load_merged_dataset(
+        cfg.get("data.root"), cfg.get("data.plantdoc_root"), cfg.get("data.image_size", 160), cfg.get("data.seed", 42)
+    )
     if source_crop not in dataset.labels.crop_classes:
         raise ValueError(f"source_crop '{source_crop}' is not a known crop: {dataset.labels.crop_classes}")
 
@@ -148,10 +151,12 @@ def main():
     )
 
     baseline_nodes = build_node_set(
-        cfg, arch, node_loaders, dataset.labels.crop_classes, dataset.labels.disease_classes, device
+        cfg, arch, node_loaders, dataset.labels.crop_classes, dataset.labels.disease_classes, device,
+        pair_class_names=dataset.base.classes, class_to_crop_disease=dataset.labels.class_to_crop_disease,
     )
     mesh_nodes = build_node_set(
-        cfg, arch, node_loaders, dataset.labels.crop_classes, dataset.labels.disease_classes, device
+        cfg, arch, node_loaders, dataset.labels.crop_classes, dataset.labels.disease_classes, device,
+        pair_class_names=dataset.base.classes, class_to_crop_disease=dataset.labels.class_to_crop_disease,
     )
     mesh = MeshSimulator(
         mesh_nodes,

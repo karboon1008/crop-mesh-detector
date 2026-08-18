@@ -221,7 +221,7 @@ def test_carve_reserve_pool_is_disjoint_from_remaining_source(synthetic_dataset)
         synthetic_dataset, remaining_idx, num_nodes=2, strategy="manual", dirichlet_alpha=0.3, seed=4,
         manual_node_crops={"node_0": ["Tomato"], "node_1": ["Potato"]},
     )
-    source_train_idx, _ = train_test_split_indices(shards[0], test_fraction=0.3, seed=4)  # node_0 grows Tomato
+    source_train_idx, _ = train_test_split_indices(synthetic_dataset, shards[0], test_fraction=0.3, seed=4)  # node_0 grows Tomato
 
     remaining_source, reserve_train_idx, reserve_test_idx = carve_reserve_pool(
         synthetic_dataset, source_train_idx, source_crop="Tomato", reserve_fraction=0.5, seed=4, test_fraction=0.3,
@@ -246,8 +246,8 @@ def test_class_addition_scenario_end_to_end_smoke(tmp_path, synthetic_dataset):
     num_crop = len(synthetic_dataset.labels.crop_classes)
     num_disease = len(synthetic_dataset.labels.disease_classes)
 
-    source_train_idx, source_test_idx = train_test_split_indices(shards[1], test_fraction=0.3, seed=5)  # node_1: Tomato
-    target_train_idx, target_test_idx = train_test_split_indices(shards[0], test_fraction=0.3, seed=5)  # node_0: Potato
+    source_train_idx, source_test_idx = train_test_split_indices(synthetic_dataset, shards[1], test_fraction=0.3, seed=5)  # node_1: Tomato
+    target_train_idx, target_test_idx = train_test_split_indices(synthetic_dataset, shards[0], test_fraction=0.3, seed=5)  # node_0: Potato
 
     remaining_source, reserve_train_idx, reserve_test_idx = carve_reserve_pool(
         synthetic_dataset, source_train_idx, source_crop="Tomato", reserve_fraction=0.5, seed=5, test_fraction=0.3,

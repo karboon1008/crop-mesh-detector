@@ -17,7 +17,7 @@ from torch.utils.data import DataLoader, Dataset
 from torchvision.transforms import functional as TF
 
 from src.config import Config
-from src.data.plantvillage import load_full_dataset
+from src.data.merged import load_merged_dataset
 from src.federated.mesh import MeshSimulator
 from src.scenarios.harness import (
     ScenarioEvent,
@@ -102,7 +102,9 @@ def main():
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     output_dir = Path(cfg.get("output.dir", "outputs"))
-    dataset = load_full_dataset(cfg.get("data.root"), cfg.get("data.image_size", 160))
+    dataset = load_merged_dataset(
+        cfg.get("data.root"), cfg.get("data.plantdoc_root"), cfg.get("data.image_size", 160), cfg.get("data.seed", 42)
+    )
     probe_loader, _global_test_loader, node_loaders, _crop_class_weights, _disease_class_weights = build_dataloaders(cfg, dataset)
     arch = args.arch or cfg.get("models.architectures", ["mobilenet_v3_small"])[0]
     batch_size = cfg.get("training.batch_size", 32)
@@ -110,10 +112,12 @@ def main():
     require_target_node(target_node, node_loaders)
 
     baseline_nodes = build_node_set(
-        cfg, arch, node_loaders, dataset.labels.crop_classes, dataset.labels.disease_classes, device
+        cfg, arch, node_loaders, dataset.labels.crop_classes, dataset.labels.disease_classes, device,
+        pair_class_names=dataset.base.classes, class_to_crop_disease=dataset.labels.class_to_crop_disease,
     )
     mesh_nodes = build_node_set(
-        cfg, arch, node_loaders, dataset.labels.crop_classes, dataset.labels.disease_classes, device
+        cfg, arch, node_loaders, dataset.labels.crop_classes, dataset.labels.disease_classes, device,
+        pair_class_names=dataset.base.classes, class_to_crop_disease=dataset.labels.class_to_crop_disease,
     )
     mesh = MeshSimulator(
         mesh_nodes,

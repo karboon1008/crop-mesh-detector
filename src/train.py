@@ -1,7 +1,8 @@
 """Entry point: for every configured architecture, trains an
 aligned-budget local-only baseline and the decentralised mesh (prototype
-+ probe-logit exchange only — no raw images, no weights) on PlantVillage,
-then reports the collaboration gain and a compute + communication
++ probe-logit exchange only — no raw images, no weights) on the merged
+PlantVillage+PlantDoc project dataset (see src/data/merged.py), then
+reports the collaboration gain and a compute + communication
 sustainability accounting.
 
 Run all architectures in config.yaml's models.architectures list in one go:
@@ -24,20 +25,19 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
+import statistics
 from pathlib import Path
 
 import torch
-from torch.utils.data import ConcatDataset, DataLoader
+from torch.utils.data import DataLoader
 
 from src.config import Config
-from src.data.mixing import MixedDomainBatchSampler
-from src.data.plantdoc import load_plantdoc_dataset
+from src.data.merged import load_merged_dataset
 from src.data.plantvillage import (
     carve_global_test_set,
     carve_public_probe_set,
     compute_crop_class_weights,
     compute_disease_class_weights,
-    load_full_dataset,
     make_subset,
     partition_nodes,
     train_test_split_indices,
@@ -55,22 +55,31 @@ from src.models.factory import build_model, count_parameters, model_size_mb
 from src.reporting import build_per_class_rows, build_round_log_rows, plot_training_curves, write_csv
 
 
-def build_dataloaders(cfg: Config, dataset):
-    plantdoc_dataset = load_plantdoc_dataset(
-        cfg.get("data.plantdoc_root"),
-        dataset.labels.crop_classes,
-        dataset.labels.disease_classes,
-        dataset.labels.class_to_crop_disease,
-        cfg.get("data.image_size", 160),
-    )
-    if plantdoc_dataset is not None:
-        print(
-            f"Loaded PlantDoc: {len(plantdoc_dataset)} images across "
-            f"{len(set(plantdoc_dataset.raw_labels))} classes "
-            f"(mixed at {cfg.get('data.plantvillage_batch_fraction', 0.85):.0%} PlantVillage / "
-            f"{1 - cfg.get('data.plantvillage_batch_fraction', 0.85):.0%} PlantDoc per training batch)"
-        )
+def scale_epochs_by_node_size(base_epochs: int, node_loaders, max_epochs: int) -> list[int]:
+    """Per-node epoch count so a node with a much smaller local shard still
+    sees roughly as many gradient steps per training call as a
+    "typical"-sized node (steps per epoch == len(train_loader), so a
+    smaller shard otherwise means both fewer steps per epoch AND the same
+    epoch count as everyone else). Scales epochs UP relative to the median
+    node's batch count — never down, so typical/large nodes keep
+    `base_epochs` — and caps the result at `max_epochs` so a very small
+    node (e.g. ~300 images) doesn't get scaled into severe overfitting or
+    a blown-out runtime.
+    """
+    batches_per_node = [len(train_loader) for train_loader, _ in node_loaders]
+    reference = statistics.median(batches_per_node)
+    return [
+        min(max_epochs, round(base_epochs * max(1.0, reference / batches)))
+        for batches in batches_per_node
+    ]
 
+
+def build_dataloaders(cfg: Config, dataset):
+    """`dataset` is the merged PlantVillage+PlantDoc pool (see
+    src/data/merged.py) — domain mixing is already baked into it 1:1 per
+    class, so no separate PlantDoc loading/mixing happens here; every split
+    below is just a stratified carve/partition over one dataset.
+    """
     probe_idx, remaining_idx = carve_public_probe_set(
         dataset,
         cfg.get("data.probe_set_fraction", 0.05),
@@ -105,25 +114,12 @@ def build_dataloaders(cfg: Config, dataset):
     node_loaders = []
     crop_class_weights = []
     disease_class_weights = []
-    for node_id, shard in enumerate(shards):
+    for shard in shards:
         train_idx, test_idx = train_test_split_indices(
-            shard, cfg.get("data.test_fraction", 0.15), cfg.get("data.seed", 42)
+            dataset, shard, cfg.get("data.test_fraction", 0.15), cfg.get("data.seed", 42)
         )
         train_subset = make_subset(dataset, train_idx, train=True)
-        if plantdoc_dataset is not None:
-            train_loader = DataLoader(
-                ConcatDataset([train_subset, plantdoc_dataset]),
-                batch_sampler=MixedDomainBatchSampler(
-                    primary_len=len(train_subset),
-                    secondary_len=len(plantdoc_dataset),
-                    secondary_labels=plantdoc_dataset.raw_labels,
-                    batch_size=batch_size,
-                    primary_fraction=cfg.get("data.plantvillage_batch_fraction", 0.85),
-                    seed=cfg.get("data.seed", 42) + node_id,
-                ),
-            )
-        else:
-            train_loader = DataLoader(train_subset, batch_size=batch_size, shuffle=True)
+        train_loader = DataLoader(train_subset, batch_size=batch_size, shuffle=True)
         test_loader = DataLoader(make_subset(dataset, test_idx), batch_size=batch_size, shuffle=False)
         node_loaders.append((train_loader, test_loader))
         crop_class_weights.append(
@@ -139,15 +135,58 @@ def build_dataloaders(cfg: Config, dataset):
     return probe_loader, global_test_loader, node_loaders, crop_class_weights, disease_class_weights
 
 
+def dataset_manifest(cfg: Config, dataset, node_loaders) -> dict:
+    """Snapshot of the config/data choices that determine node shard
+    identity — written by src/train_local.py (stage 1) and re-derived by
+    src/train_mesh.py (stage 2) to confirm stage 2 is loading checkpoints
+    for the SAME node partition stage 1 actually trained, before it warm-
+    starts from them. A drifted config.yaml between the two runs (e.g. a
+    different seed or num_nodes) would otherwise silently pair a
+    checkpoint with the wrong node's data.
+    """
+    return {
+        "seed": cfg.get("data.seed", 42),
+        "num_nodes": cfg.get("data.num_nodes", 3),
+        "non_iid_strategy": cfg.get("data.non_iid_strategy", "by_crop"),
+        "manual_node_crops": cfg.get("data.manual_node_crops", None),
+        "crop_classes": dataset.labels.crop_classes,
+        "disease_classes": dataset.labels.disease_classes,
+        "node_shard_sizes": [
+            [len(train_loader.dataset), len(test_loader.dataset)] for train_loader, test_loader in node_loaders
+        ],
+    }
+
+
+def check_manifest_match(expected: dict, actual: dict, expected_path) -> None:
+    mismatches = [
+        f"  {key}: stage 1 had {expected[key]!r}, stage 2 computed {actual[key]!r}"
+        for key in expected
+        if expected.get(key) != actual.get(key)
+    ]
+    if mismatches:
+        raise ValueError(
+            f"Stage 2's dataset/config does not match stage 1's manifest at {expected_path} — "
+            f"checkpoints would be paired with the wrong node's data:\n" + "\n".join(mismatches)
+        )
+
+
 def run_baseline(
     cfg, arch, node_loaders, global_test_loader, crop_classes, disease_classes, tracker, device,
-    crop_class_weights=None, disease_class_weights=None,
+    crop_class_weights=None, disease_class_weights=None, epochs_per_node=None, checkpoint_dir=None,
+    pair_class_names=None, class_to_crop_disease=None,
 ):
     """Local-only training, no exchange at all — the comparison point
-    the collaboration gain is measured against.
+    the collaboration gain is measured against. If `checkpoint_dir` is
+    given, each node's trained model is saved there as `<node_id>.pt` —
+    used by src/train_mesh.py (stage 2) to warm-start from these exact
+    weights instead of a fresh random init.
     """
     crop_class_weights = crop_class_weights or [None] * len(node_loaders)
     disease_class_weights = disease_class_weights or [None] * len(node_loaders)
+    epochs_per_node = epochs_per_node or [cfg.get("training.baseline_epochs", 10)] * len(node_loaders)
+    if checkpoint_dir is not None:
+        checkpoint_dir = Path(checkpoint_dir)
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
     evals = {}
     for i, (train_loader, test_loader) in enumerate(node_loaders):
         node_id = f"node_{i}"
@@ -163,31 +202,64 @@ def run_baseline(
             disease_class_weights=disease_class_weights[i],
             loss_type=cfg.get("training.loss_type", "cross_entropy"),
             focal_gamma=cfg.get("training.focal_gamma", 2.0),
+            pair_class_names=pair_class_names, class_to_crop_disease=class_to_crop_disease,
         )
         with tracker.track(f"{arch}_baseline_{node_id}"):
-            node.local_train(cfg.get("training.baseline_epochs", 10), cfg.get("training.lr", 0.001))
-        # top-level metrics: this node's own (skewed) local test split.
+            node.local_train(
+                epochs_per_node[i], cfg.get("training.lr", 0.001),
+                val_loader=test_loader, patience=cfg.get("training.early_stopping_patience", 5),
+            )
+        # top-level metrics: this node's own (skewed) local test split. Note
+        # this is the SAME split early stopping just validated against, so
+        # this number is a little optimistic — global_test_loader below is
+        # the untouched, unbiased generalization check.
         # "global": the untouched global_test_loader — the only number
         # that reflects whether this node can classify the full catalogue.
         node_eval = node.evaluate()
         node_eval["global"] = node.evaluate(global_test_loader)
         evals[node_id] = node_eval
+        if checkpoint_dir is not None:
+            torch.save(node.model.state_dict(), checkpoint_dir / f"{node_id}.pt")
     return evals
 
 
 def run_mesh(
     cfg, arch, node_loaders, probe_loader, global_test_loader, crop_classes, disease_classes, tracker, device,
-    output_dir, crop_class_weights=None, disease_class_weights=None,
+    output_dir, crop_class_weights=None, disease_class_weights=None, local_epochs_per_node=None,
+    warm_start_checkpoint_dir=None, pair_class_names=None, class_to_crop_disease=None,
 ):
+    """If `warm_start_checkpoint_dir` is given, each node's model is loaded
+    from `<warm_start_checkpoint_dir>/<node_id>.pt` (e.g. the checkpoints
+    src/train_local.py's run_baseline call wrote) instead of a fresh random
+    init — stage 2 of the two-stage pipeline continuing from stage 1's
+    already-trained local models. Returns (final_evals, total_bytes,
+    pre_round_evals) — pre_round_evals is each node's eval() right after
+    construction/warm-start, before round 0 does anything, so callers can
+    measure "did the rounds that followed actually help".
+    """
     crop_class_weights = crop_class_weights or [None] * len(node_loaders)
     disease_class_weights = disease_class_weights or [None] * len(node_loaders)
+    default_local_epochs = cfg.get(
+        f"training.local_epochs_per_round_overrides.{arch}", cfg.get("training.local_epochs_per_round", 2)
+    )
+    local_epochs_per_node = local_epochs_per_node or [default_local_epochs] * len(node_loaders)
+    warm_start_checkpoint_dir = Path(warm_start_checkpoint_dir) if warm_start_checkpoint_dir else None
     nodes = []
     for i, (train_loader, test_loader) in enumerate(node_loaders):
+        node_id = f"node_{i}"
         model = build_model(
             arch, len(crop_classes), len(disease_classes), pretrained=cfg.get("models.pretrained", True)
         )
+        if warm_start_checkpoint_dir is not None:
+            ckpt_path = warm_start_checkpoint_dir / f"{node_id}.pt"
+            if not ckpt_path.exists():
+                raise FileNotFoundError(
+                    f"Missing stage-1 checkpoint for {node_id} at {ckpt_path} — run "
+                    f"'python -m src.train_local --config ...' for this architecture first."
+                )
+            model.load_state_dict(torch.load(ckpt_path, map_location=device))
         nodes.append(Node(
-            f"node_{i}", model, train_loader, test_loader, device=device,
+            node_id, model, train_loader, test_loader, device=device,
             crop_classes=crop_classes, disease_classes=disease_classes,
             crop_loss_weight=cfg.get("training.crop_loss_weight", 1.0),
             disease_loss_weight=cfg.get("training.disease_loss_weight", 1.0),
@@ -195,7 +267,14 @@ def run_mesh(
             disease_class_weights=disease_class_weights[i],
             loss_type=cfg.get("training.loss_type", "cross_entropy"),
             focal_gamma=cfg.get("training.focal_gamma", 2.0),
+            pair_class_names=pair_class_names, class_to_crop_disease=class_to_crop_disease,
         ))
+
+    pre_round_evals = {}
+    for node in nodes:
+        node_eval = node.evaluate()
+        node_eval["global"] = node.evaluate(global_test_loader)
+        pre_round_evals[node.node_id] = node_eval
 
     mesh = MeshSimulator(
         nodes,
@@ -204,15 +283,12 @@ def run_mesh(
         trim_fraction=cfg.get("federated.trim_fraction", 0.2),
         krum_neighbors=cfg.get("federated.krum_neighbors", 2),
     )
+    local_epochs = {node.node_id: epochs for node, epochs in zip(nodes, local_epochs_per_node)}
 
     total_bytes = 0
     round_logs = []
     for r in range(cfg.get("training.rounds", 5)):
         with tracker.track(f"{arch}_mesh_round_{r}"):
-            local_epochs = cfg.get(
-                f"training.local_epochs_per_round_overrides.{arch}",
-                cfg.get("training.local_epochs_per_round", 2),
-            )
             round_log = mesh.run_round(
                 r,
                 local_epochs=local_epochs,
@@ -254,7 +330,7 @@ def run_mesh(
     for node in nodes:
         torch.save(node.model.state_dict(), checkpoint_dir / f"{node.node_id}.pt")
 
-    return final_evals, total_bytes
+    return final_evals, total_bytes, pre_round_evals
 
 
 def main():
@@ -277,7 +353,9 @@ def main():
     output_dir = Path(cfg.get("output.dir", "outputs"))
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    dataset = load_full_dataset(cfg.get("data.root"), cfg.get("data.image_size", 160))
+    dataset = load_merged_dataset(
+        cfg.get("data.root"), cfg.get("data.plantdoc_root"), cfg.get("data.image_size", 160), cfg.get("data.seed", 42)
+    )
     num_crop = len(dataset.labels.crop_classes)
     num_disease = len(dataset.labels.disease_classes)
     print(f"Loaded {len(dataset)} images, {num_crop} crop classes, {num_disease} disease classes.")
@@ -322,20 +400,41 @@ def main():
     )
     grand_total_bytes = 0
 
+    # Node shard sizes are wildly imbalanced (one-crop-per-node manual
+    # split can range ~40x smallest to largest) — without this, every node
+    # trains for the same number of epochs, so a small node also gets far
+    # fewer total gradient steps per training call. Scale epochs up (never
+    # down, capped at max_epochs_per_node) for nodes below the median size.
+    max_epochs_per_node = cfg.get("training.max_epochs_per_node", 40)
+    baseline_epochs_per_node = scale_epochs_by_node_size(
+        cfg.get("training.baseline_epochs", 10), node_loaders, max_epochs_per_node
+    )
+    print(f"Per-node baseline epochs (size-scaled): {baseline_epochs_per_node}")
+
     architectures = [args.arch] if args.arch else cfg.get("models.architectures", [])
     for arch in architectures:
         print(f"\n=== Architecture: {arch} ===")
+        base_local_epochs = cfg.get(
+            f"training.local_epochs_per_round_overrides.{arch}", cfg.get("training.local_epochs_per_round", 2)
+        )
+        local_epochs_per_node = scale_epochs_by_node_size(base_local_epochs, node_loaders, max_epochs_per_node)
+        print(f"Per-node mesh local_epochs (size-scaled): {local_epochs_per_node}")
+
         print("-- baseline (local-only) --")
         baseline_evals = run_baseline(
             cfg, arch, node_loaders, global_test_loader,
             dataset.labels.crop_classes, dataset.labels.disease_classes, tracker, device,
             crop_class_weights=crop_class_weights, disease_class_weights=disease_class_weights,
+            epochs_per_node=baseline_epochs_per_node,
+            pair_class_names=dataset.base.classes, class_to_crop_disease=dataset.labels.class_to_crop_disease,
         )
         print("-- mesh (prototype + logit exchange) --")
-        mesh_evals, total_bytes = run_mesh(
+        mesh_evals, total_bytes, _pre_round_evals = run_mesh(
             cfg, arch, node_loaders, probe_loader, global_test_loader,
             dataset.labels.crop_classes, dataset.labels.disease_classes, tracker, device, output_dir,
             crop_class_weights=crop_class_weights, disease_class_weights=disease_class_weights,
+            local_epochs_per_node=local_epochs_per_node,
+            pair_class_names=dataset.base.classes, class_to_crop_disease=dataset.labels.class_to_crop_disease,
         )
         grand_total_bytes += total_bytes
         gain = compute_collaboration_gain(mesh_evals, baseline_evals)

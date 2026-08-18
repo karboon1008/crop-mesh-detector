@@ -43,7 +43,7 @@ class MeshSimulator:
     def run_round(
         self,
         round_idx: int,
-        local_epochs: int,
+        local_epochs: int | dict[str, int],
         distill_epochs: int,
         lr: float,
         distill_lr: float,
@@ -56,9 +56,12 @@ class MeshSimulator:
 
         # 1) local supervised training, private data never leaves this loop.
         # Disconnected nodes keep training locally — they drift, but are
-        # not frozen.
+        # not frozen. local_epochs may be a single int shared by every node,
+        # or a {node_id: epochs} map (e.g. to give data-poor nodes more
+        # epochs so they see a comparable number of gradient steps).
         for node in self.nodes:
-            log.per_node_train_loss[node.node_id] = node.local_train(local_epochs, lr)
+            node_epochs = local_epochs[node.node_id] if isinstance(local_epochs, dict) else local_epochs
+            log.per_node_train_loss[node.node_id] = node.local_train(node_epochs, lr)
 
         # 1b) snapshot every node's metrics right here, before any peer
         # knowledge is applied, so the pre- vs. post-distill comparison

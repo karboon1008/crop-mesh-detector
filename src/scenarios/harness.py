@@ -58,7 +58,8 @@ def require_target_node(target_node: str, node_loaders) -> None:
 
 
 def build_node_set(
-    cfg, arch: str, node_loaders, crop_classes: list[str], disease_classes: list[str], device: str
+    cfg, arch: str, node_loaders, crop_classes: list[str], disease_classes: list[str], device: str,
+    pair_class_names: list[str] | None = None, class_to_crop_disease: dict[int, tuple[int, int]] | None = None,
 ) -> list[Node]:
     """Builds one fresh, independent Node per shard in `node_loaders` — used
     to construct both the no-exchange baseline set and the mesh set from
@@ -80,6 +81,7 @@ def build_node_set(
         nodes.append(Node(
             f"node_{i}", model, train_loader, test_loader, device=device,
             crop_classes=crop_classes, disease_classes=disease_classes,
+            pair_class_names=pair_class_names, class_to_crop_disease=class_to_crop_disease,
         ))
     return nodes
 
