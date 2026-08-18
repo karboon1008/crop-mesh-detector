@@ -31,9 +31,9 @@ models:
   pretrained: true
 
 training:
-  local_epochs_per_round: 1       # local training epochs before each exchange round -- TEMP: reduced from 2 for smoke run
+  local_epochs_per_round: 2       # local training epochs before each exchange round
   distill_epochs_per_round: 1     # epochs spent distilling towards consensus knowledge
-  rounds: 1                       # number of mesh exchange rounds -- TEMP: reduced from 5 for smoke run
+  rounds: 5                       # number of mesh exchange rounds
   baseline_epochs: 1              # epochs for the local-only baseline (aligned compute budget) -- TEMP: reduced from 10 for smoke run
   batch_size: 32
   lr: 0.001
@@ -100,7 +100,7 @@ docker_mesh:
   # restoring local_epochs_per_round/distill_epochs_per_round from their
   # current "TEMP: reduced for smoke run" values back to non-smoke-test
   # settings.
-  round_timeout_s: 21600
+  round_timeout_s: 43200
   data_dir: "data/docker_mesh"
   energy_db_dir: "outputs/docker_mesh/energy"
   dashboard_refresh_s: 3

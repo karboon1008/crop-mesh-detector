@@ -76,11 +76,14 @@ class NodeRunner:
             with open(self.log_file, "a") as f:
                 f.write(json.dumps(entry) + "\n")
 
-    def _make_progress_cb(self, phase_key: str) -> Callable[[dict], None]:
+    def _make_progress_cb(self, phase_key: str, stage: str | None = None) -> Callable[[dict], None]:
         """Builds a throttled progress_cb for Node.local_train/distill: only
         actually logs once every PROGRESS_LOG_INTERVAL_S per phase_key, so
         the added overhead stays negligible no matter how fast the batch
-        loop runs.
+        loop runs. `stage` overrides the logged stage label (info["phase"]
+        is always "local_train" whether it's the mesh arm or the shadow
+        baseline arm calling it, so the baseline arm passes "baseline_local_train"
+        to keep the two visually distinct in the dashboard's log panel).
         """
 
         def _cb(info: dict) -> None:
@@ -90,7 +93,7 @@ class NodeRunner:
                 return
             self._last_progress_ts[phase_key] = now
             self._log(
-                info["phase"],
+                stage or info["phase"],
                 f"epoch {info['epoch']}/{info['epochs']} "
                 f"batch {info['batch']}/{info['num_batches']} loss={info['loss']:.4f}",
             )
@@ -108,7 +111,13 @@ class NodeRunner:
         # (baseline arm fully computed, then the mesh arm), so the two are
         # honestly comparable under the same round_kwargs.
         with self.tracker.track(f"{self.node_id}_baseline_round_{round_idx}") as baseline_energy_record:
-            self.shadow_node.local_train(self.local_epochs, self.lr)
+            self.shadow_node.local_train(
+                self.local_epochs,
+                self.lr,
+                progress_cb=self._make_progress_cb(
+                    f"round_{round_idx}_baseline_local_train", stage="baseline_local_train"
+                ),
+            )
             baseline_eval = self.shadow_node.evaluate()
         self._log(
             "round_start",
