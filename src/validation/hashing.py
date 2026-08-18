@@ -6,18 +6,19 @@ leaf, which a plain random split would happily place on both sides.
 
 from __future__ import annotations
 
+import numpy as np
 from PIL import Image
 
 
 def average_hash(image: Image.Image, hash_size: int = 8) -> int:
     gray = image.convert("L").resize((hash_size, hash_size), Image.BILINEAR)
-    pixels = list(gray.getdata())
-    mean = sum(pixels) / len(pixels)
+    pixels = np.asarray(gray).flatten()
+    mean = pixels.mean()
     bits = 0
     for i, pixel in enumerate(pixels):
         if pixel > mean:
             bits |= 1 << i
-    return bits
+    return int(bits)
 
 
 def hamming_distance(a: int, b: int) -> int:
