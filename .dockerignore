@@ -1,11 +1,13 @@
 # Every service in docker/docker-compose.yml builds with `context: ..` (the
-# repo root), so without this file the whole repo -- ~4.5GB including .venv/,
+# repo root), and apps/crop_disease_detection/Dockerfile builds from the repo
+# root too, so without this file the whole repo -- ~4.5GB including .venv/,
 # the real PlantVillage dataset under data/, outputs/ and .git/ -- would be
 # tarred and shipped to the Docker daemon on every build.
 #
-# Nothing listed here is needed inside any image: the three Dockerfiles only
-# COPY src/ and docker/<service>/*.py|requirements.txt, and data/outputs/
-# config.yaml reach the containers via runtime bind mounts, not COPY.
+# Nothing listed here is needed inside any image: the four Dockerfiles only
+# COPY src/, docker/<service>/*.py|requirements.txt, apps/crop_disease_detection/
+# and apps/model/model.onnx; data/outputs/config.yaml reach the mesh
+# containers via runtime bind mounts, not COPY.
 .venv/
 .venv-nncase/
 .git/
