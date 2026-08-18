@@ -5,15 +5,11 @@ from __future__ import annotations
 import numpy as np
 import pytest
 from PIL import Image
+from torch.utils.data import DataLoader
 
-try:
-    from torch.utils.data import DataLoader
-    from src.data.plantvillage import PlantVillageDataset, make_subset, train_test_split_indices
-    from src.federated.node import Node
-    from src.models.factory import build_model
-    TORCH_AVAILABLE = True
-except ImportError:
-    TORCH_AVAILABLE = False
+from src.data.plantvillage import PlantVillageDataset, make_subset, train_test_split_indices
+from src.federated.node import Node
+from src.models.factory import build_model
 
 CLASSES = [
     "Tomato___Bacterial_spot",
@@ -25,8 +21,6 @@ CLASSES = [
 
 @pytest.fixture
 def synthetic_dataset(tmp_path):
-    if not TORCH_AVAILABLE:
-        pytest.skip("torch not available")
     root = tmp_path / "PlantVillage"
     rng = np.random.RandomState(0)
     for cls in CLASSES:
@@ -39,8 +33,6 @@ def synthetic_dataset(tmp_path):
 
 
 def build_nodes(dataset, shards, num_crop, num_disease, arch="mobilenet_v3_small"):
-    if not TORCH_AVAILABLE:
-        pytest.skip("torch not available")
     nodes = []
     for i, shard in enumerate(shards):
         train_idx, test_idx = train_test_split_indices(shard, test_fraction=0.3, seed=1)
