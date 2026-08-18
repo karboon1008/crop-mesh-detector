@@ -101,7 +101,7 @@ def run_training(
     disease_labels = disease_labels_for_indices(train_ds, train_idx)
     class_weights = compute_class_weights(disease_labels, num_disease_classes)
 
-    train_loader = DataLoader(Subset(train_ds, train_idx), batch_size=batch_size, shuffle=True)
+    train_loader = DataLoader(Subset(train_ds, train_idx), batch_size=batch_size, shuffle=True, drop_last=True)
     eval_loader = DataLoader(Subset(eval_ds, test_idx), batch_size=batch_size, shuffle=False)
 
     model = build_model("mobilenet_v3_small", num_crop_classes, num_disease_classes, pretrained=pretrained).to(
