@@ -60,3 +60,34 @@ def test_dedup_aware_split_keeps_duplicate_groups_on_one_side():
     assert train_set | test_set == set(indices)
     assert (0 in train_set) == (1 in train_set)
     assert (2 in train_set) == (3 in train_set)
+
+
+from torchvision import transforms
+
+from src.validation.node1_dataset import build_train_eval_datasets, prepare_node1_data
+
+
+def test_build_train_eval_datasets_augments_train_only(node1_scoped_config):
+    cfg, root = node1_scoped_config
+
+    train_ds, eval_ds = build_train_eval_datasets(root, image_size=32)
+
+    train_types = [type(t) for t in train_ds.transform.transforms]
+    eval_types = [type(t) for t in eval_ds.transform.transforms]
+
+    assert transforms.RandomHorizontalFlip in train_types
+    assert transforms.ColorJitter in train_types
+    assert eval_types == [transforms.Resize, transforms.ToTensor, transforms.Normalize]
+
+
+def test_prepare_node1_data_returns_disjoint_indices_and_full_label_space(node1_scoped_config):
+    cfg, root = node1_scoped_config
+
+    train_ds, train_idx, eval_ds, test_idx = prepare_node1_data(cfg)
+
+    assert set(train_idx).isdisjoint(set(test_idx))
+    assert len(train_idx) + len(test_idx) == 16
+    # both crops are in the label space even though only Potato samples were
+    # selected for node_1 -- the model must predict among the full global
+    # label set, matching how the real pipeline sizes its heads.
+    assert set(eval_ds.labels.crop_classes) == {"Tomato", "Potato"}

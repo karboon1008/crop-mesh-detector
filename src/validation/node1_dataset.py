@@ -111,3 +111,50 @@ def dedup_aware_split(
         else:
             train_idx.extend(members)
     return train_idx, test_idx
+
+
+from torchvision import transforms
+
+from src.data.plantvillage import IMAGENET_MEAN, IMAGENET_STD, load_full_dataset
+
+
+def build_train_eval_datasets(
+    root: str | Path, image_size: int
+) -> tuple[PlantVillageDataset, PlantVillageDataset]:
+    """Two PlantVillageDataset instances against the same root, so they
+    share identical ImageFolder ordering/labels. `train_ds.transform` is
+    overwritten (plain attribute assignment, no class edit) with an
+    augmented pipeline; `eval_ds` keeps the original clean transform.
+    """
+    train_ds = PlantVillageDataset(root, image_size=image_size)
+    eval_ds = PlantVillageDataset(root, image_size=image_size)
+    train_ds.transform = transforms.Compose(
+        [
+            transforms.Resize((image_size, image_size)),
+            transforms.RandomResizedCrop(image_size, scale=(0.7, 1.0)),
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomRotation(15),
+            transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.05),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
+        ]
+    )
+    return train_ds, eval_ds
+
+
+def prepare_node1_data(
+    cfg: Config,
+) -> tuple[PlantVillageDataset, list[int], PlantVillageDataset, list[int]]:
+    """End-to-end: load the full dataset, scope to node_1, dedup-aware
+    split. Returns (train_ds, train_idx, eval_ds, test_idx).
+    """
+    image_size = cfg.get("data.image_size", 160)
+    root = cfg.get("data.root", "data/PlantVillage")
+    dataset = load_full_dataset(root, image_size)
+    node1_indices = get_node1_indices(dataset, cfg)
+    hashes = compute_image_hashes(dataset, node1_indices)
+    train_idx, test_idx = dedup_aware_split(
+        node1_indices, hashes, cfg.get("data.test_fraction", 0.15), cfg.get("data.seed", 42)
+    )
+    train_ds, eval_ds = build_train_eval_datasets(root, image_size)
+    return train_ds, train_idx, eval_ds, test_idx
