@@ -5,7 +5,20 @@ fixed per-batch domain ratio, with class-balanced sampling on the smaller
 
 from __future__ import annotations
 import numpy as np
-from torch.utils.data import Sampler
+from torch.utils.data import Dataset, Sampler
+
+
+class EvalView(Dataset):
+    def __init__(self, base, indices: list[int]):
+        self.base = base
+        self.indices = indices
+
+    def __len__(self) -> int:
+        return len(self.indices)
+
+    def __getitem__(self, i: int):
+        image, crop_idx, disease_idx = self.base._lookup(self.indices[i])
+        return self.base.eval_transform(image), crop_idx, disease_idx
 
 
 class MixedDomainBatchSampler(Sampler[list[int]]):

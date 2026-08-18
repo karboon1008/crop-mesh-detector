@@ -96,6 +96,14 @@ def main():
     args = parser.parse_args()
     cfg = Config.load(args.config)
 
+    if cfg.get("data.node_datasets"):
+        raise ValueError(
+            "scenarios.class_addition is not supported when data.node_datasets is set — "
+            "it simulates a crop migrating between nodes that share PlantVillage's "
+            "crop-ownership partition (data.manual_node_crops), which doesn't apply once "
+            "nodes each own a whole separate dataset instead of a set of crops"
+        )
+
     if cfg.get("data.non_iid_strategy") != "manual":
         raise ValueError(
             "scenarios.class_addition requires data.non_iid_strategy == 'manual' "
@@ -129,7 +137,7 @@ def main():
     if source_crop not in dataset.labels.crop_classes:
         raise ValueError(f"source_crop '{source_crop}' is not a known crop: {dataset.labels.crop_classes}")
 
-    probe_loader, _global_test_loader, node_loaders, _crop_class_weights, _disease_class_weights = build_dataloaders(cfg, dataset)
+    probe_loader, _global_test_loader, node_loaders, _crop_class_weights, _disease_class_weights, _extra_global_test_loaders = build_dataloaders(cfg, dataset)
     arch = args.arch or cfg.get("models.architectures", ["mobilenet_v3_small"])[0]
     batch_size = cfg.get("training.batch_size", 32)
 

@@ -62,8 +62,34 @@ def worst_node(evals: dict[str, dict[str, float]]) -> dict[str, float]:
     return {m: min(e[m] for e in scalar_evals.values()) for m in metrics}
 
 
-def extract_global(evals: dict[str, dict]) -> dict[str, dict]:
-    return {node_id: e["global"] for node_id, e in evals.items() if "global" in e}
+def extract_eval_key(evals: dict[str, dict], key: str) -> dict[str, dict]:
+    return {node_id: e[key] for node_id, e in evals.items() if key in e}
+
+
+def _secondary_gain_metrics(
+    mesh_evals: dict[str, dict], baseline_evals: dict[str, dict], eval_key: str, prefix: str
+) -> dict:
+    mesh_sub = extract_eval_key(mesh_evals, eval_key)
+    baseline_sub = extract_eval_key(baseline_evals, eval_key)
+    if not mesh_sub or not baseline_sub:
+        return {}
+    mesh_macro = macro_average(mesh_sub)
+    baseline_macro = macro_average(baseline_sub)
+    mesh_worst = worst_node(mesh_sub)
+    baseline_worst = worst_node(baseline_sub)
+    mesh_pooled = pooled_metrics(mesh_sub)
+    baseline_pooled = pooled_metrics(baseline_sub)
+    return {
+        f"{prefix}_mesh_macro": mesh_macro,
+        f"{prefix}_baseline_macro": baseline_macro,
+        f"{prefix}_macro_gain": {m: mesh_macro[m] - baseline_macro[m] for m in mesh_macro},
+        f"{prefix}_mesh_worst_node": mesh_worst,
+        f"{prefix}_baseline_worst_node": baseline_worst,
+        f"{prefix}_worst_node_gain": {m: mesh_worst[m] - baseline_worst[m] for m in mesh_worst},
+        f"{prefix}_mesh_pooled": mesh_pooled,
+        f"{prefix}_baseline_pooled": baseline_pooled,
+        f"{prefix}_pooled_gain": pooled_gain(mesh_pooled, baseline_pooled),
+    }
 
 
 def compute_collaboration_gain(
@@ -96,29 +122,10 @@ def compute_collaboration_gain(
         },
     }
 
-    # Same gain math, but on the global_test_loader eval instead of each
-    # node's own skewed local split — this is the number that actually
-    # answers "did mesh consensus (prototypes + soft logits, no raw data
-    # exchanged) give nodes real knowledge of classes their non-IID shard
-    # barely covered, more than local-only training would have?"
-    mesh_global = extract_global(mesh_evals)
-    baseline_global = extract_global(baseline_evals)
-    if mesh_global and baseline_global:
-        global_mesh_macro = macro_average(mesh_global)
-        global_baseline_macro = macro_average(baseline_global)
-        global_mesh_worst = worst_node(mesh_global)
-        global_baseline_worst = worst_node(baseline_global)
-        global_mesh_pooled = pooled_metrics(mesh_global)
-        global_baseline_pooled = pooled_metrics(baseline_global)
-        result.update(
-            global_mesh_macro=global_mesh_macro,
-            global_baseline_macro=global_baseline_macro,
-            global_macro_gain={m: global_mesh_macro[m] - global_baseline_macro[m] for m in global_mesh_macro},
-            global_mesh_worst_node=global_mesh_worst,
-            global_baseline_worst_node=global_baseline_worst,
-            global_worst_node_gain={m: global_mesh_worst[m] - global_baseline_worst[m] for m in global_mesh_worst},
-            global_mesh_pooled=global_mesh_pooled,
-            global_baseline_pooled=global_baseline_pooled,
-            global_pooled_gain=pooled_gain(global_mesh_pooled, global_baseline_pooled),
-        )
+    secondary_keys = {"global"}
+    for evals in (mesh_evals, baseline_evals):
+        for node_eval in evals.values():
+            secondary_keys.update(k for k in node_eval if k.startswith("global_"))
+    for key in sorted(secondary_keys):
+        result.update(_secondary_gain_metrics(mesh_evals, baseline_evals, key, key))
     return result

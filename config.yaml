@@ -3,8 +3,9 @@
 # file rather than editing code.
 
 data:
-  root: "data/PlantVillage"    
+  root: "data/PlantVillage"
   plantdoc_root: "data/PlantDoc"
+  plantwild_root: "data/PlantWild"
   plantvillage_batch_fraction: 0.85
   image_size: 160
   num_nodes: 3                    # simulated farms
@@ -16,6 +17,18 @@ data:
   test_fraction: 0.15             # per-node held-out test split (used for accuracy + collaboration gain)
   non_iid_strategy: "dirichlet"   # "by_crop" | "by_disease" | "dirichlet" | "manual"
   dirichlet_alpha: 0.3            # only used when non_iid_strategy == "dirichlet"
+  # Optional, opt-in alternative to the partition scheme below: each node
+  # trains EXCLUSIVELY on one full named dataset ("plantvillage" | "plantdoc"
+  # | "plantwild") instead of a partitioned PlantVillage shard — no data
+  # ever crosses from one node's dataset to another's, and the probe/
+  # global-test sets are drawn from all three instead of PlantVillage alone.
+  # Overrides non_iid_strategy/manual_node_crops/plantdoc mixing above for
+  # every node it covers. Leave commented out to keep today's experiment
+  # (dirichlet partition + PlantDoc mixed into every node) unchanged.
+  # node_datasets:
+  #   node_0: plantvillage
+  #   node_1: plantdoc
+  #   node_2: plantwild
   # Only used when non_iid_strategy == "manual" — thematically-coherent
   # farm-type split (volume-imbalanced by design: node_2 covers fewer,
   # higher-yield greenhouse crops than the other two).

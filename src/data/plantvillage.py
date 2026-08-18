@@ -138,22 +138,28 @@ def load_full_dataset(root: str | Path, image_size: int = 160) -> PlantVillageDa
     return PlantVillageDataset(root, image_size=image_size)
 
 
-def _stratified_carve(
-    dataset: PlantVillageDataset,
+def stratified_carve_by_labels(
     indices: list[int],
+    labels: list[int],
     fraction: float,
     seed: int,
     large_class_threshold: int,
     min_samples_small_class: int,
     max_fraction_small_class: float,
 ) -> tuple[list[int], list[int]]:
-    all_targets = np.array(dataset.targets)
-    targets = all_targets[indices]
+    """Stratified carve/remaining split by an arbitrary per-sample label
+    (`labels`, aligned 1:1 with `indices`) — the label-agnostic core behind
+    `_stratified_carve` below, factored out so non-PlantVillage datasets
+    (PlantDoc, PlantWild) can carve their own probe/global-test slices the
+    same way, stratified by their own raw class, without needing a
+    PlantVillageDataset.
+    """
+    labels_arr = np.asarray(labels)
     rng = random.Random(seed)
     carved: list[int] = []
     remaining: list[int] = []
-    for cls in sorted(set(targets.tolist())):
-        cls_indices = [indices[i] for i in range(len(indices)) if targets[i] == cls]
+    for cls in sorted(set(labels_arr.tolist())):
+        cls_indices = [indices[i] for i in range(len(indices)) if labels_arr[i] == cls]
         rng.shuffle(cls_indices)
         count = len(cls_indices)
         if count >= large_class_threshold:
@@ -166,6 +172,21 @@ def _stratified_carve(
     rng.shuffle(carved)
     rng.shuffle(remaining)
     return carved, remaining
+
+
+def _stratified_carve(
+    dataset: PlantVillageDataset,
+    indices: list[int],
+    fraction: float,
+    seed: int,
+    large_class_threshold: int,
+    min_samples_small_class: int,
+    max_fraction_small_class: float,
+) -> tuple[list[int], list[int]]:
+    labels = np.array(dataset.targets)[indices]
+    return stratified_carve_by_labels(
+        indices, labels, fraction, seed, large_class_threshold, min_samples_small_class, max_fraction_small_class,
+    )
 
 
 def carve_public_probe_set(
@@ -350,11 +371,9 @@ def make_subset(dataset: PlantVillageDataset, indices: list[int], train: bool = 
     return TransformedSubset(dataset, indices, transform)
 
 
-def _count_labels(dataset: PlantVillageDataset, indices: list[int], pair_index: int, num_classes: int) -> torch.Tensor:
+def _count_pairs(pairs: list[tuple[int, int]], pair_index: int, num_classes: int) -> torch.Tensor:
     counts = torch.zeros(num_classes)
-    targets = np.asarray(dataset.targets)[indices]
-    for t in targets:
-        pair = dataset.labels.class_to_crop_disease[int(t)]
+    for pair in pairs:
         counts[pair[pair_index]] += 1
     return counts
 
@@ -373,17 +392,43 @@ def _inverse_frequency_weights(counts: torch.Tensor) -> torch.Tensor:
     return weights
 
 
+def _pairs_from_indices(dataset: PlantVillageDataset, indices: list[int]) -> list[tuple[int, int]]:
+    targets = np.asarray(dataset.targets)[indices]
+    return [dataset.labels.class_to_crop_disease[int(t)] for t in targets]
+
+
+def compute_disease_class_weights_from_pairs(pairs: list[tuple[int, int]], num_classes: int) -> torch.Tensor:
+    """Same inverse-frequency disease-class weighting as
+    `compute_disease_class_weights`, for datasets that aren't a
+    PlantVillageDataset (PlantDoc, PlantWild) — takes their own
+    (crop_idx, disease_idx) pairs directly (see the `.pairs` property on
+    PlantDocDataset/PlantWildDataset).
+    """
+    return _inverse_frequency_weights(_count_pairs(pairs, pair_index=1, num_classes=num_classes))
+
+
+def compute_crop_class_weights_from_pairs(pairs: list[tuple[int, int]], num_classes: int) -> torch.Tensor:
+    """Same inverse-frequency crop-class weighting as
+    `compute_crop_class_weights`, for datasets that aren't a
+    PlantVillageDataset (PlantDoc, PlantWild) — see
+    `compute_disease_class_weights_from_pairs`.
+    """
+    return _inverse_frequency_weights(_count_pairs(pairs, pair_index=0, num_classes=num_classes))
+
+
 def compute_disease_class_weights(dataset: PlantVillageDataset, indices: list[int]) -> torch.Tensor:
     """Inverse-frequency class weights for the disease head's loss,
     computed from this subset's own label counts.
     """
-    counts = _count_labels(dataset, indices, pair_index=1, num_classes=len(dataset.labels.disease_classes))
-    return _inverse_frequency_weights(counts)
+    return compute_disease_class_weights_from_pairs(
+        _pairs_from_indices(dataset, indices), num_classes=len(dataset.labels.disease_classes)
+    )
 
 
 def compute_crop_class_weights(dataset: PlantVillageDataset, indices: list[int]) -> torch.Tensor:
     """Inverse-frequency class weights for the crop head's loss,
     computed from this subset's own label counts.
     """
-    counts = _count_labels(dataset, indices, pair_index=0, num_classes=len(dataset.labels.crop_classes))
-    return _inverse_frequency_weights(counts)
+    return compute_crop_class_weights_from_pairs(
+        _pairs_from_indices(dataset, indices), num_classes=len(dataset.labels.crop_classes)
+    )

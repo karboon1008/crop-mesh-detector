@@ -48,18 +48,8 @@ PLANTDOC_TO_PLANTVILLAGE: dict[str, tuple[str, str]] = {
 
 
 class PlantDocDataset(Dataset):
-    """Wraps torchvision's ImageFolder, remapped onto an already-built
-    PlantVillage crop/disease label space (so the two datasets can share one
-    model head). PlantDoc folders with no PlantVillage crop/disease
-    equivalent are dropped with a printed warning — none exist for the
-    current 13-species/28-folder release, but the check guards future
-    PlantDoc revisions. A mapped (crop, disease) pair that ISN'T in
-    `crop_classes`/`disease_classes` raises immediately, since that would
-    otherwise silently point at the wrong label index.
-
-    PlantDoc is intended purely as extra, domain-shifted training signal
-    (see src/data/mixing.py), so __getitem__ always applies the training
-    augmentation transform.
+    """PlantDoc folders with no PlantVillage crop/disease
+    equivalent are dropped with a printed warning.
     """
 
     def __init__(
@@ -71,7 +61,8 @@ class PlantDocDataset(Dataset):
         image_size: int = 160,
     ):
         self.base = ImageFolder(str(root))
-        self.transform = build_train_transform(image_size)
+        self.train_transform = build_train_transform(image_size)
+        self.eval_transform = build_eval_transform(image_size)
         crop_to_idx = {c: i for i, c in enumerate(crop_classes)}
         disease_to_idx = {d: i for i, d in enumerate(disease_classes)}
 
@@ -115,20 +106,23 @@ class PlantDocDataset(Dataset):
     def __len__(self) -> int:
         return len(self._indices)
 
-    def __getitem__(self, i: int):
+    def _lookup(self, i: int):
         idx = self._indices[i]
         image, raw_class = self.base[idx]
-        image = self.transform(image)
         crop_idx, disease_idx = self._raw_class_to_pair[raw_class]
         return image, crop_idx, disease_idx
 
+    def __getitem__(self, i: int):
+        image, crop_idx, disease_idx = self._lookup(i)
+        return self.train_transform(image), crop_idx, disease_idx
+
     @property
     def raw_labels(self) -> list[int]:
-        """Original ImageFolder class id (pre-PlantVillage-remap) of each
-        retained sample — a finer stratum than crop/disease alone, used by
-        MixedDomainBatchSampler to class-balance within PlantDoc.
-        """
         return [self.base.samples[idx][1] for idx in self._indices]
+
+    @property
+    def pairs(self) -> list[tuple[int, int]]:
+        return [self._raw_class_to_pair[raw_cls] for _, raw_cls in (self.base.samples[idx] for idx in self._indices)]
 
 
 def load_plantdoc_dataset(
