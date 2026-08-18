@@ -33,3 +33,37 @@ def test_disease_labels_for_indices_matches_label_maps(node1_scoped_config):
         class_idx = dataset.base.targets[idx]
         _, expected_disease_idx = dataset.labels.class_to_crop_disease[class_idx]
         assert disease_label == expected_disease_idx
+
+
+import json
+
+from src.validation.node1_dataset import prepare_node1_data
+from src.validation.train_mobilenet import run_training
+
+
+def test_run_training_writes_log_and_best_checkpoint(node1_scoped_config, tmp_path):
+    cfg, root = node1_scoped_config
+    train_ds, train_idx, eval_ds, test_idx = prepare_node1_data(cfg)
+    num_crop = len(eval_ds.labels.crop_classes)
+    num_disease = len(eval_ds.labels.disease_classes)
+    output_dir = tmp_path / "run"
+
+    result = run_training(
+        train_ds,
+        train_idx,
+        eval_ds,
+        test_idx,
+        num_crop,
+        num_disease,
+        output_dir,
+        epochs=2,
+        batch_size=4,
+        pretrained=False,
+        device="cpu",
+    )
+
+    assert (output_dir / "checkpoint.pt").exists()
+    log = json.loads((output_dir / "training_log.json").read_text())
+    assert len(log) == 2
+    assert set(log[0].keys()) == {"epoch", "train_loss", "test_crop_accuracy", "test_disease_accuracy"}
+    assert result["best_disease_accuracy"] == max(e["test_disease_accuracy"] for e in log)

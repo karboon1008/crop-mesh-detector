@@ -38,3 +38,96 @@ def compute_class_weights(labels: list[int], num_classes: int) -> torch.Tensor:
     if present.any():
         weights[present] = weights[present] * (present.sum() / weights[present].sum())
     return weights
+
+
+def train_one_epoch(
+    model: torch.nn.Module,
+    loader: DataLoader,
+    optimizer: torch.optim.Optimizer,
+    disease_class_weights: torch.Tensor,
+    device: str,
+) -> float:
+    model.train()
+    total_loss, total_batches = 0.0, 0
+    weights = disease_class_weights.to(device)
+    for images, crop_labels, disease_labels in loader:
+        images = images.to(device)
+        crop_labels = crop_labels.to(device)
+        disease_labels = disease_labels.to(device)
+
+        optimizer.zero_grad()
+        crop_logits, disease_logits = model(images)
+        loss = F.cross_entropy(crop_logits, crop_labels) + F.cross_entropy(
+            disease_logits, disease_labels, weight=weights
+        )
+        loss.backward()
+        optimizer.step()
+        total_loss += loss.item()
+        total_batches += 1
+    return total_loss / max(1, total_batches)
+
+
+@torch.no_grad()
+def evaluate(model: torch.nn.Module, loader: DataLoader, device: str) -> dict[str, float]:
+    model.eval()
+    correct_crop, correct_disease, total = 0, 0, 0
+    for images, crop_labels, disease_labels in loader:
+        images = images.to(device)
+        crop_labels = crop_labels.to(device)
+        disease_labels = disease_labels.to(device)
+        crop_logits, disease_logits = model(images)
+        correct_crop += (crop_logits.argmax(dim=1) == crop_labels).sum().item()
+        correct_disease += (disease_logits.argmax(dim=1) == disease_labels).sum().item()
+        total += images.shape[0]
+    total = max(1, total)
+    return {"crop_accuracy": correct_crop / total, "disease_accuracy": correct_disease / total}
+
+
+def run_training(
+    train_ds: PlantVillageDataset,
+    train_idx: list[int],
+    eval_ds: PlantVillageDataset,
+    test_idx: list[int],
+    num_crop_classes: int,
+    num_disease_classes: int,
+    output_dir: Path,
+    epochs: int = 15,
+    batch_size: int = 32,
+    lr: float = 0.001,
+    weight_decay: float = 1e-4,
+    pretrained: bool = True,
+    device: str = "cpu",
+) -> dict:
+    disease_labels = disease_labels_for_indices(train_ds, train_idx)
+    class_weights = compute_class_weights(disease_labels, num_disease_classes)
+
+    train_loader = DataLoader(Subset(train_ds, train_idx), batch_size=batch_size, shuffle=True)
+    eval_loader = DataLoader(Subset(eval_ds, test_idx), batch_size=batch_size, shuffle=False)
+
+    model = build_model("mobilenet_v3_small", num_crop_classes, num_disease_classes, pretrained=pretrained).to(
+        device
+    )
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    best_disease_accuracy = -1.0
+    log_entries = []
+    for epoch in range(1, epochs + 1):
+        train_loss = train_one_epoch(model, train_loader, optimizer, class_weights, device)
+        scheduler.step()
+        eval_metrics = evaluate(model, eval_loader, device)
+        log_entries.append(
+            {
+                "epoch": epoch,
+                "train_loss": train_loss,
+                "test_crop_accuracy": eval_metrics["crop_accuracy"],
+                "test_disease_accuracy": eval_metrics["disease_accuracy"],
+            }
+        )
+        if eval_metrics["disease_accuracy"] > best_disease_accuracy:
+            best_disease_accuracy = eval_metrics["disease_accuracy"]
+            torch.save(model.state_dict(), output_dir / "checkpoint.pt")
+
+    (output_dir / "training_log.json").write_text(json.dumps(log_entries, indent=2))
+    return {"log_entries": log_entries, "best_disease_accuracy": best_disease_accuracy}
