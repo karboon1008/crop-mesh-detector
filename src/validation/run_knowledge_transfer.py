@@ -407,9 +407,9 @@ def build_knowledge_transfer_summary(
         "data_split": {
             "strategy": "disjoint disease-label skew within one crop (Corn)",
             "strength": (
-                "complete disjoint — each node's 3 disease classes have zero overlap with its "
-                "peers'; only the shared healthy class is split (dedup-aware, ~1/3 each, no image "
-                "duplicated across nodes)"
+                "complete disjoint — each node has exactly one assigned disease class, with zero "
+                "overlap with its peers'; only the shared healthy class is split (dedup-aware, "
+                "~1/3 each, no image duplicated across nodes)"
             ),
             "node_diseases": node_diseases,
         },
