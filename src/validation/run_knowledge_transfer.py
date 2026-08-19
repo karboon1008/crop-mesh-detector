@@ -8,6 +8,7 @@ docs/superpowers/specs/2026-08-19-corn-disease-knowledge-transfer-design.md.
 
 from __future__ import annotations
 
+import argparse
 import json
 from contextlib import nullcontext
 from pathlib import Path
@@ -17,12 +18,16 @@ import torch
 from torch.utils.data import DataLoader
 
 from src.config import Config
-from src.energy.tracker import ComputeEnergyTracker
+from src.data.plantvillage import make_subset
+from src.energy.tracker import CommunicationCostEstimator, ComputeEnergyTracker
+from src.evaluate import compute_collaboration_gain
 from src.federated.aggregation import aggregate_logits, aggregate_prototypes
 from src.federated.node import Node
-from src.validation.corn_mesh_dataset import CornLabelMap, CornMeshData
+from src.models.factory import build_model
+from src.validation.corn_mesh_dataset import CornDiseaseView, CornLabelMap, CornMeshData, prepare_corn_mesh_data
 from src.validation.evaluate_onnx import run_evaluation
 from src.validation.export_onnx import export_checkpoint
+from src.validation.run_corn_pipeline import node_output_dir
 
 MODEL_NAME = "mobilenet_v3_small"
 
@@ -212,3 +217,224 @@ def run_round_with_io(
     }
     (round_dir / "round_summary.json").write_text(json.dumps(summary, indent=2))
     return summary
+
+
+def evaluate_round0_baseline(data: CornMeshData, stage1_dir: Path, cross_node_idx: list[int]) -> dict[str, dict]:
+    """Evaluates each node's ALREADY-EXPORTED stage-1 model.onnx (no
+    re-export) against the cross-node union set -- this is round 0's
+    baseline for the per-disease collaboration-gain table, since stage
+    1's own report.json only covers each node's local test set.
+    """
+    baseline: dict[str, dict] = {}
+    for node_id in ("node_0", "node_1", "node_2"):
+        node_dir = node_output_dir(stage1_dir, node_id)
+        manifest = json.loads((node_dir / "manifest.json").read_text())
+        session = onnxruntime.InferenceSession(str(node_dir / "model.onnx"))
+        scratch = node_dir / "_round0_scratch.json"
+        report = run_evaluation(session, data.eval_base, cross_node_idx, manifest, MODEL_NAME, node_id, scratch)
+        scratch.unlink(missing_ok=True)
+        baseline[node_id] = report
+    return baseline
+
+
+def _load_node_from_checkpoint(checkpoint_path: Path, data: CornMeshData, node_id: str, batch_size: int) -> Node:
+    model = build_model(
+        MODEL_NAME, len(data.label_map.crop_classes), len(data.label_map.disease_classes), pretrained=False
+    )
+    model.load_state_dict(torch.load(checkpoint_path, map_location="cpu"))
+
+    train_idx = data.per_node[node_id]["train_idx"]
+    test_idx = data.per_node[node_id]["test_idx"]
+    train_loader = DataLoader(
+        CornDiseaseView(data.train_base, train_idx, data.label_map), batch_size=batch_size, shuffle=True
+    )
+    test_loader = DataLoader(
+        CornDiseaseView(data.eval_base, test_idx, data.label_map), batch_size=batch_size, shuffle=False
+    )
+    return Node(node_id, model, train_loader, test_loader, device="cpu")
+
+
+def _per_disease_gain_table(
+    round0_baseline: dict[str, dict], final_round_scores: dict[str, dict], disease_classes: list[str]
+) -> dict[str, dict]:
+    table: dict[str, dict] = {}
+    for node_id, baseline_report in round0_baseline.items():
+        table[node_id] = {}
+        collective_cross = final_round_scores[node_id]["collective"]["cross_node"]["summary"]
+        control_cross = final_round_scores[node_id]["local_only_control"]["cross_node"]["summary"]
+        for disease_name in disease_classes:
+            round0_acc = baseline_report["summary"]["per_class_accuracy"]["disease"].get(disease_name, 0.0)
+            collective_acc = collective_cross["per_class_accuracy"]["disease"].get(disease_name, 0.0)
+            control_acc = control_cross["per_class_accuracy"]["disease"].get(disease_name, 0.0)
+            table[node_id][disease_name] = {
+                "round_0_accuracy": round0_acc,
+                "round_N_collective_accuracy": collective_acc,
+                "round_N_local_only_control_accuracy": control_acc,
+                "gain_vs_round0": collective_acc - round0_acc,
+                "gain_vs_local_only_control": collective_acc - control_acc,
+            }
+    return table
+
+
+NODE_DISEASE_DEFAULT_FALLBACK = {
+    "node_0": "Common_rust",
+    "node_1": "Cercospora_leaf_spot_Gray_leaf_spot",
+    "node_2": "Northern_Leaf_Blight",
+}
+
+
+def _flat_accuracy_metrics(summary: dict) -> dict[str, float]:
+    """compute_collaboration_gain's macro_average/worst_node helpers sum
+    every value in the per-node dict across all nodes, so they need a
+    dict of plain numeric metrics -- not evaluate_onnx's full "summary"
+    block, which also carries "model"/"node" (str) and
+    "per_class_accuracy"/"top_confusions" (nested dict/list) fields that
+    would make that summation raise a TypeError.
+    """
+    return {"crop_accuracy": summary["crop_accuracy"], "disease_accuracy": summary["disease_accuracy"]}
+
+
+def build_knowledge_transfer_summary(
+    cfg: Config, round0_baseline: dict[str, dict], round_summaries: list[dict], data: CornMeshData
+) -> dict:
+    final_round = round_summaries[-1]
+    final_scores = final_round["per_node_scores"]
+
+    collective_evals = {nid: s["collective"]["cross_node"]["summary"] for nid, s in final_scores.items()}
+    control_evals = {nid: s["local_only_control"]["cross_node"]["summary"] for nid, s in final_scores.items()}
+    gain = compute_collaboration_gain(
+        {nid: _flat_accuracy_metrics(s) for nid, s in collective_evals.items()},
+        {nid: _flat_accuracy_metrics(s) for nid, s in control_evals.items()},
+    )
+
+    node_diseases = cfg.get("corn_mesh.node_diseases", NODE_DISEASE_DEFAULT_FALLBACK)
+    cumulative_bytes = sum(r["total_bytes_exchanged"] for r in round_summaries)
+    cumulative_energy = sum(r["energy"]["total_compute_energy_kwh"] for r in round_summaries)
+
+    return {
+        "node_count": 3,
+        "data_split": {
+            "strategy": "disjoint disease-label skew within one crop (Corn)",
+            "strength": (
+                "complete disjoint — each node's 3 disease classes have zero overlap with its "
+                "peers'; only the shared healthy class is split (dedup-aware, ~1/3 each, no image "
+                "duplicated across nodes)"
+            ),
+            "node_diseases": node_diseases,
+        },
+        "local_only_budget": {
+            "epochs_per_round": cfg.get("training.distill_epochs_per_round", 1),
+            "lr": cfg.get("training.distill_lr", 0.0005),
+            "rounds": len(round_summaries),
+        },
+        "collective_budget": {
+            "distill_epochs_per_round": cfg.get("training.distill_epochs_per_round", 1),
+            "lr": cfg.get("training.distill_lr", 0.0005),
+            "kd_weight": cfg.get("training.kd_weight", 0.5),
+            "proto_weight": cfg.get("training.proto_weight", 0.5),
+            "rounds": len(round_summaries),
+        },
+        "fairness_exception_reason": (
+            "Local-supervised training budgets are aligned round-for-round between the collective "
+            "and local-only-control arms. The one intentional, disclosed asymmetry is the "
+            "collective arm's extra KD phase over the shared probe set — that is the mechanism "
+            "under test, not an unaligned budget."
+        ),
+        "test_set_scope": (
+            "both — local (own node's held-out test set) and global held-out (union of all 3 "
+            "nodes' held-out test sets); test samples never enter any training set"
+        ),
+        "rounds_run": len(round_summaries),
+        "cumulative_bytes_exchanged": cumulative_bytes,
+        "cumulative_energy_kwh": cumulative_energy,
+        "delta_g_formula": "Score(collective, round_N) - Score(local_only_control, round_N), per metric per node",
+        "per_node_scores": {
+            nid: {"collective": collective_evals[nid], "local_only_control": control_evals[nid]}
+            for nid in collective_evals
+        },
+        "macro_avg_and_worst_node": {
+            "macro_gain": gain["macro_gain"],
+            "worst_node_gain": gain["worst_node_gain"],
+        },
+        "collaboration_gain_per_disease": _per_disease_gain_table(
+            round0_baseline, final_scores, data.label_map.disease_classes
+        ),
+        "limitation_note": (
+            "Cross-node disease-recognition gain above comes from probe-set logit distillation "
+            "only, not prototype alignment — prototype exchange only reinforces the shared "
+            "healthy class, since a node's proto_loss only runs over its own local batches."
+        ),
+    }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", default=None, help="Path to config.yaml (default: repo root)")
+    parser.add_argument("--output-dir", default="outputs/validation/corn_mesh")
+    parser.add_argument("--rounds", type=int, default=None, help="Number of knowledge-transfer rounds (1-5)")
+    parser.add_argument("--batch-size", type=int, default=4)
+    args = parser.parse_args()
+
+    cfg = Config.load(args.config)
+    rounds = args.rounds if args.rounds is not None else cfg.get("corn_mesh.rounds", 2)
+    if not (1 <= rounds <= 5):
+        parser.error(f"--rounds must be between 1 and 5, got {rounds}")
+
+    stage1_dir = Path(args.output_dir)
+    for node_id in ("node_0", "node_1", "node_2"):
+        node_dir = node_output_dir(stage1_dir, node_id)
+        if not (node_dir / "checkpoint.pt").exists() or not (node_dir / "classes.json").exists():
+            raise FileNotFoundError(
+                f"{node_dir / 'checkpoint.pt'} not found — run "
+                f"'python -m src.validation.run_corn_pipeline' first."
+            )
+
+    data = prepare_corn_mesh_data(cfg)
+    cross_node_idx = [i for n in data.per_node.values() for i in n["test_idx"]]
+
+    print("=== round 0 baseline (stage 1 checkpoints, cross-node eval) ===")
+    round0_baseline = evaluate_round0_baseline(data, stage1_dir, cross_node_idx)
+
+    kt_dir = stage1_dir / "knowledge_transfer"
+    kt_dir.mkdir(parents=True, exist_ok=True)
+    (kt_dir / "round_0_baseline.json").write_text(json.dumps(round0_baseline, indent=2))
+
+    nodes = {
+        node_id: _load_node_from_checkpoint(
+            node_output_dir(stage1_dir, node_id) / "checkpoint.pt", data, node_id, args.batch_size
+        )
+        for node_id in ("node_0", "node_1", "node_2")
+    }
+    control_nodes = {
+        node_id: _load_node_from_checkpoint(
+            node_output_dir(stage1_dir, node_id) / "checkpoint.pt", data, node_id, args.batch_size
+        )
+        for node_id in ("node_0", "node_1", "node_2")
+    }
+    probe_loader = DataLoader(make_subset(data.eval_base, data.probe_idx), batch_size=args.batch_size, shuffle=False)
+
+    tracker = ComputeEnergyTracker(
+        enabled=cfg.get("energy.track_with_codecarbon", False),
+        output_dir=kt_dir,
+        country_iso_code=cfg.get("energy.country_iso_code", "GBR"),
+    )
+    comm_estimator = CommunicationCostEstimator(
+        cfg.get("energy.radio_energy_j_per_byte", {}), cfg.get("energy.grid_carbon_intensity_gco2_per_kwh", 125)
+    )
+
+    round_summaries = []
+    for round_idx in range(1, rounds + 1):
+        print(f"=== knowledge-transfer round {round_idx}/{rounds} ===")
+        round_dir = kt_dir / f"round_{round_idx}"
+        summary = run_round_with_io(
+            round_idx, nodes, control_nodes, probe_loader, data, cross_node_idx, cfg, tracker, comm_estimator, round_dir
+        )
+        round_summaries.append(summary)
+
+    kt_summary = build_knowledge_transfer_summary(cfg, round0_baseline, round_summaries, data)
+    (kt_dir / "knowledge_transfer_summary.json").write_text(json.dumps(kt_summary, indent=2))
+    print(f"Done. Knowledge-transfer outputs in {kt_dir}/")
+
+
+if __name__ == "__main__":
+    main()

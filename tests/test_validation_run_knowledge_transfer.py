@@ -198,3 +198,138 @@ def test_run_round_with_io_writes_round_summary(corn_scoped_config, tmp_path):
     assert (round_dir / "node_0" / "local_only_control" / "checkpoint.pt").exists()
     assert not (round_dir / "node_0" / "local_only_control" / "model.onnx").exists()
     assert result == summary
+
+
+from src.validation.run_corn_pipeline import (
+    node_output_dir,
+    run_evaluate_stage,
+    run_export_stage,
+    run_train_stage,
+)
+from src.validation.run_knowledge_transfer import (
+    build_knowledge_transfer_summary,
+    evaluate_round0_baseline,
+    main,
+)
+
+
+def _train_stage1_checkpoints(data, base_dir):
+    for node_id in ("node_0", "node_1", "node_2"):
+        node_dir = node_output_dir(base_dir, node_id)
+        run_train_stage(data, node_id, node_dir, epochs=1, pretrained=False)
+        run_export_stage(data, node_id, node_dir)
+        run_evaluate_stage(data, node_id, node_dir)
+
+
+def test_evaluate_round0_baseline_uses_stage1_onnx_models(corn_scoped_config, tmp_path):
+    cfg, root = corn_scoped_config
+    data = prepare_corn_mesh_data(cfg)
+    stage1_dir = tmp_path / "stage1"
+    _train_stage1_checkpoints(data, stage1_dir)
+    cross_node_idx = [i for n in data.per_node.values() for i in n["test_idx"]]
+
+    baseline = evaluate_round0_baseline(data, stage1_dir, cross_node_idx)
+
+    assert set(baseline.keys()) == {"node_0", "node_1", "node_2"}
+    for node_id, report in baseline.items():
+        assert "disease" in report["summary"]["per_class_accuracy"]
+
+
+def test_build_knowledge_transfer_summary_has_appendix_a1_fields(corn_scoped_config, tmp_path):
+    cfg, root = corn_scoped_config
+    data = prepare_corn_mesh_data(cfg)
+    stage1_dir = tmp_path / "stage1"
+    _train_stage1_checkpoints(data, stage1_dir)
+    cross_node_idx = [i for n in data.per_node.values() for i in n["test_idx"]]
+    round0_baseline = evaluate_round0_baseline(data, stage1_dir, cross_node_idx)
+
+    # build_knowledge_transfer_summary reads
+    # per_node_scores[node_id]["collective"]["cross_node"]["summary"] (the
+    # same nested shape run_round_with_io's real report produces via
+    # export_and_evaluate) -- reuse round0_baseline[node_id] (a plain
+    # run_evaluation report, {"summary":..., "results":...}) as the stand-in
+    # value for both the "local" and "cross_node" sub-keys.
+    fake_round_summary = {
+        "round": 1,
+        "per_node_scores": {
+            node_id: {
+                "collective": {"local": round0_baseline[node_id], "cross_node": round0_baseline[node_id]},
+                "local_only_control": {
+                    "local": round0_baseline[node_id],
+                    "cross_node": round0_baseline[node_id],
+                },
+            }
+            for node_id in ("node_0", "node_1", "node_2")
+        },
+        "total_bytes_exchanged": 100,
+        "energy": {"total_compute_energy_kwh": 0.001},
+    }
+
+    summary = build_knowledge_transfer_summary(cfg, round0_baseline, [fake_round_summary], data)
+
+    assert summary["node_count"] == 3
+    for key in (
+        "data_split",
+        "local_only_budget",
+        "collective_budget",
+        "test_set_scope",
+        "fairness_exception_reason",
+        "delta_g_formula",
+        "per_node_scores",
+        "macro_avg_and_worst_node",
+        "collaboration_gain_per_disease",
+        "limitation_note",
+    ):
+        assert key in summary
+    for node_id in ("node_0", "node_1", "node_2"):
+        assert set(summary["collaboration_gain_per_disease"][node_id].keys()) == {
+            "healthy",
+            "Common_rust",
+            "Cercospora_leaf_spot_Gray_leaf_spot",
+            "Northern_Leaf_Blight",
+        }
+
+
+def test_main_rejects_rounds_outside_valid_range(tmp_path, corn_scoped_config, monkeypatch):
+    cfg, root = corn_scoped_config
+    config_path = tmp_path / "config.yaml"
+    import yaml
+
+    config_path.write_text(yaml.safe_dump(cfg.as_dict()))
+    monkeypatch.setattr(
+        "sys.argv",
+        ["run_knowledge_transfer", "--config", str(config_path), "--rounds", "6"],
+    )
+
+    with pytest.raises(SystemExit):
+        main()
+
+
+def test_main_runs_end_to_end(tmp_path, corn_scoped_config, monkeypatch):
+    cfg, root = corn_scoped_config
+    config_path = tmp_path / "config.yaml"
+    import yaml
+
+    config_path.write_text(yaml.safe_dump(cfg.as_dict()))
+    stage1_dir = tmp_path / "outputs" / "validation" / "corn_mesh"
+    data = prepare_corn_mesh_data(cfg)
+    _train_stage1_checkpoints(data, stage1_dir)
+
+    kt_dir = stage1_dir / "knowledge_transfer"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_knowledge_transfer",
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(stage1_dir),
+            "--rounds",
+            "1",
+        ],
+    )
+
+    main()
+
+    assert (kt_dir / "round_1" / "round_summary.json").exists()
+    assert (kt_dir / "knowledge_transfer_summary.json").exists()
