@@ -51,8 +51,11 @@ into one canonical label space.
   images).
 - **Model:** `mobilenet_v3_small` only (matches the node_1/corn validation
   recipe).
-- **Rounds:** stage 2 defaults to 2 rounds, configurable, same convention
-  as the corn pipeline.
+- **Rounds:** stage 2 defaults to 5 rounds, configurable 1-5, same
+  convention as the corn pipeline.
+- **Epochs:** stage 1 uses 2 epochs per node (reduced from the corn/node_1
+  recipe's 15 — same `train_mobilenet.run_training` call, smaller
+  `epochs` argument).
 
 ## Canonical label taxonomy
 
@@ -182,9 +185,10 @@ New modules:
 New script: `src/validation/run_tomato_pipeline.py`, generalizing the same
 train→export→evaluate chaining the corn pipeline already generalized
 (`train_mobilenet.py`/`export_onnx.py`/`evaluate_onnx.py`, reused
-unmodified — 15 epochs, Adam + weight decay + cosine LR, class-weighted
-disease loss, train-only augmentation, best-checkpoint by held-out disease
-accuracy, ONNX export + parity check, `report.json`), looped over
+unmodified — 2 epochs (reduced from the corn/node_1 recipe's 15), Adam +
+weight decay + cosine LR, class-weighted disease loss, train-only
+augmentation, best-checkpoint by held-out disease accuracy, ONNX export +
+parity check, `report.json`), looped over
 `node_0`/`node_1`/`node_2`, consuming `tomato_mesh_dataset.py` in place of
 `corn_mesh_dataset.py`.
 
@@ -319,7 +323,7 @@ tomato_mesh:
   test_fraction: 0.20              # global split fraction, deliberately separate from data.test_fraction (per-node, 0.15)
   dedup_threshold: 5               # perceptual-hash Hamming distance (same default as node_1/corn)
   dedup_max_group_size: 25         # starting heuristic (also capped at 5% of a class's pooled count) — re-tune against real data, see Known Risk above
-  rounds: 2
+  rounds: 5
   output_dir: "outputs/validation/tomato_mesh"
 ```
 

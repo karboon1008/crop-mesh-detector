@@ -15,7 +15,8 @@
 - Crop scope: Tomato only, pooled from `data/PlantVillage`, `data/PlantDoc`, `data/PlantWild/plantwild/plantwild/images` (v1), `data/PlantWild/plantwild_v2/plantwild_v2` (v2).
 - Federated topology: 3 nodes, Dirichlet concentration α = 0.3.
 - Model: `mobilenet_v3_small` only.
-- Knowledge-transfer rounds: default 2, CLI-configurable 1-5 (validated range, `parser.error` outside it).
+- Knowledge-transfer rounds: default 5, CLI-configurable 1-5 (validated range, `parser.error` outside it).
+- Stage 1 per-node training: 2 epochs (reduced from the corn/node_1 recipe's original 15 — same `train_mobilenet.run_training` call, just a smaller `epochs` argument).
 - Test split is **global** (one shared held-out set, carved out before any per-node partitioning), fraction controlled by a new `tomato_mesh.test_fraction` key (default 0.20) — deliberately **not** the shared `data.test_fraction` key (0.15), which stays scoped to the per-node splits the general mesh and corn pipelines already use.
 - Perceptual-hash dedup threshold: Hamming distance ≤ 5 (`tomato_mesh.dedup_threshold`). A max-group-size cap (`tomato_mesh.dedup_max_group_size`, default 25) additionally caps any single duplicate-group at `min(25, 5% of that canonical class's pooled count)` — a starting heuristic that must be checked against the real merged pool's group-size histogram before the first real run is trusted.
 - Aggregation mechanism is **unchanged**: `trimmed_mean`/`krum` + KD/prototype distillation from `src/federated/`. No AdaClass, no change to `src/federated/aggregation.py`, `src/federated/node.py`, or `src/federated/mesh.py`. This plan changes the *data split*, not the *aggregation weighting*.
@@ -951,7 +952,7 @@ def tomato_scoped_config(tmp_path):
                 "test_fraction": 0.2,
                 "dedup_threshold": 5,
                 "dedup_max_group_size": 25,
-                "rounds": 2,
+                "rounds": 5,
             },
             "training": {
                 "distill_epochs_per_round": 1,
@@ -1176,7 +1177,7 @@ def test_config_yaml_has_tomato_mesh_block():
     assert cfg.get("tomato_mesh.test_fraction") == 0.20
     assert cfg.get("tomato_mesh.dedup_threshold") == 5
     assert cfg.get("tomato_mesh.dedup_max_group_size") == 25
-    assert cfg.get("tomato_mesh.rounds") == 2
+    assert cfg.get("tomato_mesh.rounds") == 5
     assert cfg.get("tomato_mesh.plantdoc_root") == "data/PlantDoc"
     assert cfg.get("tomato_mesh.plantwild_v1_root") == "data/PlantWild/plantwild/plantwild/images"
     assert cfg.get("tomato_mesh.plantwild_v2_root") == "data/PlantWild/plantwild_v2/plantwild_v2"
@@ -1202,7 +1203,7 @@ tomato_mesh:
   test_fraction: 0.20              # global split fraction, deliberately separate from data.test_fraction (per-node, 0.15)
   dedup_threshold: 5               # perceptual-hash Hamming distance (same default as node_1/corn)
   dedup_max_group_size: 25         # starting heuristic (also capped at 5% of a class's pooled count) -- re-tune against real data
-  rounds: 2
+  rounds: 5
   output_dir: "outputs/validation/tomato_mesh"
 ```
 
@@ -1228,7 +1229,7 @@ git commit -m "feat: add tomato_mesh config block"
 
 **Interfaces:**
 - Consumes: `TomatoMeshData`/`prepare_tomato_mesh_data` (Task 6), `run_training` (`src/validation/train_mobilenet.py`, existing, unmodified), `export_checkpoint` (`src/validation/export_onnx.py`, existing), `run_evaluation` (`src/validation/evaluate_onnx.py`, existing).
-- Produces: `node_output_dir(base_output_dir: Path, node_id: str) -> Path`. `run_train_stage(data, node_id, output_dir, epochs=15, pretrained=True) -> None`. `run_export_stage(data, node_id, output_dir) -> None`. `run_evaluate_stage(data, node_id, output_dir) -> None`. `main()` CLI (`--config`, `--output-dir`, `--stage`).
+- Produces: `node_output_dir(base_output_dir: Path, node_id: str) -> Path`. `run_train_stage(data, node_id, output_dir, epochs=2, pretrained=True) -> None`. `run_export_stage(data, node_id, output_dir) -> None`. `run_evaluate_stage(data, node_id, output_dir) -> None`. `main()` CLI (`--config`, `--output-dir`, `--stage`).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1325,7 +1326,7 @@ def node_output_dir(base_output_dir: Path, node_id: str) -> Path:
 
 
 def run_train_stage(
-    data: TomatoMeshData, node_id: str, output_dir: Path, epochs: int = 15, pretrained: bool = True
+    data: TomatoMeshData, node_id: str, output_dir: Path, epochs: int = 2, pretrained: bool = True
 ) -> None:
     train_idx = data.per_node[node_id]["train_idx"]
     test_idx = data.test_idx  # shared global test set, not per-node
@@ -1560,7 +1561,7 @@ Aggregation mechanics (run_kt_round) are reused unchanged from
 run_knowledge_transfer.py -- this pipeline changes the data split, not
 the aggregation algorithm.
 
-    python -m src.validation.run_tomato_knowledge_transfer --rounds 2
+    python -m src.validation.run_tomato_knowledge_transfer --rounds 5
 """
 
 from __future__ import annotations
@@ -1855,7 +1856,7 @@ def main() -> None:
     args = parser.parse_args()
 
     cfg = Config.load(args.config)
-    rounds = args.rounds if args.rounds is not None else cfg.get("tomato_mesh.rounds", 2)
+    rounds = args.rounds if args.rounds is not None else cfg.get("tomato_mesh.rounds", 5)
     if not (1 <= rounds <= 5):
         parser.error(f"--rounds must be between 1 and 5, got {rounds}")
 
