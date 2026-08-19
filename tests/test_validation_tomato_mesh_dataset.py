@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import numpy as np
@@ -7,6 +8,7 @@ import pytest
 import torch
 from PIL import Image
 
+from src.validation.node1_dataset import group_duplicates
 from src.validation.tomato_mesh_dataset import (
     TOMATO_DISEASE_ORDER,
     TomatoMeshData,
@@ -125,12 +127,17 @@ def test_compute_merged_image_hashes_reads_each_item_path(tmp_path):
 def test_enforce_max_group_size_breaks_up_oversized_group():
     # 5 items, all in canonical class 0, all hashed into ONE group by the
     # caller (hand-built, mirrors test_validation_node1_dataset.py's style).
+    # Every member has a distinct exact hash, so breaking up the group
+    # results in true singletons (no exact-hash duplicates to preserve).
     items = [TomatoRawItem(source="x", path=f"/{i}.jpg", canonical_disease_idx=0) for i in range(5)]
     indices = [0, 1, 2, 3, 4]
     groups = {i: 0 for i in indices}  # one big group, id=0
+    hashes = {i: i for i in indices}  # every member has a unique exact hash
 
-    fixed = enforce_max_group_size(indices, groups, items, max_group_size=2, max_group_fraction_of_class=1.0)
-    # group of 5 > cap of 2 -> broken into singletons
+    fixed = enforce_max_group_size(
+        indices, groups, items, hashes, max_group_size=2, max_group_fraction_of_class=1.0
+    )
+    # group of 5 > cap of 2 -> broken into singletons (no shared exact hashes)
     assert len({fixed[i] for i in indices}) == 5
     for i in indices:
         assert fixed[i] == i
@@ -140,9 +147,33 @@ def test_enforce_max_group_size_leaves_small_groups_alone():
     items = [TomatoRawItem(source="x", path=f"/{i}.jpg", canonical_disease_idx=0) for i in range(3)]
     indices = [0, 1, 2]
     groups = {0: 0, 1: 0, 2: 2}  # group {0,1} size 2, group {2} size 1
+    hashes = {0: 0, 1: 1, 2: 2}
 
-    fixed = enforce_max_group_size(indices, groups, items, max_group_size=10, max_group_fraction_of_class=1.0)
+    fixed = enforce_max_group_size(
+        indices, groups, items, hashes, max_group_size=10, max_group_fraction_of_class=1.0
+    )
     assert fixed == groups
+
+
+def test_enforce_max_group_size_keeps_exact_hash_duplicates_together():
+    # One over-cap pre-existing group of 5 members: 0 and 1 share an EXACT
+    # hash (real hash-identical duplicates); 2, 3, 4 each have a unique
+    # hash. Breaking up the group must keep 0 and 1 together as one
+    # sub-group (not shatter them into full singletons), while 2/3/4 each
+    # become their own singleton.
+    items = [TomatoRawItem(source="x", path=f"/{i}.jpg", canonical_disease_idx=0) for i in range(5)]
+    indices = [0, 1, 2, 3, 4]
+    groups = {i: 0 for i in indices}
+    hashes = {0: 0b0000, 1: 0b0000, 2: 0b1111, 3: 0b0101, 4: 0b0110}
+
+    fixed = enforce_max_group_size(
+        indices, groups, items, hashes, max_group_size=2, max_group_fraction_of_class=1.0
+    )
+    assert fixed[0] == fixed[1]
+    assert fixed[2] == 2
+    assert fixed[3] == 3
+    assert fixed[4] == 4
+    assert len({fixed[0], fixed[2], fixed[3], fixed[4]}) == 4
 
 
 def test_capped_dedup_split_partitions_all_indices():
@@ -155,6 +186,81 @@ def test_capped_dedup_split_partitions_all_indices():
     )
     assert sorted(train_idx + test_idx) == indices
     assert set(train_idx).isdisjoint(test_idx)
+
+
+def test_capped_dedup_split_logs_group_size_histogram(caplog):
+    items = [TomatoRawItem(source="x", path=f"/{i}.jpg", canonical_disease_idx=0) for i in range(6)]
+    indices = list(range(6))
+    hashes = {0: 0b0000, 1: 0b0000, 2: 0b1111, 3: 0b1111, 4: 0b0101, 5: 0b0110}
+
+    with caplog.at_level(logging.INFO, logger="src.validation.tomato_mesh_dataset"):
+        capped_dedup_split(indices, hashes, items, test_fraction=0.5, seed=1, threshold=1, max_group_size=10)
+
+    assert any("group" in record.message.lower() for record in caplog.records)
+
+
+def test_enforce_max_group_size_never_exceeds_configured_cap_via_exact_hash_subclusters():
+    """Spec requirement: 'a unit test should assert no single group
+    exceeds the configured cap.' An over-cap pre-existing group (12
+    members) is split by exact-hash equality into 4 clusters of 3 each --
+    each cluster fits within max_group_size, so after enforcement no
+    resulting group (grouped by post-cap group id) should exceed the cap,
+    even though the original group did.
+    """
+    max_group_size = 3
+    group_indices = list(range(12))
+    hashes: dict[int, int] = {}
+    for cluster in range(4):
+        for member in range(3):
+            hashes[cluster * 3 + member] = cluster  # 4 distinct exact-hash clusters of size 3
+    groups = {i: 0 for i in group_indices}  # one big pre-cap group
+
+    # Pad with already-singleton items of the same class so the
+    # max_group_fraction_of_class cap doesn't bind tighter than
+    # max_group_size (mirrors a realistically sized class pool).
+    padding_indices = list(range(12, 12 + 200))
+    for idx in padding_indices:
+        groups[idx] = idx
+        hashes[idx] = 1000 + idx
+
+    indices = group_indices + padding_indices
+    items = [TomatoRawItem(source="x", path=f"/{i}.jpg", canonical_disease_idx=0) for i in indices]
+
+    fixed = enforce_max_group_size(
+        indices, groups, items, hashes, max_group_size=max_group_size, max_group_fraction_of_class=0.05
+    )
+
+    sizes: dict[int, int] = {}
+    for idx in indices:
+        sizes[fixed[idx]] = sizes.get(fixed[idx], 0) + 1
+    assert max(sizes.values()) <= max_group_size
+
+
+def test_capped_dedup_split_never_exceeds_configured_cap(caplog):
+    """Same spec requirement as above, exercised through the full
+    capped_dedup_split entrypoint rather than enforce_max_group_size
+    directly.
+    """
+    max_group_size = 2
+    items = [TomatoRawItem(source="x", path=f"/{i}.jpg", canonical_disease_idx=0) for i in range(5)]
+    indices = list(range(5))
+    # All 5 land in one pre-cap duplicate group (pairwise within
+    # threshold), but each has a distinct exact hash, so post-cap they
+    # become true singletons rather than one oversized group.
+    hashes = {0: 0b00000, 1: 0b00001, 2: 0b00011, 3: 0b00010, 4: 0b00110}
+
+    with caplog.at_level(logging.INFO, logger="src.validation.tomato_mesh_dataset"):
+        train_idx, test_idx = capped_dedup_split(
+            indices, hashes, items, test_fraction=0.4, seed=1, threshold=5, max_group_size=max_group_size
+        )
+    assert sorted(train_idx + test_idx) == indices
+
+    groups = group_duplicates(indices, hashes, threshold=5)
+    groups = enforce_max_group_size(indices, groups, items, hashes, max_group_size=max_group_size)
+    sizes: dict[int, int] = {}
+    for idx in indices:
+        sizes[groups[idx]] = sizes.get(groups[idx], 0) + 1
+    assert max(sizes.values()) <= max_group_size
 
 
 def test_jensen_shannon_divergence_zero_for_identical_distributions():
@@ -189,6 +295,19 @@ def test_summarize_partition_flags_low_representation_classes():
     assert summary["num_samples"] == 21
     assert summary["dominant_class"] == label_map.disease_classes[0]
     assert label_map.disease_classes[2] in summary["low_representation_classes"]
+
+
+def test_summarize_partition_flags_zero_count_class_as_low_representation():
+    # A class with ZERO samples for this shard is the most extreme case of
+    # low representation, not a non-case -- it must still be flagged.
+    label_map = build_tomato_label_map()
+    items = [TomatoRawItem(source="x", path=f"/{i}.jpg", canonical_disease_idx=0) for i in range(10)]
+    shard = list(range(10))
+    summary = _summarize_partition(items, shard, label_map)
+
+    zero_count_class = label_map.disease_classes[5]
+    assert summary["per_class_counts"][zero_count_class] == 0
+    assert zero_count_class in summary["low_representation_classes"]
 
 
 def test_prepare_tomato_mesh_data_end_to_end(tomato_scoped_config):

@@ -209,6 +209,42 @@ def run_tomato_round_with_io(
     return summary
 
 
+def _describe_data_split_strength(data: TomatoMeshData) -> str:
+    """Derives the data_split.strength disclosure string from the ACTUAL
+    partition_diagnostics rather than asserting full class coverage as a
+    constant -- this feeds knowledge_transfer_summary.json, an Appendix
+    A.1 research-disclosure artifact, so it must never overstate what the
+    real partition achieved. Against real config/data, some nodes can
+    have zero training samples for some canonical classes even though the
+    partition method (Dirichlet) is proportional rather than deliberately
+    exclusionary.
+    """
+    disease_classes = data.label_map.disease_classes
+    num_classes = len(disease_classes)
+    min_classes_present = min(
+        diagnostics["num_classes_present"] for diagnostics in data.partition_diagnostics.values()
+    )
+    if min_classes_present >= num_classes:
+        return (
+            "every node has some training exposure to all "
+            f"{num_classes} canonical disease classes; skew is proportional (Dirichlet-drawn), "
+            "not exclusionary"
+        )
+
+    missing_by_node = {
+        node_id: [
+            name for name, count in diagnostics["per_class_counts"].items() if count == 0
+        ]
+        for node_id, diagnostics in data.partition_diagnostics.items()
+    }
+    missing_by_node = {node_id: names for node_id, names in missing_by_node.items() if names}
+    return (
+        "skew is proportional (Dirichlet-drawn), but NOT every node has training exposure to all "
+        f"{num_classes} canonical disease classes: at least one node has zero training samples for "
+        f"some classes -- missing classes by node: {missing_by_node}"
+    )
+
+
 def build_tomato_knowledge_transfer_summary(
     cfg: Config, round0_baseline: dict[str, dict], round_summaries: list[dict], data: TomatoMeshData
 ) -> dict:
@@ -240,11 +276,7 @@ def build_tomato_knowledge_transfer_summary(
                 "deduplicated multi-source Tomato pool (PlantVillage, PlantDoc, PlantWild v1+v2), "
                 "with a global test split carved out before partitioning"
             ),
-            "strength": (
-                "every node has some training exposure to all "
-                f"{len(data.label_map.disease_classes)} canonical disease classes; skew is "
-                "proportional (Dirichlet-drawn), not exclusionary"
-            ),
+            "strength": _describe_data_split_strength(data),
             "sources": ["PlantVillage", "PlantDoc", "PlantWild_v1", "PlantWild_v2"],
             "dirichlet_alpha": dirichlet_alpha,
             "partition_diagnostics": data.partition_diagnostics,

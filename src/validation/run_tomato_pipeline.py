@@ -66,27 +66,57 @@ def run_train_stage(
 
 
 def run_export_stage(data: TomatoMeshData, node_id: str, output_dir: Path) -> None:
+    """Reads crop_classes/disease_classes/image_size/test_idx from the
+    classes.json persisted by run_train_stage rather than from `data`
+    directly. `data` is freshly recomputed via prepare_tomato_mesh_data(cfg)
+    on every separate CLI invocation (this module supports
+    `--stage train`, then a later `--stage export`, etc. as documented in
+    its module docstring) -- if config or source data drifts between
+    invocations, using `data`'s freshly-recomputed scalars/indices here
+    could silently disagree with the split `train` actually trained
+    against. `data.eval_base` (the underlying image dataset) is still used
+    directly since it's a deterministic rebuild from the same source
+    directories and seed -- the risk is specifically in the persisted
+    scalar/index values, not in eval_base's image content.
+    """
     checkpoint_path = output_dir / "checkpoint.pt"
-    if not checkpoint_path.exists():
-        raise FileNotFoundError(f"{checkpoint_path} not found — run the 'train' stage first.")
-    parity_samples = [data.eval_base[i] for i in data.test_idx[:5]]
+    classes_path = output_dir / "classes.json"
+    if not checkpoint_path.exists() or not classes_path.exists():
+        raise FileNotFoundError(
+            f"{checkpoint_path} and/or {classes_path} not found — run the 'train' stage first."
+        )
+    classes = json.loads(classes_path.read_text())
+    test_idx = classes["test_idx"]
+
+    parity_samples = [data.eval_base[i] for i in test_idx[:5]]
     export_checkpoint(
         checkpoint_path,
-        data.label_map.crop_classes,
-        data.label_map.disease_classes,
-        data.image_size,
+        classes["crop_classes"],
+        classes["disease_classes"],
+        classes["image_size"],
         output_dir,
         parity_samples=parity_samples,
     )
 
 
 def run_evaluate_stage(data: TomatoMeshData, node_id: str, output_dir: Path) -> None:
+    """Same rationale as run_export_stage above: test_idx comes from the
+    classes.json persisted by run_train_stage, not from the freshly
+    recomputed `data.test_idx`.
+    """
     manifest_path = output_dir / "manifest.json"
-    if not manifest_path.exists():
-        raise FileNotFoundError(f"{manifest_path} not found — run the 'export' stage first.")
+    classes_path = output_dir / "classes.json"
+    onnx_path = output_dir / "model.onnx"
+    if not manifest_path.exists() or not onnx_path.exists():
+        raise FileNotFoundError(
+            f"{onnx_path} and/or {manifest_path} not found — run the 'export' stage first."
+        )
     manifest = json.loads(manifest_path.read_text())
-    session = onnxruntime.InferenceSession(str(output_dir / "model.onnx"))
-    run_evaluation(session, data.eval_base, data.test_idx, manifest, MODEL_NAME, node_id, output_dir / "report.json")
+    classes = json.loads(classes_path.read_text())  # raises FileNotFoundError if missing
+    test_idx = classes["test_idx"]
+
+    session = onnxruntime.InferenceSession(str(onnx_path))
+    run_evaluation(session, data.eval_base, test_idx, manifest, MODEL_NAME, node_id, output_dir / "report.json")
 
 
 def main() -> None:

@@ -16,6 +16,7 @@ dataset does for corn_mesh_dataset.py.
 
 from __future__ import annotations
 
+import logging
 import random
 from dataclasses import dataclass, field
 from types import SimpleNamespace
@@ -28,6 +29,8 @@ from torchvision import transforms
 from src.data.plantvillage import IMAGENET_MEAN, IMAGENET_STD, _dirichlet_partition, load_full_dataset
 from src.validation.hashing import average_hash
 from src.validation.node1_dataset import group_duplicates
+
+logger = logging.getLogger(__name__)
 
 TOMATO_DISEASE_ORDER = [
     "Bacterial_spot",
@@ -167,14 +170,25 @@ def enforce_max_group_size(
     indices: list[int],
     groups: dict[int, int],
     items: list[TomatoRawItem],
+    hashes: dict[int, int],
     max_group_size: int,
     max_group_fraction_of_class: float = 0.05,
 ) -> dict[int, int]:
     """Any duplicate-group larger than min(max_group_size, fraction * that
-    group's dominant class's pooled count) is broken into singleton
-    groups -- this is the fix for the exact failure mode that let 97% of
-    node_1's Soybean class collapse into one "duplicate" group
+    group's dominant class's pooled count) is broken up -- this is the fix
+    for the exact failure mode that let 97% of node_1's Soybean class
+    collapse into one "duplicate" group
     (docs/node1_validation_tuning_and_results.md).
+
+    Breaking up an over-cap group does NOT shatter it into full
+    singletons: members are first re-clustered by EXACT hash equality
+    (Hamming distance 0), and each exact-hash cluster is kept together as
+    one sub-group (assigned to a group id keyed by one representative
+    member of that cluster). Only members whose hash is unique within the
+    group become true singletons. This preserves hash-identical
+    duplicate-pair information (e.g. real PlantWild v1<->v2 re-uploads)
+    that a full-singleton shatter would otherwise discard, which is what
+    let near-identical image pairs leak across the train/test boundary.
     """
     class_totals: dict[int, int] = {}
     for idx in indices:
@@ -190,8 +204,13 @@ def enforce_max_group_size(
         dominant_cls = items[members[0]].canonical_disease_idx
         cap = min(max_group_size, max(1, int(class_totals[dominant_cls] * max_group_fraction_of_class)))
         if len(members) > cap:
+            by_exact_hash: dict[int, list[int]] = {}
             for member in members:
-                fixed[member] = member
+                by_exact_hash.setdefault(hashes[member], []).append(member)
+            for exact_hash_members in by_exact_hash.values():
+                representative = exact_hash_members[0]
+                for member in exact_hash_members:
+                    fixed[member] = representative
     return fixed
 
 
@@ -210,11 +229,20 @@ def capped_dedup_split(
     internally and has no cap parameter to inject.
     """
     groups = group_duplicates(indices, hashes, threshold)
-    groups = enforce_max_group_size(indices, groups, items, max_group_size)
+    groups = enforce_max_group_size(indices, groups, items, hashes, max_group_size)
 
     group_members: dict[int, list[int]] = {}
     for idx in indices:
         group_members.setdefault(groups[idx], []).append(idx)
+
+    group_sizes = sorted((len(members) for members in group_members.values()), reverse=True)
+    logger.info(
+        "capped_dedup_split: %d groups after max-group-size cap enforcement (cap=%d); "
+        "top 10 largest group sizes: %s",
+        len(group_sizes),
+        max_group_size,
+        group_sizes[:10],
+    )
 
     group_ids = list(group_members.keys())
     rng = random.Random(seed)
@@ -300,7 +328,7 @@ def _summarize_partition(items: list[TomatoRawItem], shard: list[int], label_map
         "low_representation_classes": [
             label_map.disease_classes[i]
             for i in range(num_classes)
-            if 0 < counts[i] <= low_rep_threshold
+            if counts[i] <= low_rep_threshold
         ],
     }
 
