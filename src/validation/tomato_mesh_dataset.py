@@ -17,14 +17,15 @@ dataset does for corn_mesh_dataset.py.
 from __future__ import annotations
 
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import SimpleNamespace
 
+import numpy as np
 from PIL import Image
 from torch.utils.data import Dataset
 from torchvision import transforms
 
-from src.data.plantvillage import IMAGENET_MEAN, IMAGENET_STD, load_full_dataset
+from src.data.plantvillage import IMAGENET_MEAN, IMAGENET_STD, _dirichlet_partition, load_full_dataset
 from src.validation.hashing import average_hash
 from src.validation.node1_dataset import group_duplicates
 
@@ -229,3 +230,163 @@ def capped_dedup_split(
         else:
             train_idx.extend(members)
     return train_idx, test_idx
+
+
+def carve_merged_probe_set(
+    items: list[TomatoRawItem],
+    indices: list[int],
+    probe_fraction: float,
+    seed: int,
+    large_class_threshold: int = 200,
+    min_samples_small_class: int = 8,
+    max_fraction_small_class: float = 0.2,
+) -> tuple[list[int], list[int]]:
+    """Same stratified-by-class algorithm as plantvillage.carve_public_probe_set,
+    adapted to operate on a subset of positions (indices) into the merged
+    items list rather than an entire PlantVillageDataset -- needed because
+    the probe set here is carved from just the post-test-split training
+    pool, not the whole dataset.
+    """
+    targets = np.array([items[i].canonical_disease_idx for i in indices])
+    rng = random.Random(seed)
+    probe_idx: list[int] = []
+    remaining_idx: list[int] = []
+    for cls in sorted(set(targets.tolist())):
+        cls_indices = [indices[i] for i in np.flatnonzero(targets == cls).tolist()]
+        rng.shuffle(cls_indices)
+        count = len(cls_indices)
+        if count >= large_class_threshold:
+            n_probe_cls = max(1, round(count * probe_fraction))
+        else:
+            target_n = max(min_samples_small_class, round(count * probe_fraction))
+            n_probe_cls = min(target_n, int(count * max_fraction_small_class), count)
+        probe_idx.extend(cls_indices[:n_probe_cls])
+        remaining_idx.extend(cls_indices[n_probe_cls:])
+    rng.shuffle(probe_idx)
+    rng.shuffle(remaining_idx)
+    return probe_idx, remaining_idx
+
+
+def _jensen_shannon_divergence(p: np.ndarray, q: np.ndarray) -> float:
+    p = np.asarray(p, dtype=float)
+    q = np.asarray(q, dtype=float)
+    m = 0.5 * (p + q)
+
+    def _kl(a: np.ndarray, b: np.ndarray) -> float:
+        mask = a > 0
+        return float(np.sum(a[mask] * np.log2(a[mask] / b[mask])))
+
+    return 0.5 * _kl(p, m) + 0.5 * _kl(q, m)
+
+
+def _summarize_partition(items: list[TomatoRawItem], shard: list[int], label_map: TomatoLabelMap) -> dict:
+    num_classes = len(label_map.disease_classes)
+    counts = np.zeros(num_classes, dtype=int)
+    for idx in shard:
+        counts[items[idx].canonical_disease_idx] += 1
+    total = int(counts.sum())
+    proportions = counts / total if total > 0 else counts.astype(float)
+    uniform = np.full(num_classes, 1.0 / num_classes)
+    dominant_idx = int(np.argmax(counts))
+    nonzero_counts = counts[counts > 0]
+    low_rep_threshold = np.percentile(nonzero_counts, 25) if len(nonzero_counts) > 0 else 0
+    return {
+        "num_samples": total,
+        "per_class_counts": {name: int(c) for name, c in zip(label_map.disease_classes, counts)},
+        "dominant_class": label_map.disease_classes[dominant_idx],
+        "dominant_class_fraction": float(proportions[dominant_idx]) if total > 0 else 0.0,
+        "js_divergence_from_uniform": _jensen_shannon_divergence(proportions, uniform),
+        "num_classes_present": int(np.count_nonzero(counts)),
+        "low_representation_classes": [
+            label_map.disease_classes[i]
+            for i in range(num_classes)
+            if 0 < counts[i] <= low_rep_threshold
+        ],
+    }
+
+
+@dataclass
+class TomatoMeshData:
+    train_base: TomatoMergedDataset
+    eval_base: TomatoMergedDataset
+    label_map: TomatoLabelMap
+    image_size: int
+    probe_idx: list[int]
+    test_idx: list[int]
+    per_node: dict[str, dict[str, list[int]]] = field(default_factory=dict)
+    partition_diagnostics: dict[str, dict] = field(default_factory=dict)
+
+
+def prepare_tomato_mesh_data(cfg) -> TomatoMeshData:
+    from src.data.plantdoc import load_plantdoc_tomato_paths
+    from src.data.plantwild import load_plantwild_v1_tomato_paths, load_plantwild_v2_tomato_paths
+
+    image_size = cfg.get("data.image_size", 160)
+    pv_root = cfg.get("data.root", "data/PlantVillage")
+    plantdoc_root = cfg.get("tomato_mesh.plantdoc_root", "data/PlantDoc")
+    plantwild_v1_root = cfg.get("tomato_mesh.plantwild_v1_root", "data/PlantWild/plantwild/plantwild/images")
+    plantwild_v2_root = cfg.get("tomato_mesh.plantwild_v2_root", "data/PlantWild/plantwild_v2/plantwild_v2")
+    seed = cfg.get("data.seed", 42)
+    num_nodes = cfg.get("tomato_mesh.num_nodes", 3)
+    dirichlet_alpha = cfg.get("tomato_mesh.dirichlet_alpha", 0.3)
+    test_fraction = cfg.get("tomato_mesh.test_fraction", 0.20)
+    dedup_threshold = cfg.get("tomato_mesh.dedup_threshold", 5)
+    dedup_max_group_size = cfg.get("tomato_mesh.dedup_max_group_size", 25)
+    probe_fraction = cfg.get("data.probe_set_fraction", 0.05)
+
+    label_map = build_tomato_label_map()
+
+    pv_items = load_plantvillage_tomato_items(pv_root, label_map)
+    pd_items = _items_from_paths(load_plantdoc_tomato_paths(plantdoc_root), "plantdoc", label_map)
+    pw1_items = _items_from_paths(
+        load_plantwild_v1_tomato_paths(plantwild_v1_root), "plantwild_v1", label_map
+    )
+    pw2_items = _items_from_paths(
+        load_plantwild_v2_tomato_paths(plantwild_v2_root), "plantwild_v2", label_map
+    )
+    items = pv_items + pd_items + pw1_items + pw2_items
+    if not items:
+        raise FileNotFoundError(
+            "No Tomato images found across PlantVillage/PlantDoc/PlantWild -- check "
+            "data.root/tomato_mesh.plantdoc_root/tomato_mesh.plantwild_v1_root/"
+            "tomato_mesh.plantwild_v2_root."
+        )
+
+    indices = list(range(len(items)))
+    hashes = compute_merged_image_hashes(items, indices)
+    train_idx_pool, test_idx = capped_dedup_split(
+        indices, hashes, items, test_fraction, seed, threshold=dedup_threshold, max_group_size=dedup_max_group_size
+    )
+
+    probe_idx, remaining_idx = carve_merged_probe_set(
+        items,
+        train_idx_pool,
+        probe_fraction,
+        seed,
+        large_class_threshold=cfg.get("data.probe_set_large_class_threshold", 200),
+        min_samples_small_class=cfg.get("data.probe_set_min_samples_small_class", 8),
+        max_fraction_small_class=cfg.get("data.probe_set_max_fraction_small_class", 0.2),
+    )
+
+    targets = np.array([items[i].canonical_disease_idx for i in remaining_idx])
+    rng = np.random.RandomState(seed)
+    shards = _dirichlet_partition(remaining_idx, targets, num_nodes, dirichlet_alpha, rng)
+
+    per_node: dict[str, dict[str, list[int]]] = {}
+    partition_diagnostics: dict[str, dict] = {}
+    for node_idx, shard in enumerate(shards):
+        node_id = f"node_{node_idx}"
+        per_node[node_id] = {"train_idx": shard}
+        partition_diagnostics[node_id] = _summarize_partition(items, shard, label_map)
+
+    train_base, eval_base = build_tomato_train_eval_datasets(items, label_map, image_size)
+    return TomatoMeshData(
+        train_base=train_base,
+        eval_base=eval_base,
+        label_map=label_map,
+        image_size=image_size,
+        probe_idx=probe_idx,
+        test_idx=test_idx,
+        per_node=per_node,
+        partition_diagnostics=partition_diagnostics,
+    )

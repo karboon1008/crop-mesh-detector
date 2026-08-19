@@ -3,19 +3,25 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pytest
 import torch
 from PIL import Image
 
 from src.validation.tomato_mesh_dataset import (
     TOMATO_DISEASE_ORDER,
+    TomatoMeshData,
     TomatoRawItem,
     _items_from_paths,
+    _jensen_shannon_divergence,
+    _summarize_partition,
     build_tomato_label_map,
     build_tomato_train_eval_datasets,
     capped_dedup_split,
+    carve_merged_probe_set,
     compute_merged_image_hashes,
     enforce_max_group_size,
     load_plantvillage_tomato_items,
+    prepare_tomato_mesh_data,
 )
 
 
@@ -149,3 +155,56 @@ def test_capped_dedup_split_partitions_all_indices():
     )
     assert sorted(train_idx + test_idx) == indices
     assert set(train_idx).isdisjoint(test_idx)
+
+
+def test_jensen_shannon_divergence_zero_for_identical_distributions():
+    p = np.array([0.5, 0.5])
+    assert _jensen_shannon_divergence(p, p) == pytest.approx(0.0, abs=1e-9)
+
+
+def test_jensen_shannon_divergence_one_for_disjoint_supports():
+    p = np.array([1.0, 0.0])
+    q = np.array([0.0, 1.0])
+    assert _jensen_shannon_divergence(p, q) == pytest.approx(1.0, abs=1e-9)
+
+
+def test_carve_merged_probe_set_disjoint_and_covers_all_indices():
+    label_map = build_tomato_label_map()
+    items = [TomatoRawItem(source="x", path=f"/{i}.jpg", canonical_disease_idx=i % 3) for i in range(30)]
+    indices = list(range(30))
+    probe_idx, remaining_idx = carve_merged_probe_set(
+        items, indices, probe_fraction=0.2, seed=1, min_samples_small_class=1, max_fraction_small_class=0.5
+    )
+    assert set(probe_idx).isdisjoint(remaining_idx)
+    assert sorted(probe_idx + remaining_idx) == indices
+    assert len(probe_idx) > 0
+
+
+def test_summarize_partition_flags_low_representation_classes():
+    label_map = build_tomato_label_map()
+    items = [TomatoRawItem(source="x", path=f"/{i}.jpg", canonical_disease_idx=0) for i in range(20)]
+    items += [TomatoRawItem(source="x", path=f"/h{i}.jpg", canonical_disease_idx=2) for i in range(1)]
+    shard = list(range(21))
+    summary = _summarize_partition(items, shard, label_map)
+    assert summary["num_samples"] == 21
+    assert summary["dominant_class"] == label_map.disease_classes[0]
+    assert label_map.disease_classes[2] in summary["low_representation_classes"]
+
+
+def test_prepare_tomato_mesh_data_end_to_end(tomato_scoped_config):
+    cfg = tomato_scoped_config
+    data = prepare_tomato_mesh_data(cfg)
+    assert isinstance(data, TomatoMeshData)
+    assert len(data.per_node) == 3
+
+    all_train = [i for shard in data.per_node.values() for i in shard["train_idx"]]
+    assert set(all_train).isdisjoint(data.test_idx)
+    assert set(all_train).isdisjoint(data.probe_idx)
+    # every node's shard is disjoint from every other node's
+    node_sets = [set(v["train_idx"]) for v in data.per_node.values()]
+    for i in range(len(node_sets)):
+        for j in range(i + 1, len(node_sets)):
+            assert node_sets[i].isdisjoint(node_sets[j])
+
+    for node_id, diagnostics in data.partition_diagnostics.items():
+        assert diagnostics["num_samples"] == len(data.per_node[node_id]["train_idx"])
