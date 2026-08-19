@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 from pathlib import Path
 
 import torch
@@ -170,6 +171,8 @@ def main():
     run_state["num_tracked_blocks"] += this_run_compute["num_tracked_blocks"]
     run_state["total_bytes_exchanged"] += grand_total_bytes
     run_state_path.write_text(json.dumps(run_state, indent=2))
+    if cfg.path is not None:
+        shutil.copy2(cfg.path, stage2_dir / "config.yaml")
 
     comm_estimate = comm_estimator.estimate_all_radios(run_state["total_bytes_exchanged"])
     overall_gain = {arch: res["step1_to_step2_gain"]["macro_gain"] for arch, res in all_results.items()}

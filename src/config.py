@@ -21,15 +21,16 @@ class Config:
         cfg.get("training.missing", 10)     # -> 10 (default)
     """
 
-    def __init__(self, data: dict):
+    def __init__(self, data: dict, path: Path | None = None):
         self._data = data
+        self.path = path
 
     @classmethod
     def load(cls, path: str | Path | None = None) -> "Config":
         path = Path(path) if path else _DEFAULT_PATH
         with open(path, "r") as f:
             data = yaml.safe_load(f)
-        return cls(data)
+        return cls(data, path=path)
 
     def get(self, dotted_key: str, default: Any = None) -> Any:
         node = self._data

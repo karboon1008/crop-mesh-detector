@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 from pathlib import Path
 
 import torch
@@ -149,6 +150,8 @@ def main():
     run_state["total_duration_s"] += this_run_compute["total_duration_s"]
     run_state["num_tracked_blocks"] += this_run_compute["num_tracked_blocks"]
     run_state_path.write_text(json.dumps(run_state, indent=2))
+    if cfg.path is not None:
+        shutil.copy2(cfg.path, stage_dir / "config.yaml")
 
     print(
         f"\nStage 1 done. Results, manifest, and checkpoints written to {stage_dir}/ "
