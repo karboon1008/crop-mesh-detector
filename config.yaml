@@ -114,3 +114,16 @@ corn_mesh:
   healthy_dedup_threshold: 5
   rounds: 2
   output_dir: "outputs/validation/corn_mesh"
+
+tomato_mesh:
+  crop: "Tomato"
+  plantdoc_root: "data/PlantDoc"
+  plantwild_v1_root: "data/PlantWild/plantwild/plantwild/images"
+  plantwild_v2_root: "data/PlantWild/plantwild_v2/plantwild_v2"
+  num_nodes: 3
+  dirichlet_alpha: 0.3
+  test_fraction: 0.20              # global split fraction, deliberately separate from data.test_fraction (per-node, 0.15)
+  dedup_threshold: 5               # perceptual-hash Hamming distance (same default as node_1/corn)
+  dedup_max_group_size: 25         # starting heuristic (also capped at 5% of a class's pooled count) -- re-tune against real data
+  rounds: 5
+  output_dir: "outputs/validation/tomato_mesh"
