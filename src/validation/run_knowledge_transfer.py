@@ -246,7 +246,10 @@ def _load_node_from_checkpoint(checkpoint_path: Path, data: CornMeshData, node_i
     train_idx = data.per_node[node_id]["train_idx"]
     test_idx = data.per_node[node_id]["test_idx"]
     train_loader = DataLoader(
-        CornDiseaseView(data.train_base, train_idx, data.label_map), batch_size=batch_size, shuffle=True
+        CornDiseaseView(data.train_base, train_idx, data.label_map),
+        batch_size=batch_size,
+        shuffle=True,
+        drop_last=True,
     )
     test_loader = DataLoader(
         CornDiseaseView(data.eval_base, test_idx, data.label_map), batch_size=batch_size, shuffle=False
@@ -308,8 +311,17 @@ def build_knowledge_transfer_summary(
     )
 
     node_diseases = cfg.get("corn_mesh.node_diseases", NODE_DISEASE_DEFAULT_FALLBACK)
+    # total_bytes_exchanged is reported per-round (not cumulative), so
+    # summing across rounds is correct. total_compute_energy_kwh, in
+    # contrast, comes from ComputeEnergyTracker.summary() -- and the same
+    # tracker instance is shared across all rounds in main(), so each
+    # round's figure already IS the running total over its append-only
+    # log. Summing round_summaries' energy figures would double-count
+    # every round but the last (e.g. 2 rounds -> E1 + (E1+E2) instead of
+    # E1+E2), so the final round's own figure is the correct cumulative
+    # total.
     cumulative_bytes = sum(r["total_bytes_exchanged"] for r in round_summaries)
-    cumulative_energy = sum(r["energy"]["total_compute_energy_kwh"] for r in round_summaries)
+    cumulative_energy = round_summaries[-1]["energy"]["total_compute_energy_kwh"]
 
     return {
         "node_count": 3,
@@ -383,11 +395,17 @@ def main() -> None:
     stage1_dir = Path(args.output_dir)
     for node_id in ("node_0", "node_1", "node_2"):
         node_dir = node_output_dir(stage1_dir, node_id)
-        if not (node_dir / "checkpoint.pt").exists() or not (node_dir / "classes.json").exists():
-            raise FileNotFoundError(
-                f"{node_dir / 'checkpoint.pt'} not found — run "
-                f"'python -m src.validation.run_corn_pipeline' first."
-            )
+        # checkpoint.pt is read by _load_node_from_checkpoint;
+        # model.onnx/manifest.json are read by evaluate_round0_baseline
+        # (no re-export in stage 2) -- all three must exist, i.e. stage 1's
+        # train AND export stages both ran for this node.
+        for required_name in ("checkpoint.pt", "model.onnx", "manifest.json"):
+            required_path = node_dir / required_name
+            if not required_path.exists():
+                raise FileNotFoundError(
+                    f"{required_path} not found — run "
+                    f"'python -m src.validation.run_corn_pipeline' first."
+                )
 
     data = prepare_corn_mesh_data(cfg)
     cross_node_idx = [i for n in data.per_node.values() for i in n["test_idx"]]

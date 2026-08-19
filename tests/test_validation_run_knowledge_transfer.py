@@ -305,9 +305,48 @@ def test_main_rejects_rounds_outside_valid_range(tmp_path, corn_scoped_config, m
         main()
 
 
+def test_main_raises_clear_error_naming_missing_export_when_stage1_partial(
+    tmp_path, corn_scoped_config, monkeypatch
+):
+    """Simulates someone having run only 'run_corn_pipeline --stage train'
+    (checkpoint.pt exists) without 'export' (no model.onnx/manifest.json) --
+    a realistic partial stage-1 state that evaluate_round0_baseline's ONNX
+    load would otherwise crash on later, with no "run stage 1 first"
+    guidance and no indication of which file is actually missing.
+    """
+    cfg, root = corn_scoped_config
+    config_path = tmp_path / "config.yaml"
+    import yaml
+
+    config_path.write_text(yaml.safe_dump(cfg.as_dict()))
+    stage1_dir = tmp_path / "outputs" / "validation" / "corn_mesh"
+    for node_id in ("node_0", "node_1", "node_2"):
+        node_dir = node_output_dir(stage1_dir, node_id)
+        node_dir.mkdir(parents=True, exist_ok=True)
+        (node_dir / "checkpoint.pt").write_text("stub")  # 'train' ran, 'export' did not
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_knowledge_transfer",
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(stage1_dir),
+            "--rounds",
+            "1",
+        ],
+    )
+
+    with pytest.raises(FileNotFoundError, match="model.onnx"):
+        main()
+
+
 def test_main_runs_end_to_end(tmp_path, corn_scoped_config, monkeypatch):
     cfg, root = corn_scoped_config
     config_path = tmp_path / "config.yaml"
+    import math
+
     import yaml
 
     config_path.write_text(yaml.safe_dump(cfg.as_dict()))
@@ -325,11 +364,45 @@ def test_main_runs_end_to_end(tmp_path, corn_scoped_config, monkeypatch):
             "--output-dir",
             str(stage1_dir),
             "--rounds",
-            "1",
+            "2",
         ],
     )
 
     main()
 
     assert (kt_dir / "round_1" / "round_summary.json").exists()
+    assert (kt_dir / "round_2" / "round_summary.json").exists()
     assert (kt_dir / "knowledge_transfer_summary.json").exists()
+
+    round_2_summary = json.loads((kt_dir / "round_2" / "round_summary.json").read_text())
+    kt_summary = json.loads((kt_dir / "knowledge_transfer_summary.json").read_text())
+
+    assert kt_summary["rounds_run"] == 2
+    assert kt_summary["cumulative_bytes_exchanged"] > 0
+    assert math.isfinite(kt_summary["cumulative_energy_kwh"])
+    # ComputeEnergyTracker.summary() is cumulative over its whole
+    # append-only log (shared across all rounds), so round 2's own
+    # energy figure already IS the 2-round total -- summing round 1's
+    # and round 2's figures would double-count round 1. This assertion
+    # is exactly what catches that regression.
+    assert kt_summary["cumulative_energy_kwh"] == round_2_summary["energy"]["total_compute_energy_kwh"]
+
+    gain_table = kt_summary["collaboration_gain_per_disease"]
+    expected_diseases = {
+        "healthy",
+        "Common_rust",
+        "Cercospora_leaf_spot_Gray_leaf_spot",
+        "Northern_Leaf_Blight",
+    }
+    for node_id in ("node_0", "node_1", "node_2"):
+        assert set(gain_table[node_id].keys()) == expected_diseases
+        for disease_name in expected_diseases:
+            entry = gain_table[node_id][disease_name]
+            for metric_name in (
+                "round_0_accuracy",
+                "round_N_collective_accuracy",
+                "round_N_local_only_control_accuracy",
+                "gain_vs_round0",
+                "gain_vs_local_only_control",
+            ):
+                assert math.isfinite(entry[metric_name])
