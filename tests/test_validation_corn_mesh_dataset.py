@@ -89,3 +89,58 @@ def test_split_healthy_3way_keeps_duplicate_groups_together():
     idx_to_share = {idx: i for i, share in enumerate(shares) for idx in share}
     assert idx_to_share[0] == idx_to_share[1]
     assert idx_to_share[2] == idx_to_share[3]
+
+
+from src.validation.corn_mesh_dataset import CornDiseaseView, prepare_corn_mesh_data
+
+
+def test_corn_disease_view_remaps_labels_to_compact_space(corn_scoped_config):
+    cfg, root = corn_scoped_config
+    dataset = PlantVillageDataset(root, image_size=32)
+    corn_indices = get_corn_indices(dataset)
+    rust_indices = get_corn_disease_indices(dataset, corn_indices, "Common_rust")
+    label_map = build_corn_label_map()
+
+    view = CornDiseaseView(dataset, rust_indices, label_map)
+
+    assert len(view) == len(rust_indices)
+    for pos in range(len(view)):
+        image, crop_label, disease_label = view[pos]
+        assert crop_label == 0
+        assert disease_label == label_map.name_to_disease_idx["Common_rust"]
+
+
+def test_prepare_corn_mesh_data_produces_disjoint_per_node_splits_and_probe_set(corn_scoped_config):
+    cfg, root = corn_scoped_config
+
+    data = prepare_corn_mesh_data(cfg)
+
+    assert set(data.per_node.keys()) == {"node_0", "node_1", "node_2"}
+    all_train_test = []
+    for node_id, splits in data.per_node.items():
+        train_idx, test_idx = splits["train_idx"], splits["test_idx"]
+        assert set(train_idx).isdisjoint(set(test_idx))
+        all_train_test.extend(train_idx + test_idx)
+
+    # no index appears in more than one node's local data (disjoint diseases
+    # + disjoint healthy shares), and none overlap the shared probe set
+    assert len(all_train_test) == len(set(all_train_test))
+    assert set(all_train_test).isdisjoint(set(data.probe_idx))
+    assert len(data.probe_idx) > 0
+    assert data.label_map.crop_classes == ["Corn"]
+
+
+def test_prepare_corn_mesh_data_each_node_only_has_its_own_disease_plus_healthy(corn_scoped_config):
+    cfg, root = corn_scoped_config
+    dataset = PlantVillageDataset(root, image_size=32)
+
+    data = prepare_corn_mesh_data(cfg)
+
+    node_diseases = cfg.get("corn_mesh.node_diseases")
+    for node_id, own_disease in node_diseases.items():
+        combined = data.per_node[node_id]["train_idx"] + data.per_node[node_id]["test_idx"]
+        disease_names = set()
+        for idx in combined:
+            _, disease_idx = dataset.labels.class_to_crop_disease[dataset.base.targets[idx]]
+            disease_names.add(dataset.labels.disease_classes[disease_idx])
+        assert disease_names <= {own_disease, "healthy"}
