@@ -54,7 +54,7 @@ def main():
     stage_dir.mkdir(parents=True, exist_ok=True)
 
     dataset = load_merged_dataset(
-        cfg.get("data.root"), cfg.get("data.plantdoc_root"), cfg.get("data.image_size", 160), cfg.get("data.seed", 42)
+        cfg.get("data.root"), cfg.get("data.plantdoc_root"), cfg.get("data.image_size", 224), cfg.get("data.seed", 42)
     )
     num_crop = len(dataset.labels.crop_classes)
     num_disease = len(dataset.labels.disease_classes)
@@ -65,7 +65,7 @@ def main():
             {
                 "crop_classes": dataset.labels.crop_classes,
                 "disease_classes": dataset.labels.disease_classes,
-                "image_size": cfg.get("data.image_size", 160),
+                "image_size": cfg.get("data.image_size", 224),
             },
             indent=2,
         )

@@ -127,7 +127,7 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     output_dir = Path(cfg.get("output.dir", "outputs"))
     dataset = load_merged_dataset(
-        cfg.get("data.root"), cfg.get("data.plantdoc_root"), cfg.get("data.image_size", 160), cfg.get("data.seed", 42)
+        cfg.get("data.root"), cfg.get("data.plantdoc_root"), cfg.get("data.image_size", 224), cfg.get("data.seed", 42)
     )
     if source_crop not in dataset.labels.crop_classes:
         raise ValueError(f"source_crop '{source_crop}' is not a known crop: {dataset.labels.crop_classes}")

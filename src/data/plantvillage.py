@@ -104,7 +104,7 @@ class _FilteredImageFolder(ImageFolder):
 class PlantVillageDataset(Dataset):
     """Wraps torchvision's ImageFolder, exposing (image, crop_label, disease_label)."""
 
-    def __init__(self, root: str | Path, image_size: int = 160, allowed_classes: set[str] | None = None):
+    def __init__(self, root: str | Path, image_size: int = 224, allowed_classes: set[str] | None = None):
         self.transform = build_eval_transform(image_size)
         self.train_transform = build_train_transform(image_size)
         self.base = _FilteredImageFolder(str(root), allowed_classes=allowed_classes)
@@ -143,7 +143,7 @@ class PlantVillageDataset(Dataset):
         return self.base.targets
 
 
-def load_full_dataset(root: str | Path, image_size: int = 160) -> PlantVillageDataset:
+def load_full_dataset(root: str | Path, image_size: int = 224) -> PlantVillageDataset:
     """Loads PlantVillage restricted to classes that have PlantDoc
     real-world coverage (see plantdoc.overlapping_plantvillage_classes) —
     PlantVillage-only classes carry no domain-shift signal for this project.

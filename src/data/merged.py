@@ -90,7 +90,7 @@ class MergedPlantDataset(Dataset):
     every existing carve/partition/split helper works on it unchanged.
     """
 
-    def __init__(self, pv_root: str | Path, pd_root: str | Path, image_size: int = 160, seed: int = 42):
+    def __init__(self, pv_root: str | Path, pd_root: str | Path, image_size: int = 224, seed: int = 42):
         self.transform = build_eval_transform(image_size)
         self.train_transform = build_train_transform(image_size)
         self.base = _MergedImageSource(str(pv_root), str(pd_root), seed)
@@ -111,7 +111,7 @@ class MergedPlantDataset(Dataset):
 
 
 def load_merged_dataset(
-    pv_root: str | Path, pd_root: str | Path, image_size: int = 160, seed: int = 42
+    pv_root: str | Path, pd_root: str | Path, image_size: int = 224, seed: int = 42
 ) -> MergedPlantDataset:
     pv_root, pd_root = Path(pv_root), Path(pd_root)
     if not pv_root.exists():
