@@ -70,7 +70,7 @@ training:
 
 federated:
   aggregation: "trimmed_mean"     # "trimmed_mean" | "krum"
-  trim_fraction: 0.15              # fraction trimmed from each end (trimmed_mean only) — lowered from 0.5: with one crop-specialist per node, the informative "expert" logit on a given probe image IS the extreme value, so trimming half of each end from just 12 peers discarded that signal along with real outliers
+  trim_fraction: 0.2               # fraction trimmed from each end (trimmed_mean only) — with num_nodes=6, each node has only 5 peers, and _trimmed_mean's k = int(n * trim_fraction) needs trim_fraction >= 0.2 to ever trim anyone at n=5; 0.15 was silently a no-op (plain mean, zero robustness). Disease-logit aggregation now pre-filters to peers with real local support for each class before this trimming runs (see aggregate_disease_logits in src/federated/aggregation.py), so this only trims among already-informed peers — it protects prototype aggregation against one stale/corrupted peer without the old risk of trimming away the lone informed peer's signal
   krum_neighbors: 2               # number of closest peers kept (krum only)
 
 energy:
