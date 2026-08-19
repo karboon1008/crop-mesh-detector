@@ -7,9 +7,11 @@ for why the head is scoped this tightly instead of reusing the full
 
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass
 
 from src.data.plantvillage import PlantVillageDataset
+from src.validation.node1_dataset import compute_image_hashes, group_duplicates
 
 CORN_DISEASE_ORDER = [
     "healthy",
@@ -59,3 +61,37 @@ def get_corn_disease_indices(
         if dataset.labels.disease_classes[disease_idx] == disease_name:
             result.append(idx)
     return result
+
+
+def _assign_groups_to_shares(
+    group_list: list[list[int]], num_nodes: int, seed: int
+) -> list[list[int]]:
+    """Greedy load-balancing: largest groups first, each assigned to
+    whichever share currently has the fewest images -- keeps every
+    duplicate-group intact on one share while balancing share sizes.
+    """
+    rng = random.Random(seed)
+    shuffled = list(group_list)
+    rng.shuffle(shuffled)
+    shuffled.sort(key=len, reverse=True)
+
+    shares: list[list[int]] = [[] for _ in range(num_nodes)]
+    for members in shuffled:
+        target = min(range(num_nodes), key=lambda i: len(shares[i]))
+        shares[target].extend(members)
+    return shares
+
+
+def split_healthy_3way(
+    dataset: PlantVillageDataset,
+    healthy_indices: list[int],
+    num_nodes: int,
+    seed: int,
+    threshold: int = 5,
+) -> list[list[int]]:
+    hashes = compute_image_hashes(dataset, healthy_indices)
+    groups = group_duplicates(healthy_indices, hashes, threshold)
+    group_members: dict[int, list[int]] = {}
+    for idx, group_id in groups.items():
+        group_members.setdefault(group_id, []).append(idx)
+    return _assign_groups_to_shares(list(group_members.values()), num_nodes, seed)
