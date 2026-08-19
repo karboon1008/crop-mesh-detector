@@ -93,16 +93,48 @@ def aggregate_prototypes(
     return consensus
 
 
-def aggregate_logits(
+def aggregate_disease_logits(
     peer_logits: list[torch.Tensor],
+    peer_known_classes: list[set[int]],
     method: str = "trimmed_mean",
     trim_fraction: float = 0.2,
     krum_neighbors: int = 2,
-) -> torch.Tensor:
-    """peer_logits: one (num_probe, num_classes) tensor per peer, computed
-    on the identical shared public probe set. Returns the consensus
-    logits of the same shape.
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """peer_logits: one (num_probe, num_disease_classes) tensor per peer,
+    computed on the identical shared public probe set. peer_known_classes:
+    the matching per-peer set of disease-class ids that peer actually has
+    local training examples for (see Node.compute_prototypes).
+
+    Unlike a plain per-cell trimmed mean/Krum over all peers, this
+    aggregates each class column only from the peers who actually have
+    that class — under manual_node_crops, most disease classes belong to
+    exactly one node, so for those columns every peer would otherwise be
+    confidently voting on a class it has never seen, and trimmed-mean/Krum
+    can't tell that apart from a genuinely informed peer.
+
+    Returns (consensus_logits, known_mask): known_mask (bool, shape
+    (num_disease_classes,)) marks which columns had at least one informed
+    peer — columns with none are left at 0 in consensus_logits and False
+    in known_mask, and callers should exclude them from any loss that
+    reads consensus_logits (see Node._soft_kd_loss's class_mask).
     """
-    return aggregate_vectors(
-        peer_logits, method=method, trim_fraction=trim_fraction, krum_neighbors=krum_neighbors
-    )
+    num_probe, num_classes = peer_logits[0].shape
+    consensus = torch.zeros(num_probe, num_classes)
+    known_mask = torch.zeros(num_classes, dtype=torch.bool)
+
+    for c in range(num_classes):
+        informed = [
+            logits[:, c] for logits, known in zip(peer_logits, peer_known_classes) if c in known
+        ]
+        if not informed:
+            continue
+        known_mask[c] = True
+        stacked = torch.stack(informed, dim=0)  # (n_informed, num_probe)
+        if method == "trimmed_mean":
+            consensus[:, c] = _trimmed_mean(stacked, trim_fraction)
+        elif method == "krum":
+            consensus[:, c] = _krum(stacked, krum_neighbors)
+        else:
+            raise ValueError(f"Unknown aggregation method: {method}")
+
+    return consensus, known_mask

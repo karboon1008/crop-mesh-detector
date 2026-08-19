@@ -18,17 +18,23 @@ class KnowledgePayload:
     """Everything a node sends to its peers in one round. Deliberately
     small and non-invertible: mean embeddings and soft probabilities,
     never a raw image, gradient, or weight tensor.
+
+    There is no crop_logits field: under manual_node_crops every node is a
+    single-crop specialist, so "which peer actually knows this probe
+    image's crop" varies per image, not per peer — there's no static mask
+    that salvages cross-node crop-logit distillation, so it isn't sent.
     """
 
     prototypes: Prototypes  # mean future embedding per class (crop type and disease type)
-    crop_logits: torch.Tensor  # (num_probe, num_crop_classes)
     disease_logits: torch.Tensor  # (num_probe, num_disease_classes)
+    known_disease_classes: set[int]  # disease class ids this node has local training examples for
 
     # estimates communication cost for measuring bandwidth efficiency
     def size_bytes(self) -> int:
         proto_bytes = sum(v.numel() * 4 for v in self.prototypes.values())
-        logit_bytes = (self.crop_logits.numel() + self.disease_logits.numel()) * 4
-        return proto_bytes + logit_bytes
+        logit_bytes = self.disease_logits.numel() * 4
+        mask_bytes = len(self.known_disease_classes) * 4
+        return proto_bytes + logit_bytes + mask_bytes
 
 
 class Node:
@@ -153,7 +159,7 @@ class Node:
     # knowledge extraction: prototypes + public-probe logits
     # no_grad - no training session here
     @torch.no_grad()
-    def compute_prototypes(self) -> Prototypes:
+    def compute_prototypes(self) -> tuple[Prototypes, set[int]]:
         self.model.eval()
         crop_sums: dict[int, torch.Tensor] = {}
         crop_counts: dict[int, int] = {}
@@ -179,33 +185,37 @@ class Node:
             prototypes[("crop", c)] = s / crop_counts[c]
         for d, s in disease_sums.items():
             prototypes[("disease", d)] = s / disease_counts[d]
-        return prototypes
+        # recomputed fresh every round from the live train_loader, so this
+        # stays correct across scenarios that swap or grow it mid-run
+        # (class_addition, distribution_shift) instead of going stale.
+        known_disease_classes = set(disease_counts.keys())
+        return prototypes, known_disease_classes
 
     @torch.no_grad()
-    def compute_probe_logits(self, probe_loader: DataLoader) -> tuple[torch.Tensor, torch.Tensor]:
+    def compute_probe_logits(self, probe_loader: DataLoader) -> torch.Tensor:
         self.model.eval()
-        crop_logits_all, disease_logits_all = [], []
+        disease_logits_all = []
         ## only load images
         for images, _, _ in probe_loader:
             images = images.to(self.device)
-            # run inference
-            crop_logits, disease_logits = self.model(images)
-            crop_logits_all.append(crop_logits.cpu())
+            # run inference (crop head is not distilled across peers, see
+            # KnowledgePayload, so its output here is discarded)
+            _, disease_logits = self.model(images)
             disease_logits_all.append(disease_logits.cpu())
-        return torch.cat(crop_logits_all, dim=0), torch.cat(disease_logits_all, dim=0)
+        return torch.cat(disease_logits_all, dim=0)
 
     # pack knowledge
     def compute_knowledge(self, probe_loader: DataLoader) -> KnowledgePayload:
-        prototypes = self.compute_prototypes()
-        crop_logits, disease_logits = self.compute_probe_logits(probe_loader)
-        return KnowledgePayload(prototypes, crop_logits, disease_logits)
+        prototypes, known_disease_classes = self.compute_prototypes()
+        disease_logits = self.compute_probe_logits(probe_loader)
+        return KnowledgePayload(prototypes, disease_logits, known_disease_classes)
 
     # knowledge distillation towards a peer consensus (no peer data ever seen) 
     def distill(
         self,
         consensus_prototypes: Prototypes,
-        consensus_crop_logits: torch.Tensor,
         consensus_disease_logits: torch.Tensor,
+        disease_known_mask: torch.Tensor,
         probe_loader: DataLoader, # shared public probe dataset
         epochs: int,
         lr: float, # learning rate
@@ -213,12 +223,18 @@ class Node:
         kd_weight: float,
         temperature: float,
     ) -> dict[str, float]:
+        # crop head is never distilled across peers (see KnowledgePayload):
+        # under manual_node_crops every node is a single-crop specialist, so
+        # peer votes on the crop head are majority confidently-wrong rather
+        # than uninformed, and there's no per-peer mask that fixes that
+        # (unlike disease_known_mask below, "who knows this probe image's
+        # crop" varies per image, not per peer).
         self.model.train()
         optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
         total_steps = epochs * (len(probe_loader) + len(self.train_loader))
         scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=lr, total_steps=total_steps)
-        consensus_crop_logits = consensus_crop_logits.to(self.device)
         consensus_disease_logits = consensus_disease_logits.to(self.device)
+        disease_known_mask = disease_known_mask.to(self.device)
 
         kd_loss_sum, kd_batches = 0.0, 0
         sup_loss_sum, proto_loss_sum, sup_batches = 0.0, 0.0, 0
@@ -230,10 +246,11 @@ class Node:
                 end = start + images.shape[0]
 
                 # generate student logits
-                crop_logits, disease_logits = self.model(images)
+                _, disease_logits = self.model(images)
                 kd_loss = _soft_kd_loss(
-                    crop_logits, consensus_crop_logits[start:end], temperature
-                ) + _soft_kd_loss(disease_logits, consensus_disease_logits[start:end], temperature)
+                    disease_logits, consensus_disease_logits[start:end], temperature,
+                    class_mask=disease_known_mask,
+                )
 
                 optimizer.zero_grad()
                 (kd_weight * kd_loss).backward()
@@ -364,12 +381,34 @@ def _classification_loss(
 
 
 # compute kl divergence loss
-def _soft_kd_loss(student_logits: torch.Tensor, teacher_logits: torch.Tensor, temperature: float) -> torch.Tensor:
+def _soft_kd_loss(
+    student_logits: torch.Tensor,
+    teacher_logits: torch.Tensor,
+    temperature: float,
+    class_mask: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """`class_mask` (bool, shape (num_classes,)), when given, restricts the
+    softmax to classes at least one peer had local training examples for.
+    Both student and teacher are masked before softmax (not just the
+    teacher pushed to -inf) so the KL compares a like-for-like restricted
+    distribution instead of asserting false "definitely not this class"
+    evidence for classes nobody actually knows anything about.
+    """
+    if class_mask is not None:
+        if not bool(class_mask.any()):
+            return student_logits.sum() * 0.0
+        student_logits = student_logits[:, class_mask]
+        teacher_logits = teacher_logits[:, class_mask]
     student_log_probs = F.log_softmax(student_logits / temperature, dim=1) #(−∞,0)
     teacher_probs = F.softmax(teacher_logits / temperature, dim=1) #(0, 1)
     return F.kl_div(student_log_probs, teacher_probs, reduction="batchmean") * (temperature ** 2)
 
-# compute prototype alignment loss
+# compute prototype alignment loss. Under manual_node_crops the "crop"
+# term is already a no-op for every node: consensus_prototypes never
+# contains a ("crop", c) key for a node's own crop, since no peer ever
+# trains on it (aggregate_prototypes skips keys no peer contributed), and
+# a node's crop_labels are always its own crop — so this only ever
+# contributes via the "disease" key, on classes peers actually share.
 def _prototype_alignment_loss(
     feats: torch.Tensor,
     crop_labels: torch.Tensor,

@@ -9,7 +9,7 @@ labels, gradients, or weights.
 from __future__ import annotations
 from dataclasses import dataclass, field
 from torch.utils.data import DataLoader
-from src.federated.aggregation import aggregate_prototypes, aggregate_logits
+from src.federated.aggregation import aggregate_prototypes, aggregate_disease_logits
 from src.federated.node import KnowledgePayload, Node
 
 
@@ -100,14 +100,9 @@ class MeshSimulator:
                 trim_fraction=self.trim_fraction,
                 krum_neighbors=self.krum_neighbors,
             )
-            consensus_crop_logits = aggregate_logits(
-                [p.crop_logits for p in peer_payloads],
-                method=self.aggregation_method,
-                trim_fraction=self.trim_fraction,
-                krum_neighbors=self.krum_neighbors,
-            )
-            consensus_disease_logits = aggregate_logits(
+            consensus_disease_logits, disease_known_mask = aggregate_disease_logits(
                 [p.disease_logits for p in peer_payloads],
+                [p.known_disease_classes for p in peer_payloads],
                 method=self.aggregation_method,
                 trim_fraction=self.trim_fraction,
                 krum_neighbors=self.krum_neighbors,
@@ -115,8 +110,8 @@ class MeshSimulator:
 
             log.per_node_distill_loss[node.node_id] = node.distill(
                 consensus_prototypes,
-                consensus_crop_logits,
                 consensus_disease_logits,
+                disease_known_mask,
                 self.probe_loader,
                 epochs=distill_epochs,
                 lr=distill_lr,
