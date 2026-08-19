@@ -14,9 +14,9 @@
 
 - Do not modify `src/federated/node.py`, `src/federated/mesh.py`, `src/federated/aggregation.py`, `src/energy/tracker.py`, `src/data/plantvillage.py`, `src/models/factory.py`, `src/validation/node1_dataset.py`, `src/validation/train_mobilenet.py`, `src/validation/export_onnx.py`, or `src/validation/evaluate_onnx.py` — import and reuse their existing public functions/classes as-is.
 - Dataset build stays in-memory — filter `data/PlantVillage` sample indices at load time, no physical per-node copy.
-- Crop: Corn only, 4 classes: `healthy` (1,162), `Common_rust` (1,192), `Cercospora_leaf_spot_Gray_leaf_spot` (513), `Northern_Leaf_Blight` (985).
-- Node/disease assignment (fixed): `node_0`=`Common_rust`, `node_1`=`Cercospora_leaf_spot_Gray_leaf_spot`, `node_2`=`Northern_Leaf_Blight`, each plus a disjoint ~1/3 share of `healthy`.
-- Model: `mobilenet_v3_small` only. Compact label space: `crop_classes=["Corn"]`, `disease_classes=["healthy","Common_rust","Cercospora_leaf_spot_Gray_leaf_spot","Northern_Leaf_Blight"]`.
+- Crop: Corn only, 4 classes: `healthy` (1,162), `Common_rust` (1,192), `Cercospora_leaf_spot Gray_leaf_spot` (513), `Northern_Leaf_Blight` (985).
+- Node/disease assignment (fixed): `node_0`=`Common_rust`, `node_1`=`Cercospora_leaf_spot Gray_leaf_spot`, `node_2`=`Northern_Leaf_Blight`, each plus a disjoint ~1/3 share of `healthy`.
+- Model: `mobilenet_v3_small` only. Compact label space: `crop_classes=["Corn"]`, `disease_classes=["healthy","Common_rust","Cercospora_leaf_spot Gray_leaf_spot","Northern_Leaf_Blight"]`.
 - Stage 2 rounds never call `node.local_train()` on the knowledge-transfer nodes — `node.distill()` alone is the per-round update, continuing from the previous round's (or stage 1's) in-memory model. Nothing resets to a fresh/random model between rounds.
 - The local-only control arm's `node.local_train(epochs=training.distill_epochs_per_round, lr=training.distill_lr)` budget must match the knowledge-transfer arm's local-supervised phase budget round-for-round (Appendix A.1 fairness requirement).
 - All new config keys live under a new, additive `corn_mesh:` section in `config.yaml`; everything else (`data.*`, `training.*`, `federated.*`, `energy.*`) is read from existing sections unchanged.
@@ -61,7 +61,7 @@ corn_mesh:
   crop: "Corn"
   node_diseases:
     node_0: "Common_rust"
-    node_1: "Cercospora_leaf_spot_Gray_leaf_spot"
+    node_1: "Cercospora_leaf_spot Gray_leaf_spot"
     node_2: "Northern_Leaf_Blight"
   healthy_dedup_threshold: 5
   rounds: 2
@@ -86,7 +86,7 @@ def corn_scoped_config(tmp_path):
     class_counts = {
         "Corn___healthy": 12,
         "Corn___Common_rust": 6,
-        "Corn___Cercospora_leaf_spot_Gray_leaf_spot": 6,
+        "Corn___Cercospora_leaf_spot Gray_leaf_spot": 6,
         "Corn___Northern_Leaf_Blight": 6,
         "Tomato___healthy": 4,
     }
@@ -113,7 +113,7 @@ def corn_scoped_config(tmp_path):
                 "crop": "Corn",
                 "node_diseases": {
                     "node_0": "Common_rust",
-                    "node_1": "Cercospora_leaf_spot_Gray_leaf_spot",
+                    "node_1": "Cercospora_leaf_spot Gray_leaf_spot",
                     "node_2": "Northern_Leaf_Blight",
                 },
                 "healthy_dedup_threshold": 5,
@@ -215,13 +215,13 @@ from src.data.plantvillage import PlantVillageDataset
 CORN_DISEASE_ORDER = [
     "healthy",
     "Common_rust",
-    "Cercospora_leaf_spot_Gray_leaf_spot",
+    "Cercospora_leaf_spot Gray_leaf_spot",
     "Northern_Leaf_Blight",
 ]
 
 NODE_DISEASE_DEFAULT = {
     "node_0": "Common_rust",
-    "node_1": "Cercospora_leaf_spot_Gray_leaf_spot",
+    "node_1": "Cercospora_leaf_spot Gray_leaf_spot",
     "node_2": "Northern_Leaf_Blight",
 }
 
@@ -1405,7 +1405,7 @@ def test_build_knowledge_transfer_summary_has_appendix_a1_fields(corn_scoped_con
         assert set(summary["collaboration_gain_per_disease"][node_id].keys()) == {
             "healthy",
             "Common_rust",
-            "Cercospora_leaf_spot_Gray_leaf_spot",
+            "Cercospora_leaf_spot Gray_leaf_spot",
             "Northern_Leaf_Blight",
         }
 
@@ -1552,7 +1552,7 @@ def build_knowledge_transfer_summary(
         "data_split": {
             "strategy": "disjoint disease-label skew within one crop (Corn)",
             "strength": (
-                "complete disjoint — each node's 3 disease classes have zero overlap with its "
+                "complete disjoint — each node has exactly one assigned disease class, with zero overlap with its "
                 "peers'; only the shared healthy class is split (dedup-aware, ~1/3 each, no image "
                 "duplicated across nodes)"
             ),
@@ -1605,7 +1605,7 @@ def build_knowledge_transfer_summary(
 
 NODE_DISEASE_DEFAULT_FALLBACK = {
     "node_0": "Common_rust",
-    "node_1": "Cercospora_leaf_spot_Gray_leaf_spot",
+    "node_1": "Cercospora_leaf_spot Gray_leaf_spot",
     "node_2": "Northern_Leaf_Blight",
 }
 

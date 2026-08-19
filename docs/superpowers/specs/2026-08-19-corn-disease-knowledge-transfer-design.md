@@ -26,17 +26,17 @@ et al., Q. Li et al.), rather than a per-crop-per-node split — see
 
 - **Crop:** Corn only (`data/PlantVillage/Corn___*`), all 4 of its classes:
   `healthy` (1,162), `Common_rust` (1,192),
-  `Cercospora_leaf_spot_Gray_leaf_spot` (513), `Northern_Leaf_Blight` (985).
+  `Cercospora_leaf_spot Gray_leaf_spot` (513), `Northern_Leaf_Blight` (985).
 - **Node/disease assignment** (fixed, not config-driven round-robin):
 
   | Node | Disease (all images) | Healthy share |
   |---|---|---|
   | `node_0` | `Common_rust` (1,192) | disjoint 1/3 of the 1,162 `healthy` images |
-  | `node_1` | `Cercospora_leaf_spot_Gray_leaf_spot` (513) | disjoint 1/3 of `healthy` |
+  | `node_1` | `Cercospora_leaf_spot Gray_leaf_spot` (513) | disjoint 1/3 of `healthy` |
   | `node_2` | `Northern_Leaf_Blight` (985) | disjoint 1/3 of `healthy` |
 
   `node_1`/`node_2`'s disease pair is deliberately the exact confusion this
-  session's own real run already documented: `Cercospora_leaf_spot_Gray_leaf_spot`
+  session's own real run already documented: `Cercospora_leaf_spot Gray_leaf_spot`
   misclassified as `Northern_Leaf_Blight` 13-29 times when trained together
   on one node (`docs/node1_validation_tuning_and_results.md`). Splitting them
   onto separate nodes and testing whether knowledge transfer helps either
@@ -173,7 +173,7 @@ New module: `src/validation/corn_mesh_dataset.py`.
    `manual_node_crops`-scoped.
 3. **Compact Corn-only label remap:** build a small `CornLabelMap`
    (`crop_classes=["Corn"]`, `disease_classes=["healthy", "Common_rust",
-   "Cercospora_leaf_spot_Gray_leaf_spot", "Northern_Leaf_Blight"]`, fixed
+   "Cercospora_leaf_spot Gray_leaf_spot", "Northern_Leaf_Blight"]`, fixed
    order) and a `name_to_compact_disease_idx` dict. This is necessary
    because the full dataset's `disease_idx` values span all ~22
    PlantVillage-wide disease names — training a 4-class head against those
@@ -347,8 +347,8 @@ outputs/validation/corn_mesh/knowledge_transfer/
   "node_count": 3,
   "data_split": {
     "strategy": "disjoint disease-label skew within one crop (Corn)",
-    "strength": "complete disjoint — each node's 3 disease classes have zero overlap with its peers'; only the shared healthy class is split (dedup-aware, ~1/3 each, no image duplicated across nodes)",
-    "node_diseases": {"node_0": "Common_rust", "node_1": "Cercospora_leaf_spot_Gray_leaf_spot", "node_2": "Northern_Leaf_Blight"}
+    "strength": "complete disjoint — each node has exactly one assigned disease class, with zero overlap with its peers'; only the shared healthy class is split (dedup-aware, ~1/3 each, no image duplicated across nodes)",
+    "node_diseases": {"node_0": "Common_rust", "node_1": "Cercospora_leaf_spot Gray_leaf_spot", "node_2": "Northern_Leaf_Blight"}
   },
   "local_only_budget": {"epochs_per_round": 0, "lr": 0.0, "rounds": 2, "note": "training.distill_epochs_per_round/distill_lr, no exchange, aligned to the collective arm's local-supervised phase"},
   "collective_budget": {"distill_epochs_per_round": 0, "lr": 0.0, "kd_weight": 0.0, "proto_weight": 0.0, "rounds": 2},
@@ -368,7 +368,7 @@ outputs/validation/corn_mesh/knowledge_transfer/
   "collaboration_gain_per_disease": {
     "node_0": {
       "Common_rust": {"round_0_accuracy": 0.0, "round_2_collective_accuracy": 0.0, "round_2_local_only_control_accuracy": 0.0, "gain_vs_round0": 0.0, "gain_vs_local_only_control": 0.0},
-      "Cercospora_leaf_spot_Gray_leaf_spot": {"round_0_accuracy": 0.0, "round_2_collective_accuracy": 0.0, "round_2_local_only_control_accuracy": 0.0, "gain_vs_round0": 0.0, "gain_vs_local_only_control": 0.0},
+      "Cercospora_leaf_spot Gray_leaf_spot": {"round_0_accuracy": 0.0, "round_2_collective_accuracy": 0.0, "round_2_local_only_control_accuracy": 0.0, "gain_vs_round0": 0.0, "gain_vs_local_only_control": 0.0},
       "Northern_Leaf_Blight": {"round_0_accuracy": 0.0, "round_2_collective_accuracy": 0.0, "round_2_local_only_control_accuracy": 0.0, "gain_vs_round0": 0.0, "gain_vs_local_only_control": 0.0},
       "healthy": {"round_0_accuracy": 0.0, "round_2_collective_accuracy": 0.0, "round_2_local_only_control_accuracy": 0.0, "gain_vs_round0": 0.0, "gain_vs_local_only_control": 0.0}
     }
@@ -397,7 +397,7 @@ corn_mesh:
   crop: "Corn"
   node_diseases:
     node_0: "Common_rust"
-    node_1: "Cercospora_leaf_spot_Gray_leaf_spot"
+    node_1: "Cercospora_leaf_spot Gray_leaf_spot"
     node_2: "Northern_Leaf_Blight"
   healthy_dedup_threshold: 5
   rounds: 2
