@@ -15,6 +15,7 @@ from src.validation.corn_mesh_dataset import CornDiseaseView, prepare_corn_mesh_
 from src.validation.run_knowledge_transfer import run_kt_round
 
 
+
 def _build_kt_nodes(data, batch_size=4):
     nodes = {}
     for node_id in ("node_0", "node_1", "node_2"):
@@ -123,3 +124,77 @@ def test_run_kt_round_single_node_has_no_peers_and_does_not_crash(corn_scoped_co
     # node_0 has no peers this round, so it is skipped rather than crashing on
     # an empty peer_payloads list (mirrors mesh.py's MeshSimulator.run_round).
     assert "node_0" not in result["per_node_distill_loss"]
+
+
+import json
+
+from src.energy.tracker import CommunicationCostEstimator, ComputeEnergyTracker
+from src.validation.run_knowledge_transfer import export_and_evaluate, run_round_with_io
+
+
+def test_export_and_evaluate_writes_report_with_local_and_cross_node(corn_scoped_config, tmp_path):
+    cfg, root = corn_scoped_config
+    data = prepare_corn_mesh_data(cfg)
+    nodes = _build_kt_nodes(data)
+    node = nodes["node_0"]
+    local_test_idx = data.per_node["node_0"]["test_idx"]
+    cross_node_idx = [i for n in data.per_node.values() for i in n["test_idx"]]
+    node_dir = tmp_path / "node_0"
+
+    report = export_and_evaluate(
+        node, data.label_map, data.image_size, data.eval_base, local_test_idx, cross_node_idx, node_dir, keep_onnx=True
+    )
+
+    assert set(report.keys()) == {"local", "cross_node"}
+    assert (node_dir / "model.onnx").exists()
+    assert (node_dir / "manifest.json").exists()
+    on_disk = json.loads((node_dir / "report.json").read_text())
+    assert on_disk == report
+
+
+def test_export_and_evaluate_discards_onnx_for_control_arm(corn_scoped_config, tmp_path):
+    cfg, root = corn_scoped_config
+    data = prepare_corn_mesh_data(cfg)
+    control_nodes = _build_kt_nodes(data)
+    node = control_nodes["node_0"]
+    local_test_idx = data.per_node["node_0"]["test_idx"]
+    cross_node_idx = [i for n in data.per_node.values() for i in n["test_idx"]]
+    node_dir = tmp_path / "node_0_control"
+
+    export_and_evaluate(
+        node, data.label_map, data.image_size, data.eval_base, local_test_idx, cross_node_idx, node_dir, keep_onnx=False
+    )
+
+    assert (node_dir / "checkpoint.pt").exists()
+    assert (node_dir / "report.json").exists()
+    assert not (node_dir / "model.onnx").exists()
+    assert not (node_dir / "manifest.json").exists()
+
+
+def test_run_round_with_io_writes_round_summary(corn_scoped_config, tmp_path):
+    cfg, root = corn_scoped_config
+    data = prepare_corn_mesh_data(cfg)
+    nodes = _build_kt_nodes(data)
+    control_nodes = _build_kt_nodes(data)
+    probe_loader = DataLoader(make_subset(data.eval_base, data.probe_idx), batch_size=4, shuffle=False)
+    cross_node_idx = [i for n in data.per_node.values() for i in n["test_idx"]]
+    tracker = ComputeEnergyTracker(enabled=False, output_dir=tmp_path / "energy", fallback_power_watts=15.0)
+    comm_estimator = CommunicationCostEstimator(
+        radio_energy_j_per_byte={"wifi": 0.00003}, grid_carbon_intensity_gco2_per_kwh=125
+    )
+    round_dir = tmp_path / "round_1"
+
+    result = run_round_with_io(
+        1, nodes, control_nodes, probe_loader, data, cross_node_idx, cfg, tracker, comm_estimator, round_dir
+    )
+
+    summary = json.loads((round_dir / "round_summary.json").read_text())
+    assert summary["round"] == 1
+    assert set(summary["per_node_scores"].keys()) == {"node_0", "node_1", "node_2"}
+    for node_id, scores in summary["per_node_scores"].items():
+        assert set(scores.keys()) == {"collective", "local_only_control"}
+        assert "local" in scores["collective"] and "cross_node" in scores["collective"]
+    assert (round_dir / "node_0" / "model.onnx").exists()
+    assert (round_dir / "node_0" / "local_only_control" / "checkpoint.pt").exists()
+    assert not (round_dir / "node_0" / "local_only_control" / "model.onnx").exists()
+    assert result == summary
