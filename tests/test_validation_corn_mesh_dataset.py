@@ -3,8 +3,11 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from src.config import Config
 from src.data.plantvillage import PlantVillageDataset
 from src.validation.corn_mesh_dataset import (
     CORN_DISEASE_ORDER,
@@ -128,6 +131,76 @@ def test_prepare_corn_mesh_data_produces_disjoint_per_node_splits_and_probe_set(
     assert set(all_train_test).isdisjoint(set(data.probe_idx))
     assert len(data.probe_idx) > 0
     assert data.label_map.crop_classes == ["Corn"]
+
+
+def test_prepare_corn_mesh_data_raises_on_disease_name_not_in_dataset(corn_scoped_config):
+    """A disease name that doesn't match any name in
+    dataset.labels.disease_classes at all (e.g. a typo, or the wrong
+    underscore/space separator vs. the real PlantVillage folder naming)
+    must fail loudly rather than silently producing zero indices.
+    """
+    cfg, root = corn_scoped_config
+    cfg_dict = cfg.as_dict()
+    cfg_dict["corn_mesh"]["node_diseases"]["node_1"] = "Cercospora_leaf_spot_Gray_leaf_spot"
+    bad_cfg = Config(cfg_dict)
+
+    with pytest.raises(ValueError, match="node_1"):
+        prepare_corn_mesh_data(bad_cfg)
+
+
+def test_prepare_corn_mesh_data_raises_on_empty_disease_indices(tmp_path):
+    """A disease name that IS a valid, real disease_classes entry
+    dataset-wide (so the "not present at all" check alone wouldn't catch
+    it) but has zero matching samples under Corn specifically (it
+    belongs only to another crop) must still fail loudly rather than
+    silently leaving that node with only its healthy share.
+    """
+    import numpy as np
+    from PIL import Image
+
+    root = tmp_path / "PlantVillage"
+    rng = np.random.RandomState(0)
+    class_counts = {
+        "Corn___healthy": 12,
+        "Corn___Common_rust": 6,
+        "Corn___Cercospora_leaf_spot Gray_leaf_spot": 6,
+        "Corn___Northern_Leaf_Blight": 6,
+        "Tomato___Bacterial_spot": 4,  # real disease name, but not under Corn
+    }
+    for cls, count in class_counts.items():
+        cls_dir = root / cls
+        cls_dir.mkdir(parents=True)
+        for i in range(count):
+            arr = rng.randint(0, 255, size=(32, 32, 3), dtype=np.uint8)
+            Image.fromarray(arr).save(cls_dir / f"img_{i}.jpg")
+
+    cfg = Config(
+        {
+            "data": {
+                "root": str(root),
+                "image_size": 32,
+                "seed": 42,
+                "test_fraction": 0.25,
+                "probe_set_fraction": 0.1,
+                "probe_set_large_class_threshold": 200,
+                "probe_set_min_samples_small_class": 1,
+                "probe_set_max_fraction_small_class": 0.5,
+            },
+            "corn_mesh": {
+                "crop": "Corn",
+                "node_diseases": {
+                    "node_0": "Common_rust",
+                    "node_1": "Bacterial_spot",  # valid dataset-wide, zero for Corn
+                    "node_2": "Northern_Leaf_Blight",
+                },
+                "healthy_dedup_threshold": 5,
+                "rounds": 2,
+            },
+        }
+    )
+
+    with pytest.raises(ValueError, match="node_1"):
+        prepare_corn_mesh_data(cfg)
 
 
 def test_prepare_corn_mesh_data_each_node_only_has_its_own_disease_plus_healthy(corn_scoped_config):

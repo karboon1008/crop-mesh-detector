@@ -45,14 +45,37 @@ def run_kt_round(
     kd_weight: float,
     temperature: float,
     tracker: ComputeEnergyTracker | None = None,
+    round_idx: int | str = "na",
 ) -> dict:
     """One knowledge-transfer round: `nodes` distill toward their peers'
     consensus (no separate local_train call); `control_nodes` run the
     same-budget local_train with no exchange at all, for the Appendix
     A.1 fairness-aligned comparison. Both dicts are mutated in place
     (each Node's .model is updated); nothing is reloaded from disk here.
+
+    `round_idx` is folded into each tracked block's label (e.g.
+    f"{node_id}_kt_compute_knowledge_round_{round_idx}") purely so
+    run_round_with_io can later filter tracker.log down to just this
+    round's blocks when building the per-node energy breakdown --
+    tracker.log is an append-only history shared across every round.
+
+    compute_knowledge is still called for ALL nodes upfront (required
+    for the peer-consensus math -- each node's distill step needs its
+    peers' already-computed payloads), but each node's own call is
+    wrapped in its own tracked block, separate from that node's
+    `distill` block, so the two can be summed together into one
+    per-node energy figure without misattributing one node's compute to
+    another.
     """
-    payloads = {node_id: node.compute_knowledge(probe_loader) for node_id, node in nodes.items()}
+    payloads = {}
+    for node_id, node in nodes.items():
+        ctx = (
+            tracker.track(f"{node_id}_kt_compute_knowledge_round_{round_idx}")
+            if tracker is not None
+            else nullcontext()
+        )
+        with ctx:
+            payloads[node_id] = node.compute_knowledge(probe_loader)
     per_node_bytes_sent = {node_id: payload.size_bytes() for node_id, payload in payloads.items()}
     total_bytes_exchanged = sum(per_node_bytes_sent.values()) * max(0, len(nodes) - 1)
 
@@ -79,7 +102,9 @@ def run_kt_round(
             trim_fraction=trim_fraction,
             krum_neighbors=krum_neighbors,
         )
-        ctx = tracker.track(f"{node_id}_kt_distill") if tracker is not None else nullcontext()
+        ctx = (
+            tracker.track(f"{node_id}_kt_distill_round_{round_idx}") if tracker is not None else nullcontext()
+        )
         with ctx:
             per_node_distill_loss[node_id] = node.distill(
                 consensus_prototypes,
@@ -94,7 +119,11 @@ def run_kt_round(
             )
 
     for node_id, node in control_nodes.items():
-        ctx = tracker.track(f"{node_id}_local_only_control") if tracker is not None else nullcontext()
+        ctx = (
+            tracker.track(f"{node_id}_local_only_control_round_{round_idx}")
+            if tracker is not None
+            else nullcontext()
+        )
         with ctx:
             node.local_train(epochs=distill_epochs, lr=distill_lr)
 
@@ -149,6 +178,47 @@ def export_and_evaluate(
     return combined
 
 
+def _sum_tracked_blocks(records: list[dict]) -> dict:
+    """Collapses a list of ComputeEnergyTracker.log records (each has
+    duration_s/energy_kwh/method) into one summed {duration_s,
+    energy_kwh, method} dict, matching the per-node shape the spec's
+    round_summary.json calls for.
+    """
+    if not records:
+        return {"duration_s": 0.0, "energy_kwh": 0.0, "method": None}
+    methods = {r.get("method") for r in records}
+    return {
+        "duration_s": sum(r.get("duration_s", 0.0) for r in records),
+        "energy_kwh": sum(r.get("energy_kwh", 0.0) for r in records),
+        "method": next(iter(methods)) if len(methods) == 1 else "mixed",
+    }
+
+
+def _build_per_node_energy_breakdown(
+    tracker_log: list[dict], node_ids, round_idx: int | str
+) -> tuple[dict[str, dict], dict[str, dict]]:
+    """Filters tracker.log (an append-only history across every round
+    run so far) down to just this round's blocks, using the
+    f"..._round_{round_idx}" label suffix run_kt_round tags each block
+    with -- otherwise a later round's summary would double-count
+    earlier rounds' energy under "per_node".
+    """
+    per_node: dict[str, dict] = {}
+    per_node_local_only_control: dict[str, dict] = {}
+    for node_id in node_ids:
+        kt_labels = {
+            f"{node_id}_kt_compute_knowledge_round_{round_idx}",
+            f"{node_id}_kt_distill_round_{round_idx}",
+        }
+        per_node[node_id] = _sum_tracked_blocks([r for r in tracker_log if r.get("label") in kt_labels])
+
+        control_label = f"{node_id}_local_only_control_round_{round_idx}"
+        per_node_local_only_control[node_id] = _sum_tracked_blocks(
+            [r for r in tracker_log if r.get("label") == control_label]
+        )
+    return per_node, per_node_local_only_control
+
+
 def run_round_with_io(
     round_idx: int,
     nodes: dict[str, Node],
@@ -176,6 +246,7 @@ def run_round_with_io(
         kd_weight=cfg.get("training.kd_weight", 0.5),
         temperature=cfg.get("training.kd_temperature", 2.0),
         tracker=tracker,
+        round_idx=round_idx,
     )
 
     per_node_scores: dict[str, dict] = {}
@@ -205,6 +276,14 @@ def run_round_with_io(
 
     comm_estimate = comm_estimator.estimate_all_radios(kt_result["total_bytes_exchanged"])
     energy_summary = tracker.summary()
+    per_node_energy, per_node_local_only_control_energy = _build_per_node_energy_breakdown(
+        tracker.log, nodes.keys(), round_idx
+    )
+    energy_summary = {
+        **energy_summary,
+        "per_node": per_node_energy,
+        "per_node_local_only_control": per_node_local_only_control_energy,
+    }
 
     summary = {
         "round": round_idx,
@@ -281,7 +360,7 @@ def _per_disease_gain_table(
 
 NODE_DISEASE_DEFAULT_FALLBACK = {
     "node_0": "Common_rust",
-    "node_1": "Cercospora_leaf_spot_Gray_leaf_spot",
+    "node_1": "Cercospora_leaf_spot Gray_leaf_spot",
     "node_2": "Northern_Leaf_Blight",
 }
 
@@ -397,9 +476,11 @@ def main() -> None:
         node_dir = node_output_dir(stage1_dir, node_id)
         # checkpoint.pt is read by _load_node_from_checkpoint;
         # model.onnx/manifest.json are read by evaluate_round0_baseline
-        # (no re-export in stage 2) -- all three must exist, i.e. stage 1's
-        # train AND export stages both ran for this node.
-        for required_name in ("checkpoint.pt", "model.onnx", "manifest.json"):
+        # (no re-export in stage 2); classes.json is read below to verify
+        # stage 1's persisted split against this run's split -- all four
+        # must exist, i.e. stage 1's train AND export stages both ran for
+        # this node.
+        for required_name in ("checkpoint.pt", "model.onnx", "manifest.json", "classes.json"):
             required_path = node_dir / required_name
             if not required_path.exists():
                 raise FileNotFoundError(
@@ -409,6 +490,30 @@ def main() -> None:
 
     data = prepare_corn_mesh_data(cfg)
     cross_node_idx = [i for n in data.per_node.values() for i in n["test_idx"]]
+
+    # Stage 1 (run_corn_pipeline.py's run_train_stage) persists each node's
+    # EXACT train_idx/test_idx into that node's classes.json. Stage 2 here
+    # calls prepare_corn_mesh_data(cfg) again and just trusts it reproduces
+    # the identical split deterministically -- but if data.seed,
+    # data.test_fraction, data.probe_set_*, corn_mesh.healthy_dedup_threshold,
+    # or the contents of data/PlantVillage differ between the two runs,
+    # stage 2 would otherwise silently evaluate stage-1 checkpoints on
+    # images they were trained on (a train/test leak) with no error and no
+    # visible symptom besides implausibly high accuracy. Fail loudly instead.
+    for node_id in ("node_0", "node_1", "node_2"):
+        node_dir = node_output_dir(stage1_dir, node_id)
+        classes_path = node_dir / "classes.json"
+        stage1_classes = json.loads(classes_path.read_text())
+        if stage1_classes.get("train_idx") != data.per_node[node_id]["train_idx"] or stage1_classes.get(
+            "test_idx"
+        ) != data.per_node[node_id]["test_idx"]:
+            raise ValueError(
+                f"{node_id}: the train/test split persisted in {classes_path} by stage 1 "
+                f"(run_corn_pipeline.py) does not match the split prepare_corn_mesh_data(cfg) "
+                f"produces now. Stage 1 and stage 2 must be run against the same config and the "
+                f"same data/PlantVillage contents -- otherwise stage 2 would silently evaluate "
+                f"this node's checkpoint on images it was trained on."
+            )
 
     print("=== round 0 baseline (stage 1 checkpoints, cross-node eval) ===")
     round0_baseline = evaluate_round0_baseline(data, stage1_dir, cross_node_idx)

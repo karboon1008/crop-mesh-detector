@@ -113,7 +113,7 @@ def corn_scoped_config(tmp_path):
     class_counts = {
         "Corn___healthy": 12,
         "Corn___Common_rust": 6,
-        "Corn___Cercospora_leaf_spot_Gray_leaf_spot": 6,
+        "Corn___Cercospora_leaf_spot Gray_leaf_spot": 6,
         "Corn___Northern_Leaf_Blight": 6,
         "Tomato___healthy": 4,
     }
@@ -140,7 +140,7 @@ def corn_scoped_config(tmp_path):
                 "crop": "Corn",
                 "node_diseases": {
                     "node_0": "Common_rust",
-                    "node_1": "Cercospora_leaf_spot_Gray_leaf_spot",
+                    "node_1": "Cercospora_leaf_spot Gray_leaf_spot",
                     "node_2": "Northern_Leaf_Blight",
                 },
                 "healthy_dedup_threshold": 5,

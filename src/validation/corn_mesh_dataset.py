@@ -24,13 +24,13 @@ from src.validation.node1_dataset import (
 CORN_DISEASE_ORDER = [
     "healthy",
     "Common_rust",
-    "Cercospora_leaf_spot_Gray_leaf_spot",
+    "Cercospora_leaf_spot Gray_leaf_spot",
     "Northern_Leaf_Blight",
 ]
 
 NODE_DISEASE_DEFAULT = {
     "node_0": "Common_rust",
-    "node_1": "Cercospora_leaf_spot_Gray_leaf_spot",
+    "node_1": "Cercospora_leaf_spot Gray_leaf_spot",
     "node_2": "Northern_Leaf_Blight",
 }
 
@@ -171,7 +171,21 @@ def prepare_corn_mesh_data(cfg: Config) -> CornMeshData:
     per_node: dict[str, dict[str, list[int]]] = {}
     for node_id, disease_name in node_diseases.items():
         node_idx = int(str(node_id).rsplit("_", 1)[-1])
+        if disease_name not in dataset.labels.disease_classes:
+            raise ValueError(
+                f"corn_mesh.node_diseases[{node_id!r}] = {disease_name!r} does not match any "
+                f"disease name in dataset.labels.disease_classes "
+                f"({dataset.labels.disease_classes!r}) — check for a typo/wrong separator "
+                f"(e.g. underscore vs. space) against the real PlantVillage folder name."
+            )
         disease_idx_list = get_corn_disease_indices(dataset, remaining_corn_idx, disease_name)
+        if not disease_idx_list:
+            raise ValueError(
+                f"corn_mesh.node_diseases[{node_id!r}] = {disease_name!r} produced zero matching "
+                f"samples for node {node_id!r} — this node would train on nothing but its healthy "
+                f"share. Check the disease name against the real PlantVillage folder naming "
+                f"convention (e.g. underscore vs. space)."
+            )
         combined = disease_idx_list + healthy_shares[node_idx]
         hashes = compute_image_hashes(dataset, combined)
         train_idx, test_idx = dedup_aware_split(

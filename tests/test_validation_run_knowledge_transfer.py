@@ -96,7 +96,8 @@ def test_run_kt_round_tracks_energy_per_node_when_tracker_given(corn_scoped_conf
         tracker=tracker,
     )
 
-    assert tracker.summary()["num_tracked_blocks"] == 6  # 3 KT nodes + 3 control nodes
+    # 3 nodes x (compute_knowledge + distill) + 3 control nodes x local_train == 9
+    assert tracker.summary()["num_tracked_blocks"] == 9
 
 
 def test_run_kt_round_single_node_has_no_peers_and_does_not_crash(corn_scoped_config):
@@ -197,6 +198,19 @@ def test_run_round_with_io_writes_round_summary(corn_scoped_config, tmp_path):
     assert (round_dir / "node_0" / "model.onnx").exists()
     assert (round_dir / "node_0" / "local_only_control" / "checkpoint.pt").exists()
     assert not (round_dir / "node_0" / "local_only_control" / "model.onnx").exists()
+
+    # per-node/per-arm energy breakdown must be populated for all 3 nodes,
+    # and each entry must reflect real tracked-block data (duration_s > 0
+    # -- proxy_wall_power always measures nonzero wall-clock time), not an
+    # empty stub from a label filter that matched nothing.
+    energy = summary["energy"]
+    assert set(energy["per_node"].keys()) == {"node_0", "node_1", "node_2"}
+    assert set(energy["per_node_local_only_control"].keys()) == {"node_0", "node_1", "node_2"}
+    for node_id in ("node_0", "node_1", "node_2"):
+        assert energy["per_node"][node_id]["duration_s"] > 0
+        assert energy["per_node"][node_id]["method"] == "proxy_wall_power"
+        assert energy["per_node_local_only_control"][node_id]["duration_s"] > 0
+        assert energy["per_node_local_only_control"][node_id]["method"] == "proxy_wall_power"
     assert result == summary
 
 
@@ -285,7 +299,7 @@ def test_build_knowledge_transfer_summary_has_appendix_a1_fields(corn_scoped_con
         assert set(summary["collaboration_gain_per_disease"][node_id].keys()) == {
             "healthy",
             "Common_rust",
-            "Cercospora_leaf_spot_Gray_leaf_spot",
+            "Cercospora_leaf_spot Gray_leaf_spot",
             "Northern_Leaf_Blight",
         }
 
@@ -342,6 +356,51 @@ def test_main_raises_clear_error_naming_missing_export_when_stage1_partial(
         main()
 
 
+def test_main_raises_clear_error_when_stage1_split_does_not_match_stage2_recompute(
+    tmp_path, corn_scoped_config, monkeypatch
+):
+    """If stage 1's persisted classes.json (train_idx/test_idx) doesn't
+    match what prepare_corn_mesh_data(cfg) recomputes in stage 2 -- e.g.
+    because data.seed/test_fraction/etc. or data/PlantVillage's contents
+    changed between the two runs -- main() must fail loudly rather than
+    silently evaluating a node's stage-1 checkpoint on images it was
+    trained on (a train/test leak with no visible symptom besides
+    implausibly high accuracy).
+    """
+    cfg, root = corn_scoped_config
+    config_path = tmp_path / "config.yaml"
+    import yaml
+
+    config_path.write_text(yaml.safe_dump(cfg.as_dict()))
+    stage1_dir = tmp_path / "outputs" / "validation" / "corn_mesh"
+    data = prepare_corn_mesh_data(cfg)
+    _train_stage1_checkpoints(data, stage1_dir)
+
+    # Tamper with node_1's persisted split so it disagrees with what
+    # prepare_corn_mesh_data(cfg) will recompute inside main().
+    node_1_dir = node_output_dir(stage1_dir, "node_1")
+    classes_path = node_1_dir / "classes.json"
+    classes = json.loads(classes_path.read_text())
+    classes["test_idx"] = classes["test_idx"] + [999999]  # deliberately wrong
+    classes_path.write_text(json.dumps(classes))
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_knowledge_transfer",
+            "--config",
+            str(config_path),
+            "--output-dir",
+            str(stage1_dir),
+            "--rounds",
+            "1",
+        ],
+    )
+
+    with pytest.raises(ValueError, match="node_1"):
+        main()
+
+
 def test_main_runs_end_to_end(tmp_path, corn_scoped_config, monkeypatch):
     cfg, root = corn_scoped_config
     config_path = tmp_path / "config.yaml"
@@ -391,7 +450,7 @@ def test_main_runs_end_to_end(tmp_path, corn_scoped_config, monkeypatch):
     expected_diseases = {
         "healthy",
         "Common_rust",
-        "Cercospora_leaf_spot_Gray_leaf_spot",
+        "Cercospora_leaf_spot Gray_leaf_spot",
         "Northern_Leaf_Blight",
     }
     for node_id in ("node_0", "node_1", "node_2"):
