@@ -12,6 +12,9 @@ from src.validation.tomato_mesh_dataset import (
     _items_from_paths,
     build_tomato_label_map,
     build_tomato_train_eval_datasets,
+    capped_dedup_split,
+    compute_merged_image_hashes,
+    enforce_max_group_size,
     load_plantvillage_tomato_items,
 )
 
@@ -98,3 +101,51 @@ def test_items_from_paths_maps_canonical_name_to_index():
     items = _items_from_paths(pairs, "plantdoc", label_map)
     assert items[0].canonical_disease_idx == label_map.name_to_disease_idx["healthy"]
     assert items[1].source == "plantdoc"
+
+
+def test_compute_merged_image_hashes_reads_each_item_path(tmp_path):
+    p0, p1 = tmp_path / "a.jpg", tmp_path / "b.jpg"
+    _write_image(p0)
+    _write_image(p1)
+    items = [
+        TomatoRawItem(source="plantvillage", path=str(p0), canonical_disease_idx=0),
+        TomatoRawItem(source="plantdoc", path=str(p1), canonical_disease_idx=0),
+    ]
+    hashes = compute_merged_image_hashes(items, [0, 1])
+    assert set(hashes.keys()) == {0, 1}
+    assert all(isinstance(h, int) for h in hashes.values())
+
+
+def test_enforce_max_group_size_breaks_up_oversized_group():
+    # 5 items, all in canonical class 0, all hashed into ONE group by the
+    # caller (hand-built, mirrors test_validation_node1_dataset.py's style).
+    items = [TomatoRawItem(source="x", path=f"/{i}.jpg", canonical_disease_idx=0) for i in range(5)]
+    indices = [0, 1, 2, 3, 4]
+    groups = {i: 0 for i in indices}  # one big group, id=0
+
+    fixed = enforce_max_group_size(indices, groups, items, max_group_size=2, max_group_fraction_of_class=1.0)
+    # group of 5 > cap of 2 -> broken into singletons
+    assert len({fixed[i] for i in indices}) == 5
+    for i in indices:
+        assert fixed[i] == i
+
+
+def test_enforce_max_group_size_leaves_small_groups_alone():
+    items = [TomatoRawItem(source="x", path=f"/{i}.jpg", canonical_disease_idx=0) for i in range(3)]
+    indices = [0, 1, 2]
+    groups = {0: 0, 1: 0, 2: 2}  # group {0,1} size 2, group {2} size 1
+
+    fixed = enforce_max_group_size(indices, groups, items, max_group_size=10, max_group_fraction_of_class=1.0)
+    assert fixed == groups
+
+
+def test_capped_dedup_split_partitions_all_indices():
+    items = [TomatoRawItem(source="x", path=f"/{i}.jpg", canonical_disease_idx=0) for i in range(6)]
+    indices = list(range(6))
+    hashes = {0: 0b0000, 1: 0b0000, 2: 0b1111, 3: 0b1111, 4: 0b0101, 5: 0b0110}
+
+    train_idx, test_idx = capped_dedup_split(
+        indices, hashes, items, test_fraction=0.5, seed=1, threshold=1, max_group_size=10
+    )
+    assert sorted(train_idx + test_idx) == indices
+    assert set(train_idx).isdisjoint(test_idx)

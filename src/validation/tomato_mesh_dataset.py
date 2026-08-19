@@ -16,6 +16,7 @@ dataset does for corn_mesh_dataset.py.
 
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass
 from types import SimpleNamespace
 
@@ -24,6 +25,8 @@ from torch.utils.data import Dataset
 from torchvision import transforms
 
 from src.data.plantvillage import IMAGENET_MEAN, IMAGENET_STD, load_full_dataset
+from src.validation.hashing import average_hash
+from src.validation.node1_dataset import group_duplicates
 
 TOMATO_DISEASE_ORDER = [
     "Bacterial_spot",
@@ -149,3 +152,80 @@ def _items_from_paths(
         TomatoRawItem(source=source, path=path, canonical_disease_idx=label_map.name_to_disease_idx[canonical_name])
         for path, canonical_name in pairs
     ]
+
+
+def compute_merged_image_hashes(items: list[TomatoRawItem], indices: list[int]) -> dict[int, int]:
+    hashes: dict[int, int] = {}
+    for idx in indices:
+        with Image.open(items[idx].path) as img:
+            hashes[idx] = average_hash(img.convert("RGB"))
+    return hashes
+
+
+def enforce_max_group_size(
+    indices: list[int],
+    groups: dict[int, int],
+    items: list[TomatoRawItem],
+    max_group_size: int,
+    max_group_fraction_of_class: float = 0.05,
+) -> dict[int, int]:
+    """Any duplicate-group larger than min(max_group_size, fraction * that
+    group's dominant class's pooled count) is broken into singleton
+    groups -- this is the fix for the exact failure mode that let 97% of
+    node_1's Soybean class collapse into one "duplicate" group
+    (docs/node1_validation_tuning_and_results.md).
+    """
+    class_totals: dict[int, int] = {}
+    for idx in indices:
+        cls = items[idx].canonical_disease_idx
+        class_totals[cls] = class_totals.get(cls, 0) + 1
+
+    members_by_group: dict[int, list[int]] = {}
+    for idx in indices:
+        members_by_group.setdefault(groups[idx], []).append(idx)
+
+    fixed = dict(groups)
+    for members in members_by_group.values():
+        dominant_cls = items[members[0]].canonical_disease_idx
+        cap = min(max_group_size, max(1, int(class_totals[dominant_cls] * max_group_fraction_of_class)))
+        if len(members) > cap:
+            for member in members:
+                fixed[member] = member
+    return fixed
+
+
+def capped_dedup_split(
+    indices: list[int],
+    hashes: dict[int, int],
+    items: list[TomatoRawItem],
+    test_fraction: float,
+    seed: int,
+    threshold: int,
+    max_group_size: int,
+) -> tuple[list[int], list[int]]:
+    """Same greedy-fill algorithm as node1_dataset.dedup_aware_split, plus
+    the max-group-size cap above. Reimplemented (not calling
+    dedup_aware_split directly) because that function recomputes grouping
+    internally and has no cap parameter to inject.
+    """
+    groups = group_duplicates(indices, hashes, threshold)
+    groups = enforce_max_group_size(indices, groups, items, max_group_size)
+
+    group_members: dict[int, list[int]] = {}
+    for idx in indices:
+        group_members.setdefault(groups[idx], []).append(idx)
+
+    group_ids = list(group_members.keys())
+    rng = random.Random(seed)
+    rng.shuffle(group_ids)
+
+    n_test_target = max(1, int(len(indices) * test_fraction)) if len(indices) > 1 else 0
+    train_idx: list[int] = []
+    test_idx: list[int] = []
+    for group_id in group_ids:
+        members = group_members[group_id]
+        if len(test_idx) < n_test_target:
+            test_idx.extend(members)
+        else:
+            train_idx.extend(members)
+    return train_idx, test_idx
