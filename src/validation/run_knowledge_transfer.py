@@ -46,6 +46,8 @@ def run_kt_round(
     per_node_distill_loss: dict[str, dict[str, float]] = {}
     for node_id, node in nodes.items():
         peer_payloads = [p for nid, p in payloads.items() if nid != node_id]
+        if not peer_payloads:
+            continue  # single-node mesh: nothing to reconcile (mirrors mesh.py's run_round)
         consensus_prototypes = aggregate_prototypes(
             [p.prototypes for p in peer_payloads],
             method=aggregation_method,

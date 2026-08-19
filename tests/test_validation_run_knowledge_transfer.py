@@ -96,3 +96,30 @@ def test_run_kt_round_tracks_energy_per_node_when_tracker_given(corn_scoped_conf
     )
 
     assert tracker.summary()["num_tracked_blocks"] == 6  # 3 KT nodes + 3 control nodes
+
+
+def test_run_kt_round_single_node_has_no_peers_and_does_not_crash(corn_scoped_config):
+    cfg, root = corn_scoped_config
+    data = prepare_corn_mesh_data(cfg)
+    all_nodes = _build_kt_nodes(data)
+    nodes = {"node_0": all_nodes["node_0"]}  # no peers to reconcile against
+    control_nodes = _build_kt_nodes(data)
+    probe_loader = DataLoader(make_subset(data.eval_base, data.probe_idx), batch_size=4, shuffle=False)
+
+    result = run_kt_round(
+        nodes,
+        control_nodes,
+        probe_loader,
+        aggregation_method="trimmed_mean",
+        trim_fraction=0.0,
+        krum_neighbors=1,
+        distill_epochs=1,
+        distill_lr=1e-3,
+        proto_weight=0.5,
+        kd_weight=0.5,
+        temperature=2.0,
+    )
+
+    # node_0 has no peers this round, so it is skipped rather than crashing on
+    # an empty peer_payloads list (mirrors mesh.py's MeshSimulator.run_round).
+    assert "node_0" not in result["per_node_distill_loss"]
