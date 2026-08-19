@@ -313,17 +313,6 @@ def test_split_healthy_3way_produces_disjoint_complete_shares(corn_scoped_config
 
 
 def test_split_healthy_3way_keeps_duplicate_groups_together():
-    from src.data.plantvillage import PlantVillageDataset as PVD
-
-    class _FakeLabels:
-        pass
-
-    class _FakeDataset:
-        """Minimal stand-in exposing exactly what compute_image_hashes and
-        group_duplicates need (dataset.base.samples), so this test doesn't
-        need to write real duplicate-hash image files to disk.
-        """
-
     # compute_image_hashes opens real image files, so this test drives
     # split_healthy_3way's grouping logic directly via group_duplicates
     # instead of through compute_image_hashes -- verifies groups never
@@ -1374,12 +1363,21 @@ def test_build_knowledge_transfer_summary_has_appendix_a1_fields(corn_scoped_con
     cross_node_idx = [i for n in data.per_node.values() for i in n["test_idx"]]
     round0_baseline = evaluate_round0_baseline(data, stage1_dir, cross_node_idx)
 
+    # build_knowledge_transfer_summary reads
+    # per_node_scores[node_id]["collective"]["cross_node"]["summary"] (the
+    # same nested shape run_round_with_io's real report produces via
+    # export_and_evaluate) -- reuse round0_baseline[node_id] (a plain
+    # run_evaluation report, {"summary":..., "results":...}) as the stand-in
+    # value for both the "local" and "cross_node" sub-keys.
     fake_round_summary = {
         "round": 1,
         "per_node_scores": {
             node_id: {
-                "collective": round0_baseline[node_id],
-                "local_only_control": round0_baseline[node_id],
+                "collective": {"local": round0_baseline[node_id], "cross_node": round0_baseline[node_id]},
+                "local_only_control": {
+                    "local": round0_baseline[node_id],
+                    "cross_node": round0_baseline[node_id],
+                },
             }
             for node_id in ("node_0", "node_1", "node_2")
         },
