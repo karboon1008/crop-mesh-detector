@@ -98,3 +98,66 @@ def node1_scoped_config(tmp_path):
         }
     )
     return cfg, root
+
+
+@pytest.fixture
+def corn_scoped_config(tmp_path):
+    """A tiny synthetic Corn-shaped dataset (4 classes) plus one
+    unrelated Tomato class (to prove Corn-filtering excludes other
+    crops), used across the corn_mesh test suite.
+    """
+    from src.config import Config
+
+    root = tmp_path / "PlantVillage"
+    rng = np.random.RandomState(0)
+    class_counts = {
+        "Corn___healthy": 12,
+        "Corn___Common_rust": 6,
+        "Corn___Cercospora_leaf_spot_Gray_leaf_spot": 6,
+        "Corn___Northern_Leaf_Blight": 6,
+        "Tomato___healthy": 4,
+    }
+    for cls, count in class_counts.items():
+        cls_dir = root / cls
+        cls_dir.mkdir(parents=True)
+        for i in range(count):
+            arr = rng.randint(0, 255, size=(32, 32, 3), dtype=np.uint8)
+            Image.fromarray(arr).save(cls_dir / f"img_{i}.jpg")
+
+    cfg = Config(
+        {
+            "data": {
+                "root": str(root),
+                "image_size": 32,
+                "seed": 42,
+                "test_fraction": 0.25,
+                "probe_set_fraction": 0.1,
+                "probe_set_large_class_threshold": 200,
+                "probe_set_min_samples_small_class": 1,
+                "probe_set_max_fraction_small_class": 0.5,
+            },
+            "corn_mesh": {
+                "crop": "Corn",
+                "node_diseases": {
+                    "node_0": "Common_rust",
+                    "node_1": "Cercospora_leaf_spot_Gray_leaf_spot",
+                    "node_2": "Northern_Leaf_Blight",
+                },
+                "healthy_dedup_threshold": 5,
+                "rounds": 2,
+            },
+            "training": {
+                "distill_epochs_per_round": 1,
+                "distill_lr": 1e-3,
+                "proto_weight": 0.5,
+                "kd_weight": 0.5,
+                "kd_temperature": 2.0,
+            },
+            "federated": {
+                "aggregation": "trimmed_mean",
+                "trim_fraction": 0.0,
+                "krum_neighbors": 1,
+            },
+        }
+    )
+    return cfg, root
