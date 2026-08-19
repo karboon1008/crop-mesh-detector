@@ -120,6 +120,43 @@ exchange taught the model new diseases."
   `mesh.py:75`); per-round compute energy should be much smaller than
   stage 1's, since each round is one `distill()` call, not 15 epochs.
 
+## Fairness-aligned local-only control arm (Appendix A.1 requirement)
+
+Checked directly against `docs/Official Problem Statement_0.pdf`: Appendix
+A.1's Collaboration-Gain Fairness Disclosure Table requires
+`local_only_budget` and `collective_budget` to be aligned, or an explicit
+`fairness_exception_reason` — "without it, G may not be treated as
+high-confidence evidence." As originally spec'd, the knowledge-transfer
+arm (stage 1 + N rounds of `distill()`) had strictly more total training
+than the stage-1-only baseline it would be compared against — a real gap,
+not just a documentation nicety, since extra gradient steps alone (with no
+peer knowledge at all) could move a node's *own*-disease accuracy, and a
+naive before/after comparison wouldn't isolate how much of that came from
+collaboration vs. just more training time.
+
+**Fix:** stage 2 runs a second, parallel arm per node — the **local-only
+control**. Per round, alongside the knowledge-transfer node, a shadow
+`Node` (same starting checkpoint, continuing from its own prior round's
+state, never resetting) runs `node.local_train(epochs=training.distill_epochs_per_round,
+lr=training.distill_lr)` — i.e. the same epoch count and learning rate
+`distill()`'s local-supervised phase would use — but with **no exchange at
+all**: no `compute_knowledge`, no aggregation, no KD phase. This aligns
+the local-supervised training budget between the two arms round-for-round.
+The one intentional, disclosed asymmetry is the KD phase itself (the
+extra probe-set batches `distill()` runs) — that's not a fairness bug,
+it's the mechanism being measured, and it's declared as such in
+`fairness_exception_reason` rather than hidden.
+
+The control arm is evaluated the same two ways as the knowledge-transfer
+arm each round (local test set + cross-node union set) so both
+`collaboration_gain_per_disease` (KT vs. round-0) and the Appendix-A.1
+`macro_avg_and_worst_node` figures can be read against a budget-matched
+local-only comparator, not just the un-extended stage-1 baseline.
+
+This reuses `Node.local_train` (unchanged) and `training.distill_epochs_per_round`/
+`training.distill_lr` (already in `config.yaml`, no new config key needed)
+— only the orchestration in `run_knowledge_transfer.py` is new.
+
 ## Data layer
 
 New module: `src/validation/corn_mesh_dataset.py`.
@@ -253,6 +290,9 @@ Per round:
    per node, `total_bytes_exchanged` following `mesh.py:75`'s existing
    `(active_n - 1)` broadcast-cost formula, fed into
    `CommunicationCostEstimator.estimate_all_radios`, reused unchanged).
+8. Run the **local-only control** arm (previous section) for each node in
+   parallel — same round index, own continuing model state, no exchange —
+   and evaluate it the same two ways (local + cross-node).
 
 Output layout:
 
@@ -262,6 +302,10 @@ outputs/validation/corn_mesh/knowledge_transfer/
         node_0/  model.onnx  manifest.json  report.json   # report.json: {"local": {...}, "cross_node": {...}}
         node_1/  ...
         node_2/  ...
+        local_only_control/
+            node_0/  checkpoint.pt  report.json           # same report.json shape, no ONNX export (not a deployment artifact)
+            node_1/  ...
+            node_2/  ...
         round_summary.json
     round_2/
         ... same shape ...
@@ -280,11 +324,18 @@ outputs/validation/corn_mesh/knowledge_transfer/
   "total_bytes_exchanged": 0,
   "energy": {
     "per_node": {"node_0": {"duration_s": 0.0, "energy_kwh": 0.0, "method": "proxy_wall_power"}},
+    "per_node_local_only_control": {"node_0": {"duration_s": 0.0, "energy_kwh": 0.0, "method": "proxy_wall_power"}},
     "total_compute_energy_kwh": 0.0,
     "total_duration_s": 0.0
   },
   "communication_estimate": {
     "wifi": {"radio": "wifi", "bytes": 0, "energy_kwh": 0.0, "co2_kg": 0.0}
+  },
+  "per_node_scores": {
+    "node_0": {
+      "collective": {"local": {"disease_accuracy": 0.0}, "cross_node": {"disease_accuracy": 0.0}},
+      "local_only_control": {"local": {"disease_accuracy": 0.0}, "cross_node": {"disease_accuracy": 0.0}}
+    }
   }
 }
 ```
@@ -293,28 +344,49 @@ outputs/validation/corn_mesh/knowledge_transfer/
 
 ```json
 {
+  "node_count": 3,
+  "data_split": {
+    "strategy": "disjoint disease-label skew within one crop (Corn)",
+    "strength": "complete disjoint — each node's 3 disease classes have zero overlap with its peers'; only the shared healthy class is split (dedup-aware, ~1/3 each, no image duplicated across nodes)",
+    "node_diseases": {"node_0": "Common_rust", "node_1": "Cercospora_leaf_spot_Gray_leaf_spot", "node_2": "Northern_Leaf_Blight"}
+  },
+  "local_only_budget": {"epochs_per_round": 0, "lr": 0.0, "rounds": 2, "note": "training.distill_epochs_per_round/distill_lr, no exchange, aligned to the collective arm's local-supervised phase"},
+  "collective_budget": {"distill_epochs_per_round": 0, "lr": 0.0, "kd_weight": 0.0, "proto_weight": 0.0, "rounds": 2},
+  "fairness_exception_reason": "Local-supervised training budgets are aligned round-for-round between the collective and local-only-control arms (see 'Fairness-aligned local-only control arm'). The one intentional, disclosed asymmetry is the collective arm's extra KD phase over the shared probe set — that is the mechanism under test, not an unaligned budget.",
+  "test_set_scope": "both — local (own node's held-out test set) and global held-out (union of all 3 nodes' held-out test sets); test samples never enter any training set",
   "rounds_run": 2,
   "cumulative_bytes_exchanged": 0,
   "cumulative_energy_kwh": 0.0,
-  "macro_gain": {"disease_accuracy": 0.0},
-  "worst_node_gain": {"disease_accuracy": 0.0},
+  "delta_g_formula": "Score(collective, round_N) - Score(local_only_control, round_N), per metric per node",
+  "per_node_scores": {
+    "node_0": {"collective": {"disease_accuracy": 0.0}, "local_only_control": {"disease_accuracy": 0.0}}
+  },
+  "macro_avg_and_worst_node": {
+    "macro_gain": {"disease_accuracy": 0.0},
+    "worst_node_gain": {"disease_accuracy": 0.0}
+  },
   "collaboration_gain_per_disease": {
     "node_0": {
-      "Common_rust": {"round_0_accuracy": 0.0, "round_2_accuracy": 0.0, "gain": 0.0},
-      "Cercospora_leaf_spot_Gray_leaf_spot": {"round_0_accuracy": 0.0, "round_2_accuracy": 0.0, "gain": 0.0},
-      "Northern_Leaf_Blight": {"round_0_accuracy": 0.0, "round_2_accuracy": 0.0, "gain": 0.0},
-      "healthy": {"round_0_accuracy": 0.0, "round_2_accuracy": 0.0, "gain": 0.0}
+      "Common_rust": {"round_0_accuracy": 0.0, "round_2_collective_accuracy": 0.0, "round_2_local_only_control_accuracy": 0.0, "gain_vs_round0": 0.0, "gain_vs_local_only_control": 0.0},
+      "Cercospora_leaf_spot_Gray_leaf_spot": {"round_0_accuracy": 0.0, "round_2_collective_accuracy": 0.0, "round_2_local_only_control_accuracy": 0.0, "gain_vs_round0": 0.0, "gain_vs_local_only_control": 0.0},
+      "Northern_Leaf_Blight": {"round_0_accuracy": 0.0, "round_2_collective_accuracy": 0.0, "round_2_local_only_control_accuracy": 0.0, "gain_vs_round0": 0.0, "gain_vs_local_only_control": 0.0},
+      "healthy": {"round_0_accuracy": 0.0, "round_2_collective_accuracy": 0.0, "round_2_local_only_control_accuracy": 0.0, "gain_vs_round0": 0.0, "gain_vs_local_only_control": 0.0}
     }
   },
   "limitation_note": "Cross-node disease-recognition gain above comes from probe-set logit distillation only, not prototype alignment — see design doc's Known Limitation section."
 }
 ```
 
-`macro_gain`/`worst_node_gain` reuse `src/evaluate.py`'s existing
-`compute_collaboration_gain` shape (fed the cross-node eval results),
-kept alongside the new per-disease table rather than replacing it, since
-the Official Problem Statement's Appendix A.1 fairness table specifically
-wants `macro_avg_and_worst_node`.
+`macro_avg_and_worst_node` reuses `src/evaluate.py`'s existing
+`compute_collaboration_gain` shape (fed the cross-node eval results,
+`collective` vs. `local_only_control` rather than vs. stage-1 baseline),
+following the Official Problem Statement's Appendix A.1 field names
+directly (`node_count`, `data_split`, `local_only_budget`,
+`collective_budget`, `test_set_scope`, `per_node_scores`,
+`macro_avg_and_worst_node`, `delta_g_formula`,
+`fairness_exception_reason`) so this file is directly usable as the
+Collaboration-Gain Fairness Disclosure Table's source data, not just an
+internal diagnostic.
 
 ## Config additions (`config.yaml`)
 
@@ -367,12 +439,19 @@ running both stages end to end and confirming:
   accuracy (sanity check against `node1_validation_tuning_and_results.md`'s
   numbers).
 - Stage 2: each round produces all 3 nodes' `model.onnx` +
-  `report.json` (local + cross_node) + `round_summary.json`; parity checks
-  in the ONNX export pass; `knowledge_transfer_summary.json`'s
-  `collaboration_gain_per_disease` table is well-formed and its round-0
-  entries per node show near-zero accuracy on the other two nodes'
-  diseases (confirms the baseline collapse this design predicts) before
-  checking whether the round-2 numbers moved.
+  `report.json` (local + cross_node) + `round_summary.json`, **and** the
+  parallel `local_only_control/` reports; parity checks in the ONNX export
+  pass; `knowledge_transfer_summary.json`'s `collaboration_gain_per_disease`
+  table is well-formed and its round-0 entries per node show near-zero
+  accuracy on the other two nodes' diseases (confirms the baseline
+  collapse this design predicts) before checking whether the collective
+  arm's round-2 numbers moved relative to the local-only-control arm's
+  round-2 numbers (not just relative to round 0 — that's the
+  budget-aligned comparison Appendix A.1 requires).
+- Confirm the local-only-control arm actually consumed the same
+  `distill_epochs_per_round`/`distill_lr` budget as the collective arm's
+  local-supervised phase each round (a quick log/assert in
+  `run_knowledge_transfer.py`, not just a docstring claim).
 
 ## Out of scope (this pass)
 
