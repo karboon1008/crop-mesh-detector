@@ -9,6 +9,7 @@ docs/superpowers/specs/2026-08-19-tomato-dirichlet-mesh-design.md.
     python -m src.validation.run_tomato_pipeline --stage train
     python -m src.validation.run_tomato_pipeline --stage export
     python -m src.validation.run_tomato_pipeline --stage evaluate
+    python -m src.validation.run_tomato_pipeline --epochs 10
 """
 
 from __future__ import annotations
@@ -124,10 +125,12 @@ def main() -> None:
     parser.add_argument("--config", default=None, help="Path to config.yaml (default: repo root)")
     parser.add_argument("--output-dir", default="outputs/validation/tomato_mesh")
     parser.add_argument("--stage", choices=STAGES, default=None, help="Run only this stage; default runs all")
+    parser.add_argument("--epochs", type=int, default=None, help="Training epochs per node (default: 2)")
     args = parser.parse_args()
 
     cfg = Config.load(args.config)
     output_dir = Path(args.output_dir)
+    epochs = args.epochs if args.epochs is not None else 2
     data = prepare_tomato_mesh_data(cfg)
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -150,7 +153,7 @@ def main() -> None:
         for stage in ([args.stage] if args.stage else list(STAGES)):
             print(f"  -- stage: {stage} --")
             if stage == "train":
-                run_train_stage(data, node_id, node_dir)
+                run_train_stage(data, node_id, node_dir, epochs=epochs)
             elif stage == "export":
                 run_export_stage(data, node_id, node_dir)
             elif stage == "evaluate":

@@ -43,3 +43,11 @@ def test_full_pipeline_produces_a_well_formed_report_per_node(tmp_path, tomato_s
         assert classes["crop_classes"] == ["Tomato"]
         assert len(classes["disease_classes"]) == 10
         assert classes["test_idx"] == data.test_idx
+
+
+def test_run_train_stage_respects_custom_epoch_count(tmp_path, tomato_scoped_config):
+    data = prepare_tomato_mesh_data(tomato_scoped_config)
+    output_dir = tmp_path / "node_0"
+    run_train_stage(data, "node_0", output_dir, epochs=3, pretrained=False)
+    log = json.loads((output_dir / "training_log.json").read_text())
+    assert len(log) == 3

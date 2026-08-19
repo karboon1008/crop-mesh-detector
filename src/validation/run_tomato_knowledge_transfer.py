@@ -8,7 +8,7 @@ Aggregation mechanics (run_kt_round) are reused unchanged from
 run_knowledge_transfer.py -- this pipeline changes the data split, not
 the aggregation algorithm.
 
-    python -m src.validation.run_tomato_knowledge_transfer --rounds 5
+    python -m src.validation.run_tomato_knowledge_transfer --rounds 10
 """
 
 from __future__ import annotations
@@ -330,14 +330,14 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default=None, help="Path to config.yaml (default: repo root)")
     parser.add_argument("--output-dir", default="outputs/validation/tomato_mesh")
-    parser.add_argument("--rounds", type=int, default=None, help="Number of knowledge-transfer rounds (1-5)")
+    parser.add_argument("--rounds", type=int, default=None, help="Number of knowledge-transfer rounds (1-20)")
     parser.add_argument("--batch-size", type=int, default=4)
     args = parser.parse_args()
 
     cfg = Config.load(args.config)
     rounds = args.rounds if args.rounds is not None else cfg.get("tomato_mesh.rounds", 5)
-    if not (1 <= rounds <= 5):
-        parser.error(f"--rounds must be between 1 and 5, got {rounds}")
+    if not (1 <= rounds <= 20):
+        parser.error(f"--rounds must be between 1 and 20, got {rounds}")
 
     stage1_dir = Path(args.output_dir)
     data = prepare_tomato_mesh_data(cfg)
