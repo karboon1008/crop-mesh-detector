@@ -23,7 +23,7 @@ from PIL import Image
 from torch.utils.data import Dataset
 from torchvision import transforms
 
-from src.data.plantvillage import IMAGENET_MEAN, IMAGENET_STD
+from src.data.plantvillage import IMAGENET_MEAN, IMAGENET_STD, load_full_dataset
 
 TOMATO_DISEASE_ORDER = [
     "Bacterial_spot",
@@ -117,3 +117,35 @@ def build_tomato_train_eval_datasets(
     train_ds = TomatoMergedDataset(items, label_map, train_transform)
     eval_ds = TomatoMergedDataset(items, label_map, eval_transform)
     return train_ds, eval_ds
+
+
+def load_plantvillage_tomato_items(root, label_map: TomatoLabelMap) -> list[TomatoRawItem]:
+    dataset = load_full_dataset(root, image_size=32)  # image_size unused beyond this scan
+    tomato_crop_idx = dataset.labels.crop_classes.index("Tomato")
+    items: list[TomatoRawItem] = []
+    for idx in range(len(dataset)):
+        class_idx = dataset.base.targets[idx]
+        crop_idx, disease_idx = dataset.labels.class_to_crop_disease[class_idx]
+        if crop_idx != tomato_crop_idx:
+            continue
+        disease_name = dataset.labels.disease_classes[disease_idx]
+        if disease_name not in label_map.name_to_disease_idx:
+            continue
+        path, _ = dataset.base.samples[idx]
+        items.append(
+            TomatoRawItem(
+                source="plantvillage",
+                path=path,
+                canonical_disease_idx=label_map.name_to_disease_idx[disease_name],
+            )
+        )
+    return items
+
+
+def _items_from_paths(
+    pairs: list[tuple[str, str]], source: str, label_map: TomatoLabelMap
+) -> list[TomatoRawItem]:
+    return [
+        TomatoRawItem(source=source, path=path, canonical_disease_idx=label_map.name_to_disease_idx[canonical_name])
+        for path, canonical_name in pairs
+    ]
