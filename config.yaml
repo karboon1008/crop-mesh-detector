@@ -67,6 +67,9 @@ training:
   proto_weight: 0.15               # weight of prototype-alignment loss during distillation
   kd_weight: 0.7                  # weight of logit-distillation (KD) loss during distillation — raised from 0.4 so cross-node consensus can outweigh each round's local single-crop retraining
   kd_temperature: 1.5
+  adaptive_kd_weight: true        # if true, scale kd_weight per node each round by (peer pre-round avg accuracy / this node's pre-round avg accuracy), so nodes already ahead of their peers get pulled less toward consensus and nodes behind get pulled harder, instead of every node absorbing the same flat kd_weight
+  adaptive_kd_min_scale: 0.3       # floor on the per-node scale factor above (only used when adaptive_kd_weight is true)
+  adaptive_kd_max_scale: 1.5       # ceiling on the per-node scale factor above (only used when adaptive_kd_weight is true)
 
 federated:
   aggregation: "trimmed_mean"     # "trimmed_mean" | "krum"

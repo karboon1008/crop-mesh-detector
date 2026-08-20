@@ -292,6 +292,9 @@ def run_mesh(
         aggregation_method=cfg.get("federated.aggregation", "trimmed_mean"),
         trim_fraction=cfg.get("federated.trim_fraction", 0.2),
         krum_neighbors=cfg.get("federated.krum_neighbors", 2),
+        adaptive_kd_weight=cfg.get("training.adaptive_kd_weight", False),
+        adaptive_kd_min_scale=cfg.get("training.adaptive_kd_min_scale", 0.3),
+        adaptive_kd_max_scale=cfg.get("training.adaptive_kd_max_scale", 1.5),
     )
     local_epochs = {node.node_id: epochs for node, epochs in zip(nodes, local_epochs_per_node)}
 
