@@ -16,8 +16,8 @@ data:
   probe_set_max_fraction_small_class: 0.2
   global_test_fraction: 0.05      # clean set to evaluate the model knowledge transfer ability
   test_fraction: 0.15             # per-node held-out test split (used for accuracy + collaboration gain)
-  non_iid_strategy: "manual"   # "by_crop" | "by_disease" | "dirichlet" | "manual"
-  dirichlet_alpha: 0.3            # only used when non_iid_strategy == "dirichlet"
+  non_iid_strategy: "dirichlet"   # "by_crop" | "by_disease" | "dirichlet" | "manual"
+  dirichlet_alpha: 0.5
   # Only used when non_iid_strategy == "manual" — one crop species per node
   # (all of that crop's disease classes included), so each simulated farm
   # specializes in a single crop.
