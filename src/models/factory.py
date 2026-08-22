@@ -25,6 +25,44 @@ ARCH_TO_TIMM: dict[str, str] = {
 
 SUPPORTED_ARCHITECTURES = tuple(ARCH_TO_TIMM.keys())
 
+# Backbone module-name prefixes to freeze, for architectures where
+# freezing is enabled. Both lightweight backbones are back-loaded (most
+# params sit in their last two stages + head), so freezing only the stem
+# + first two feature stages would lock under 1% of parameters — too
+# small to plausibly affect anything. These cutoffs instead go deep
+# enough to lock a real share of capacity:
+#   mobilenet_v3_small: through blocks.3 (~51% of backbone params) —
+#     blocks.4/5 + conv_head, left trainable, hold the other ~49%.
+#   mobilevit_xxs: through stages.2 (~18% of backbone params) — going
+#     further would freeze stages.3/4, the transformer blocks that hold
+#     96% of this backbone's capacity, which is too much to lock.
+# Past the first stage or so these are no longer purely generic
+# ImageNet features — this trades some task-adaptation capacity for
+# round-to-round stability, not a free stabilizer. mobilenet_v3_small
+# and mobilevit_xxs show large round-to-round accuracy swings during the
+# mesh phase's short (2-3 epoch) local fine-tunes; efficientnet_lite0
+# doesn't (see training.local_epochs_per_round_overrides comment in
+# config.yaml) and is deliberately left out here — freezing it would
+# only remove capacity from a backbone with no instability to fix.
+FREEZE_LOW_LAYER_PREFIXES: dict[str, tuple[str, ...]] = {
+    "mobilenet_v3_small": ("conv_stem", "bn1", "blocks.0", "blocks.1", "blocks.2", "blocks.3"),
+    "mobilevit_xxs": ("stem", "stages.0", "stages.1", "stages.2"),
+}
+
+
+def freeze_low_layers(backbone: nn.Module, arch_key: str) -> int:
+    """Sets requires_grad=False on the FREEZE_LOW_LAYER_PREFIXES[arch_key]
+    modules of `backbone`, in place. No-op for any arch_key not in
+    FREEZE_LOW_LAYER_PREFIXES. Returns the number of parameters frozen.
+    """
+    prefixes = FREEZE_LOW_LAYER_PREFIXES.get(arch_key, ())
+    frozen = 0
+    for name, param in backbone.named_parameters():
+        if name.startswith(prefixes):
+            param.requires_grad = False
+            frozen += param.numel()
+    return frozen
+
 
 class MultiTaskNet(nn.Module):
     """Shared backbone + two heads: crop type and disease status."""
@@ -50,6 +88,7 @@ def build_model(
     num_crop_classes: int,
     num_disease_classes: int,
     pretrained: bool = True,
+    freeze_low_layers_: bool = False,
 ) -> MultiTaskNet:
     if arch_key not in ARCH_TO_TIMM:
         raise ValueError(
@@ -58,6 +97,8 @@ def build_model(
     timm_name = ARCH_TO_TIMM[arch_key]
     backbone = timm.create_model(timm_name, pretrained=pretrained, num_classes=0)
     embed_dim = _probe_embedding_dim(backbone)
+    if freeze_low_layers_:
+        freeze_low_layers(backbone, arch_key)
     return MultiTaskNet(backbone, embed_dim, num_crop_classes, num_disease_classes)
 
 

@@ -48,6 +48,15 @@ training:
   local_epochs_per_round_overrides:
     mobilenet_v3_small: 3
     mobilevit_xxs: 3
+  # Freezes the backbone stem + first two feature stages (generic,
+  # ImageNet-transferable low-level features) during stage-2 mesh
+  # training only — an experiment to reduce the round-to-round swings
+  # above by cutting how much of the backbone a node's short 2-3 epoch
+  # local fine-tune can reshape each round. Only affects
+  # mobilenet_v3_small/mobilevit_xxs (see FREEZE_LOW_LAYER_PREFIXES in
+  # src/models/factory.py); efficientnet_lite0 has no entry there and is
+  # always a no-op, matching the reasoning above.
+  freeze_low_layers_in_mesh: false
   distill_epochs_per_round: 2     # epochs spent distilling towards consensus knowledge
   rounds: 8                       # number of mesh exchange rounds — raised from 5 to give distillation more exposure to peer knowledge before local retraining reasserts specialism
   crop_loss_weight: 1.0

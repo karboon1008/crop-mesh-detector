@@ -258,7 +258,8 @@ def run_mesh(
     for i, (train_loader, test_loader) in enumerate(node_loaders):
         node_id = f"node_{i}"
         model = build_model(
-            arch, len(crop_classes), len(disease_classes), pretrained=cfg.get("models.pretrained", True)
+            arch, len(crop_classes), len(disease_classes), pretrained=cfg.get("models.pretrained", True),
+            freeze_low_layers_=cfg.get("training.freeze_low_layers_in_mesh", False),
         )
         if warm_start_checkpoint_dir is not None:
             ckpt_path = warm_start_checkpoint_dir / f"{node_id}.pt"
