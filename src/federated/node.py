@@ -128,7 +128,9 @@ class Node:
             raise ValueError(
                 "local_train early stopping needs pair_class_names/class_to_crop_disease set on this Node"
             )
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=lr, weight_decay=weight_decay)
+        optimizer = torch.optim.Adam(
+            (p for p in self.model.parameters() if p.requires_grad), lr=lr, weight_decay=weight_decay
+        )
         scheduler = torch.optim.lr_scheduler.OneCycleLR(
             optimizer, max_lr=lr, steps_per_epoch=len(self.train_loader), epochs=epochs
         )
@@ -243,7 +245,7 @@ class Node:
         temperature: float,
     ) -> dict[str, float]:
         self.model.train()
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
+        optimizer = torch.optim.Adam((p for p in self.model.parameters() if p.requires_grad), lr=lr)
         total_steps = epochs * (len(probe_loader) + len(self.train_loader))
         scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=lr, total_steps=total_steps)
         consensus_crop_logits = consensus_crop_logits.to(self.device)
