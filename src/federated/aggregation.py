@@ -93,30 +93,31 @@ def aggregate_prototypes(
     return consensus
 
 
-def aggregate_disease_logits(
+def aggregate_masked_logits(
     peer_logits: list[torch.Tensor],
     peer_known_classes: list[set[int]],
     method: str = "trimmed_mean",
     trim_fraction: float = 0.2,
     krum_neighbors: int = 2,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """peer_logits: one (num_probe, num_disease_classes) tensor per peer,
-    computed on the identical shared public probe set. peer_known_classes:
-    the matching per-peer set of disease-class ids that peer actually has
-    local training examples for (see Node.compute_prototypes).
+    """peer_logits: one (num_probe, num_classes) tensor per peer (crop or
+    disease head), computed on the identical shared public probe set.
+    peer_known_classes: the matching per-peer set of class ids that peer
+    actually has local training examples for (see Node.compute_prototypes).
 
     Unlike a plain per-cell trimmed mean/Krum over all peers, this
     aggregates each class column only from the peers who actually have
-    that class — under manual_node_crops, most disease classes belong to
-    exactly one node, so for those columns every peer would otherwise be
-    confidently voting on a class it has never seen, and trimmed-mean/Krum
-    can't tell that apart from a genuinely informed peer.
+    that class — many classes belong to only a subset of nodes (a single
+    node under non_iid_strategy="manual", a Dirichlet-skewed subset under
+    "dirichlet"), so for those columns an uninformed peer would otherwise
+    be confidently voting on a class it has never seen, and trimmed-mean/
+    Krum can't tell that apart from a genuinely informed peer.
 
     Returns (consensus_logits, known_mask): known_mask (bool, shape
-    (num_disease_classes,)) marks which columns had at least one informed
-    peer — columns with none are left at 0 in consensus_logits and False
-    in known_mask, and callers should exclude them from any loss that
-    reads consensus_logits (see Node._soft_kd_loss's class_mask).
+    (num_classes,)) marks which columns had at least one informed peer —
+    columns with none are left at 0 in consensus_logits and False in
+    known_mask, and callers should exclude them from any loss that reads
+    consensus_logits (see Node._soft_kd_loss's class_mask).
     """
     num_probe, num_classes = peer_logits[0].shape
     consensus = torch.zeros(num_probe, num_classes)

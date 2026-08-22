@@ -9,7 +9,7 @@ labels, gradients, or weights.
 from __future__ import annotations
 from dataclasses import dataclass, field
 from torch.utils.data import DataLoader
-from src.federated.aggregation import aggregate_prototypes, aggregate_disease_logits
+from src.federated.aggregation import aggregate_prototypes, aggregate_masked_logits
 from src.federated.node import KnowledgePayload, Node
 
 
@@ -40,6 +40,7 @@ class RoundLog:
     per_node_distill_loss: dict[str, dict[str, float]] = field(default_factory=dict)
     per_node_eval: dict[str, dict[str, float | dict]] = field(default_factory=dict)
     per_node_kd_weight: dict[str, float] = field(default_factory=dict)
+    per_node_crop_kd_weight: dict[str, float] = field(default_factory=dict)
     total_bytes_exchanged: int = 0
     active_nodes: list[str] = field(default_factory=list)
 
@@ -75,7 +76,12 @@ class MeshSimulator:
         proto_weight: float,
         kd_weight: float,
         temperature: float,
+        crop_kd_weight: float | None = None,
     ) -> RoundLog:
+        # crop_kd_weight defaults to kd_weight so existing callers that only
+        # tune one flat weight keep behaving the same; pass it explicitly to
+        # balance crop- vs. disease-head peer consensus independently.
+        base_crop_kd_weight = kd_weight if crop_kd_weight is None else crop_kd_weight
         log = RoundLog(round_idx=round_idx)
         log.active_nodes = [node.node_id for node in self.nodes if node.active]
 
@@ -122,13 +128,19 @@ class MeshSimulator:
                 continue  # single-node mesh: nothing to reconcile
 
             node_kd_weight = kd_weight
+            node_crop_kd_weight = base_crop_kd_weight
             if self.adaptive_kd_weight:
                 peer_avg = sum(pre_avg[nid] for nid in peer_ids) / len(peer_ids)
                 node_kd_weight = _scale_kd_weight(
                     kd_weight, pre_avg[node.node_id], peer_avg,
                     self.adaptive_kd_min_scale, self.adaptive_kd_max_scale,
                 )
+                node_crop_kd_weight = _scale_kd_weight(
+                    base_crop_kd_weight, pre_avg[node.node_id], peer_avg,
+                    self.adaptive_kd_min_scale, self.adaptive_kd_max_scale,
+                )
             log.per_node_kd_weight[node.node_id] = node_kd_weight
+            log.per_node_crop_kd_weight[node.node_id] = node_crop_kd_weight
 
             consensus_prototypes = aggregate_prototypes(
                 [p.prototypes for p in peer_payloads],
@@ -136,7 +148,14 @@ class MeshSimulator:
                 trim_fraction=self.trim_fraction,
                 krum_neighbors=self.krum_neighbors,
             )
-            consensus_disease_logits, disease_known_mask = aggregate_disease_logits(
+            consensus_crop_logits, crop_known_mask = aggregate_masked_logits(
+                [p.crop_logits for p in peer_payloads],
+                [p.known_crop_classes for p in peer_payloads],
+                method=self.aggregation_method,
+                trim_fraction=self.trim_fraction,
+                krum_neighbors=self.krum_neighbors,
+            )
+            consensus_disease_logits, disease_known_mask = aggregate_masked_logits(
                 [p.disease_logits for p in peer_payloads],
                 [p.known_disease_classes for p in peer_payloads],
                 method=self.aggregation_method,
@@ -146,6 +165,8 @@ class MeshSimulator:
 
             log.per_node_distill_loss[node.node_id] = node.distill(
                 consensus_prototypes,
+                consensus_crop_logits,
+                crop_known_mask,
                 consensus_disease_logits,
                 disease_known_mask,
                 self.probe_loader,
@@ -153,6 +174,7 @@ class MeshSimulator:
                 lr=distill_lr,
                 proto_weight=proto_weight,
                 kd_weight=node_kd_weight,
+                crop_kd_weight=node_crop_kd_weight,
                 temperature=temperature,
             )
 

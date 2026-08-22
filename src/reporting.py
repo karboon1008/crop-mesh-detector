@@ -34,6 +34,9 @@ def build_round_log_rows(round_logs: list[dict]) -> list[dict]:
             kd_weight = rl.get("per_node_kd_weight", {}).get(node_id)
             if kd_weight is not None:
                 row["kd_weight"] = kd_weight
+            crop_kd_weight = rl.get("per_node_crop_kd_weight", {}).get(node_id)
+            if crop_kd_weight is not None:
+                row["crop_kd_weight"] = crop_kd_weight
             pre_eval = rl.get("pre_distill_eval", {}).get(node_id)
             if pre_eval is not None:
                 row.update(flatten_eval(pre_eval, "pre_"))
