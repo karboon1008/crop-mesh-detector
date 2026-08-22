@@ -121,6 +121,7 @@ def run_scenario(
             distill_lr=round_kwargs["distill_lr"],
             proto_weight=round_kwargs["proto_weight"],
             kd_weight=round_kwargs["kd_weight"],
+            crop_kd_weight=round_kwargs.get("crop_kd_weight"),
             temperature=round_kwargs["temperature"],
         )
         mesh_eval = {node.node_id: node.evaluate() for node in mesh.nodes}

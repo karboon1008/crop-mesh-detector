@@ -176,6 +176,7 @@ def main():
         "distill_lr": cfg.get("training.distill_lr", 0.0005),
         "proto_weight": cfg.get("training.proto_weight", 0.5),
         "kd_weight": cfg.get("training.kd_weight", 0.5),
+        "crop_kd_weight": cfg.get("training.crop_kd_weight", None),
         "temperature": cfg.get("training.kd_temperature", 2.0),
     }
     records = run_scenario(baseline_nodes, mesh, num_rounds, hook, round_kwargs)

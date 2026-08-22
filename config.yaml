@@ -65,7 +65,8 @@ training:
   lr: 0.001
   distill_lr: 0.0005
   proto_weight: 0.15               # weight of prototype-alignment loss during distillation
-  kd_weight: 0.7                  # weight of logit-distillation (KD) loss during distillation — raised from 0.4 so cross-node consensus can outweigh each round's local single-crop retraining
+  kd_weight: 0.7                  # weight of disease-logit distillation (KD) loss during distillation — raised from 0.4 so cross-node consensus can outweigh each round's local retraining
+  crop_kd_weight: 0.7              # weight of crop-logit distillation loss, tuned separately from kd_weight — enabled now that non_iid_strategy=dirichlet gives peers overlapping (not exclusive) crop coverage, so a per-node known-crop-classes mask can safely aggregate cross-node crop-logit consensus the same way disease logits already do; omit/null to fall back to kd_weight
   kd_temperature: 1.5
   adaptive_kd_weight: true        # if true, scale kd_weight per node each round by (peer pre-round avg accuracy / this node's pre-round avg accuracy), so nodes already ahead of their peers get pulled less toward consensus and nodes behind get pulled harder, instead of every node absorbing the same flat kd_weight
   adaptive_kd_min_scale: 0.3       # floor on the per-node scale factor above (only used when adaptive_kd_weight is true)
@@ -73,7 +74,7 @@ training:
 
 federated:
   aggregation: "trimmed_mean"     # "trimmed_mean" | "krum"
-  trim_fraction: 0.2               # fraction trimmed from each end (trimmed_mean only) — with num_nodes=6, each node has only 5 peers, and _trimmed_mean's k = int(n * trim_fraction) needs trim_fraction >= 0.2 to ever trim anyone at n=5; 0.15 was silently a no-op (plain mean, zero robustness). Disease-logit aggregation now pre-filters to peers with real local support for each class before this trimming runs (see aggregate_disease_logits in src/federated/aggregation.py), so this only trims among already-informed peers — it protects prototype aggregation against one stale/corrupted peer without the old risk of trimming away the lone informed peer's signal
+  trim_fraction: 0.2               # fraction trimmed from each end (trimmed_mean only) — with num_nodes=6, each node has only 5 peers, and _trimmed_mean's k = int(n * trim_fraction) needs trim_fraction >= 0.2 to ever trim anyone at n=5; 0.15 was silently a no-op (plain mean, zero robustness). Crop- and disease-logit aggregation now pre-filter to peers with real local support for each class before this trimming runs (see aggregate_masked_logits in src/federated/aggregation.py), so this only trims among already-informed peers — it protects prototype aggregation against one stale/corrupted peer without the old risk of trimming away the lone informed peer's signal
   krum_neighbors: 2               # number of closest peers kept (krum only)
 
 energy:
