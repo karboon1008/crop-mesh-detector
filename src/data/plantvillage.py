@@ -126,6 +126,14 @@ class PlantVillageDataset(Dataset):
         """Original ImageFolder class index per sample — used for partitioning."""
         return self.base.targets
 
+    @property
+    def pair_labels(self) -> list[tuple[int, int]]:
+        """(crop_idx, disease_idx) per sample — the same shape PlantDoc/PlantWild
+        expose, so cross-dataset code (stratified carving, class weighting) can
+        treat any of the three dataset types uniformly.
+        """
+        return [self.labels.class_to_crop_disease[t] for t in self.base.targets]
+
 
 def load_full_dataset(root: str | Path, image_size: int = 160) -> PlantVillageDataset:
     root = Path(root)
@@ -138,8 +146,8 @@ def load_full_dataset(root: str | Path, image_size: int = 160) -> PlantVillageDa
     return PlantVillageDataset(root, image_size=image_size)
 
 
-def _stratified_carve(
-    dataset: PlantVillageDataset,
+def _stratified_carve_by_group(
+    group_key: np.ndarray,
     indices: list[int],
     fraction: float,
     seed: int,
@@ -147,13 +155,19 @@ def _stratified_carve(
     min_samples_small_class: int,
     max_fraction_small_class: float,
 ) -> tuple[list[int], list[int]]:
-    all_targets = np.array(dataset.targets)
-    targets = all_targets[indices]
+    """Core of the stratified carve: splits `indices` into (carved, remaining)
+    so each distinct value in `group_key` (aligned 1:1 with `indices`) keeps
+    roughly `fraction` of its own samples in `carved` — large groups get a
+    plain fraction, small ones get a floor/ceiling so they don't disappear
+    entirely or get gutted. `group_key` can be any per-sample stratum (an
+    ImageFolder class id, or a (crop, disease) pair id for cross-dataset
+    carving) — this function doesn't care which.
+    """
     rng = random.Random(seed)
     carved: list[int] = []
     remaining: list[int] = []
-    for cls in sorted(set(targets.tolist())):
-        cls_indices = [indices[i] for i in range(len(indices)) if targets[i] == cls]
+    for cls in sorted(set(group_key.tolist())):
+        cls_indices = [indices[i] for i in range(len(indices)) if group_key[i] == cls]
         rng.shuffle(cls_indices)
         count = len(cls_indices)
         if count >= large_class_threshold:
@@ -166,6 +180,23 @@ def _stratified_carve(
     rng.shuffle(carved)
     rng.shuffle(remaining)
     return carved, remaining
+
+
+def _stratified_carve(
+    dataset: PlantVillageDataset,
+    indices: list[int],
+    fraction: float,
+    seed: int,
+    large_class_threshold: int,
+    min_samples_small_class: int,
+    max_fraction_small_class: float,
+) -> tuple[list[int], list[int]]:
+    all_targets = np.array(dataset.targets)
+    group_key = all_targets[indices]
+    return _stratified_carve_by_group(
+        group_key, indices, fraction, seed,
+        large_class_threshold, min_samples_small_class, max_fraction_small_class,
+    )
 
 
 def carve_public_probe_set(
@@ -386,4 +417,29 @@ def compute_crop_class_weights(dataset: PlantVillageDataset, indices: list[int])
     computed from this subset's own label counts.
     """
     counts = _count_labels(dataset, indices, pair_index=0, num_classes=len(dataset.labels.crop_classes))
+    return _inverse_frequency_weights(counts)
+
+
+def _counts_from_pairs(pair_labels: list[tuple[int, int]], pair_index: int, num_classes: int) -> torch.Tensor:
+    counts = torch.zeros(num_classes)
+    for pair in pair_labels:
+        counts[pair[pair_index]] += 1
+    return counts
+
+
+def crop_class_weights_from_pairs(pair_labels: list[tuple[int, int]], num_crop: int) -> torch.Tensor:
+    """Same as `compute_crop_class_weights`, but for datasets that only
+    expose a `pair_labels` list (PlantDoc/PlantWild, or PlantVillage via its
+    own `pair_labels` property) rather than PlantVillage's internal
+    `targets` + `class_to_crop_disease` — used by the one-node-one-dataset
+    strategy, where each node's private train split lives in a different
+    dataset object.
+    """
+    counts = _counts_from_pairs(pair_labels, pair_index=0, num_classes=num_crop)
+    return _inverse_frequency_weights(counts)
+
+
+def disease_class_weights_from_pairs(pair_labels: list[tuple[int, int]], num_disease: int) -> torch.Tensor:
+    """Disease-head counterpart to `crop_class_weights_from_pairs`."""
+    counts = _counts_from_pairs(pair_labels, pair_index=1, num_classes=num_disease)
     return _inverse_frequency_weights(counts)

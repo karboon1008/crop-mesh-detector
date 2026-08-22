@@ -31,6 +31,7 @@ from torch.utils.data import ConcatDataset, DataLoader
 
 from src.config import Config
 from src.data.mixing import MixedDomainBatchSampler
+from src.data.multi_dataset import NODE_ORDER, build_one_node_one_dataset_loaders
 from src.data.plantdoc import load_plantdoc_dataset
 from src.data.plantvillage import (
     carve_global_test_set,
@@ -277,25 +278,39 @@ def main():
     output_dir = Path(cfg.get("output.dir", "outputs"))
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    dataset = load_full_dataset(cfg.get("data.root"), cfg.get("data.image_size", 160))
-    num_crop = len(dataset.labels.crop_classes)
-    num_disease = len(dataset.labels.disease_classes)
-    print(f"Loaded {len(dataset)} images, {num_crop} crop classes, {num_disease} disease classes.")
+    strategy = cfg.get("data.non_iid_strategy", "by_crop")
+    if strategy == "one_node_one_dataset":
+        (
+            probe_loader, global_test_loader, node_loaders,
+            crop_classes, disease_classes, crop_class_weights, disease_class_weights,
+        ) = build_one_node_one_dataset_loaders(cfg)
+        print(
+            f"Loaded one_node_one_dataset: {len(crop_classes)} crop classes, "
+            f"{len(disease_classes)} disease classes across {len(node_loaders)} node(s) "
+            f"({', '.join(NODE_ORDER)})."
+        )
+    else:
+        dataset = load_full_dataset(cfg.get("data.root"), cfg.get("data.image_size", 160))
+        crop_classes = dataset.labels.crop_classes
+        disease_classes = dataset.labels.disease_classes
+        print(f"Loaded {len(dataset)} images, {len(crop_classes)} crop classes, {len(disease_classes)} disease classes.")
+        probe_loader, global_test_loader, node_loaders, crop_class_weights, disease_class_weights = build_dataloaders(cfg, dataset)
+
+    num_crop = len(crop_classes)
+    num_disease = len(disease_classes)
 
     checkpoints_dir = output_dir / "checkpoints"
     checkpoints_dir.mkdir(parents=True, exist_ok=True)
     (checkpoints_dir / "classes.json").write_text(
         json.dumps(
             {
-                "crop_classes": dataset.labels.crop_classes,
-                "disease_classes": dataset.labels.disease_classes,
+                "crop_classes": crop_classes,
+                "disease_classes": disease_classes,
                 "image_size": cfg.get("data.image_size", 160),
             },
             indent=2,
         )
     )
-
-    probe_loader, global_test_loader, node_loaders, crop_class_weights, disease_class_weights = build_dataloaders(cfg, dataset)
 
     tracker = ComputeEnergyTracker(
         enabled=cfg.get("energy.track_with_codecarbon", True),
@@ -328,13 +343,13 @@ def main():
         print("-- baseline (local-only) --")
         baseline_evals = run_baseline(
             cfg, arch, node_loaders, global_test_loader,
-            dataset.labels.crop_classes, dataset.labels.disease_classes, tracker, device,
+            crop_classes, disease_classes, tracker, device,
             crop_class_weights=crop_class_weights, disease_class_weights=disease_class_weights,
         )
         print("-- mesh (prototype + logit exchange) --")
         mesh_evals, total_bytes = run_mesh(
             cfg, arch, node_loaders, probe_loader, global_test_loader,
-            dataset.labels.crop_classes, dataset.labels.disease_classes, tracker, device, output_dir,
+            crop_classes, disease_classes, tracker, device, output_dir,
             crop_class_weights=crop_class_weights, disease_class_weights=disease_class_weights,
         )
         grand_total_bytes += total_bytes

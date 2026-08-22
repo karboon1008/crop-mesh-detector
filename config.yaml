@@ -3,8 +3,9 @@
 # file rather than editing code.
 
 data:
-  root: "data/PlantVillage"    
+  root: "data/PlantVillage"
   plantdoc_root: "data/PlantDoc"
+  plantwild_root: "data/PlantWild"
   plantvillage_batch_fraction: 0.85
   image_size: 160
   num_nodes: 3                    # simulated farms
@@ -13,8 +14,14 @@ data:
   probe_set_min_samples_small_class: 10
   probe_set_max_fraction_small_class: 0.2
   global_test_fraction: 0.05      # clean set to evaluate the model knowledge transfer ability
-  test_fraction: 0.15             # per-node held-out test split (used for accuracy + collaboration gain)
-  non_iid_strategy: "dirichlet"   # "by_crop" | "by_disease" | "dirichlet" | "manual"
+  test_fraction: 0.15             # per-node held-out validation split (used for accuracy + collaboration gain)
+  # "by_crop" | "by_disease" | "dirichlet" | "manual" | "one_node_one_dataset"
+  # one_node_one_dataset fixes node order to [plantvillage, plantdoc, plantwild]
+  # regardless of manual_node_crops below (requires num_nodes == 3) — each node
+  # owns one whole dataset domain instead of a non-IID shard of PlantVillage;
+  # the probe set and global test set are stratified by (crop, disease) and
+  # drawn from all three datasets instead of PlantVillage alone.
+  non_iid_strategy: "one_node_one_dataset"
   dirichlet_alpha: 0.3            # only used when non_iid_strategy == "dirichlet"
   # Only used when non_iid_strategy == "manual" — thematically-coherent
   # farm-type split (volume-imbalanced by design: node_2 covers fewer,

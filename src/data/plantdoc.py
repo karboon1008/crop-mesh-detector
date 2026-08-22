@@ -10,6 +10,7 @@ from torch.utils.data import Dataset
 from torchvision.datasets import ImageFolder
 
 from src.data.plantvillage import build_eval_transform, build_train_transform
+from src.data.remap import build_class_remap
 
 # PlantDoc folder name -> (PlantVillage crop, PlantVillage disease). Every
 # key must match a raw PlantDoc class folder exactly; every value must match
@@ -57,9 +58,13 @@ class PlantDocDataset(Dataset):
     `crop_classes`/`disease_classes` raises immediately, since that would
     otherwise silently point at the wrong label index.
 
-    PlantDoc is intended purely as extra, domain-shifted training signal
-    (see src/data/mixing.py), so __getitem__ always applies the training
-    augmentation transform.
+    PlantDoc can be used two ways: as extra, domain-shifted training signal
+    mixed into another dataset's batches (see src/data/mixing.py), in which
+    case __getitem__ always applies the training augmentation transform —
+    or as a first-class node of its own (see src/data/multi_dataset.py),
+    in which case `make_subset` below builds eval-transformed views for its
+    probe/global-test/validation contributions and train-transformed views
+    for its own private train split.
     """
 
     def __init__(
@@ -72,42 +77,12 @@ class PlantDocDataset(Dataset):
     ):
         self.base = ImageFolder(str(root))
         self.transform = build_train_transform(image_size)
-        crop_to_idx = {c: i for i, c in enumerate(crop_classes)}
-        disease_to_idx = {d: i for i, d in enumerate(disease_classes)}
+        self.eval_transform = build_eval_transform(image_size)
 
-        raw_class_to_pair: dict[int, tuple[int, int]] = {}
-        dropped = []
-        for raw_idx, raw_name in enumerate(self.base.classes):
-            mapped = PLANTDOC_TO_PLANTVILLAGE.get(raw_name)
-            if mapped is None:
-                dropped.append(raw_name)
-                continue
-            crop, disease = mapped
-            if crop not in crop_to_idx or disease not in disease_to_idx:
-                raise ValueError(
-                    f"PlantDoc class {raw_name!r} maps to (crop={crop!r}, disease={disease!r}), "
-                    f"which is not in the PlantVillage label space — fix PLANTDOC_TO_PLANTVILLAGE"
-                )
-            raw_class_to_pair[raw_idx] = (crop_to_idx[crop], disease_to_idx[disease])
-        if dropped:
-            print(f"PlantDoc: dropping {len(dropped)} class(es) with no PlantVillage match: {dropped}")
-
-        # "class" here means the actual PlantVillage folder (a specific
-        # crop+disease pair, e.g. "Corn___healthy") — checking crop and
-        # disease coverage separately would miss e.g. Corn___healthy being
-        # uncovered even though "healthy" itself is covered via some other
-        # crop, and "Corn" is covered via some other Corn disease.
-        covered_pairs = set(raw_class_to_pair.values())
-        uncovered = sorted(
-            f"{crop_classes[c]}___{disease_classes[d]}"
-            for c, d in set(pv_class_to_crop_disease.values())
-            if (c, d) not in covered_pairs
+        raw_class_to_pair = build_class_remap(
+            self.base.classes, PLANTDOC_TO_PLANTVILLAGE,
+            crop_classes, disease_classes, pv_class_to_crop_disease, "PlantDoc",
         )
-        if uncovered:
-            print(
-                f"PlantDoc: {len(uncovered)} PlantVillage class(es) have no PlantDoc coverage, "
-                f"so they train on PlantVillage only: {uncovered}"
-            )
 
         self._indices = [i for i, (_, raw_cls) in enumerate(self.base.samples) if raw_cls in raw_class_to_pair]
         self._raw_class_to_pair = raw_class_to_pair
@@ -130,6 +105,14 @@ class PlantDocDataset(Dataset):
         """
         return [self.base.samples[idx][1] for idx in self._indices]
 
+    @property
+    def pair_labels(self) -> list[tuple[int, int]]:
+        """(crop_idx, disease_idx) per retained sample, in logical (0..len-1)
+        order — the same shape PlantVillageDataset/PlantWildDataset expose,
+        for cross-dataset stratified carving and class weighting.
+        """
+        return [self._raw_class_to_pair[self.base.samples[idx][1]] for idx in self._indices]
+
 
 def load_plantdoc_dataset(
     root: str | Path | None,
@@ -148,3 +131,30 @@ def load_plantdoc_dataset(
     if not root.exists():
         return None
     return PlantDocDataset(root, crop_classes, disease_classes, pv_class_to_crop_disease, image_size=image_size)
+
+
+class _TransformedSubset(Dataset):
+    def __init__(self, dataset: PlantDocDataset, indices: list[int], transform):
+        self.dataset = dataset
+        self.indices = indices
+        self.transform = transform
+
+    def __len__(self) -> int:
+        return len(self.indices)
+
+    def __getitem__(self, i: int):
+        idx = self.dataset._indices[self.indices[i]]
+        image, raw_class = self.dataset.base[idx]
+        image = self.transform(image)
+        crop_idx, disease_idx = self.dataset._raw_class_to_pair[raw_class]
+        return image, crop_idx, disease_idx
+
+
+def make_subset(dataset: PlantDocDataset, indices: list[int], train: bool = False) -> Dataset:
+    """train=True applies the augmentation transform (a node's own private
+    train split); train=False (default) applies the plain eval transform
+    (probe/global-test/validation splits). `indices` are logical indices
+    (0..len(dataset)-1), same convention as `dataset[i]`.
+    """
+    transform = dataset.transform if train else dataset.eval_transform
+    return _TransformedSubset(dataset, indices, transform)
