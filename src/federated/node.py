@@ -26,19 +26,27 @@ class KnowledgePayload:
     nodes hold a skewed but overlapping mix of crops, so the same
     known-classes masking that makes disease-logit distillation safe
     (aggregate_masked_logits) applies to crop logits too.
+
+    known_crop_classes/known_disease_classes carry a local sample COUNT per
+    class, not just membership: aggregate_masked_logits uses it both to
+    decide which peers are informed for a class (same as a plain set would)
+    and to weight each peer's trimmed-mean contribution by how much local
+    evidence it actually has for that class, so a peer with 5 examples
+    doesn't drown out one with 200.
     """
 
     prototypes: Prototypes  # mean future embedding per class (crop type and disease type)
     crop_logits: torch.Tensor  # (num_probe, num_crop_classes)
     disease_logits: torch.Tensor  # (num_probe, num_disease_classes)
-    known_crop_classes: set[int]  # crop class ids this node has local training examples for
-    known_disease_classes: set[int]  # disease class ids this node has local training examples for
+    known_crop_classes: dict[int, int]  # crop class id -> local training example count
+    known_disease_classes: dict[int, int]  # disease class id -> local training example count
 
     # estimates communication cost for measuring bandwidth efficiency
     def size_bytes(self) -> int:
         proto_bytes = sum(v.numel() * 4 for v in self.prototypes.values())
         logit_bytes = (self.crop_logits.numel() + self.disease_logits.numel()) * 4
-        mask_bytes = (len(self.known_crop_classes) + len(self.known_disease_classes)) * 4
+        # class id + count, 4 bytes each, per known class
+        mask_bytes = (len(self.known_crop_classes) + len(self.known_disease_classes)) * 8
         return proto_bytes + logit_bytes + mask_bytes
 
 
@@ -164,7 +172,7 @@ class Node:
     # knowledge extraction: prototypes + public-probe logits
     # no_grad - no training session here
     @torch.no_grad()
-    def compute_prototypes(self) -> tuple[Prototypes, set[int], set[int]]:
+    def compute_prototypes(self) -> tuple[Prototypes, dict[int, int], dict[int, int]]:
         self.model.eval()
         crop_sums: dict[int, torch.Tensor] = {}
         crop_counts: dict[int, int] = {}
@@ -193,9 +201,10 @@ class Node:
         # recomputed fresh every round from the live train_loader, so this
         # stays correct across scenarios that swap or grow it mid-run
         # (class_addition, distribution_shift) instead of going stale.
-        known_crop_classes = set(crop_counts.keys())
-        known_disease_classes = set(disease_counts.keys())
-        return prototypes, known_crop_classes, known_disease_classes
+        # crop_counts/disease_counts are returned directly (not just their
+        # keys) so aggregate_masked_logits can weight each peer's
+        # contribution by how much local evidence it actually has.
+        return prototypes, crop_counts, disease_counts
 
     @torch.no_grad()
     def compute_probe_logits(self, probe_loader: DataLoader) -> tuple[torch.Tensor, torch.Tensor]:
