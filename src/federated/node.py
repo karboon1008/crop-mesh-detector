@@ -314,6 +314,106 @@ class Node:
             "proto_loss": proto_loss_sum / max(1, sup_batches),
         }
 
+    # combined local + distillation training: replaces a separate
+    # local_train() call followed by distill() with ONE training phase
+    # that backpropagates the supervised, prototype-alignment, and both KD
+    # losses together, per step, over `epochs` passes of train_loader.
+    #
+    # The original two-phase design ran `local_epochs` epochs of
+    # supervised-only training, THEN `distill_epochs` MORE epochs of
+    # supervised+proto+KD training on the same train_loader -- meaning the
+    # supervised objective was optimised twice per round for no additional
+    # benefit, which is why the mesh's compute cost was roughly double
+    # FedAvg's despite exchanging far fewer bytes. This method removes that
+    # redundancy: exactly `epochs` passes over train_loader per round,
+    # matching FedAvg's own per-round epoch budget, with the KD/proto terms
+    # folded in rather than run as a separate extra phase.
+    #
+    # probe_loader must be shuffle=False (true throughout this codebase,
+    # see src/train.py) so a batch's position always maps to the same
+    # slice of the precomputed consensus logits, even when its batches are
+    # cycled to match train_loader's (typically longer) length.
+    def train_round(
+        self,
+        consensus_prototypes: Prototypes,
+        consensus_crop_logits: torch.Tensor,
+        crop_known_mask: torch.Tensor,
+        consensus_disease_logits: torch.Tensor,
+        disease_known_mask: torch.Tensor,
+        probe_loader: DataLoader,
+        epochs: int,
+        lr: float,
+        proto_weight: float,
+        kd_weight: float,
+        crop_kd_weight: float,
+        temperature: float,
+    ) -> dict[str, float]:
+        self.model.train()
+        optimizer = torch.optim.Adam((p for p in self.model.parameters() if p.requires_grad), lr=lr)
+        total_steps = epochs * len(self.train_loader)
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=lr, total_steps=total_steps)
+        consensus_crop_logits = consensus_crop_logits.to(self.device)
+        crop_known_mask = crop_known_mask.to(self.device)
+        consensus_disease_logits = consensus_disease_logits.to(self.device)
+        disease_known_mask = disease_known_mask.to(self.device)
+
+        probe_batches = []
+        offset = 0
+        for images, _, _ in probe_loader:
+            probe_batches.append((images, offset, offset + images.shape[0]))
+            offset += images.shape[0]
+
+        kd_loss_sum, crop_kd_loss_sum, sup_loss_sum, proto_loss_sum, n_batches = 0.0, 0.0, 0.0, 0.0, 0
+        for _ in range(epochs):
+            for step, (images, crop_labels, disease_labels) in enumerate(self.train_loader):
+                images = images.to(self.device)
+                crop_labels = crop_labels.to(self.device)
+                disease_labels = disease_labels.to(self.device)
+
+                crop_logits, disease_logits, feats = self.model(images, return_features=True)
+                sup_loss = self.crop_loss_weight * _classification_loss(
+                    crop_logits, crop_labels, self.loss_type, self.crop_class_weights, self.focal_gamma
+                ) + self.disease_loss_weight * _classification_loss(
+                    disease_logits, disease_labels, self.loss_type, self.disease_class_weights, self.focal_gamma
+                )
+                proto_loss = _prototype_alignment_loss(
+                    feats, crop_labels, disease_labels, consensus_prototypes, self.device
+                )
+
+                probe_images, p_start, p_end = probe_batches[step % len(probe_batches)]
+                probe_images = probe_images.to(self.device)
+                probe_crop_logits, probe_disease_logits = self.model(probe_images)
+                kd_loss = _soft_kd_loss(
+                    probe_disease_logits, consensus_disease_logits[p_start:p_end], temperature,
+                    class_mask=disease_known_mask,
+                )
+                crop_kd_loss = _soft_kd_loss(
+                    probe_crop_logits, consensus_crop_logits[p_start:p_end], temperature,
+                    class_mask=crop_known_mask,
+                )
+
+                loss = (
+                    sup_loss + proto_weight * proto_loss
+                    + kd_weight * kd_loss + crop_kd_weight * crop_kd_loss
+                )
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                scheduler.step()
+
+                sup_loss_sum += sup_loss.item()
+                proto_loss_sum += proto_loss.item()
+                kd_loss_sum += kd_loss.item()
+                crop_kd_loss_sum += crop_kd_loss.item()
+                n_batches += 1
+
+        return {
+            "kd_loss": kd_loss_sum / max(1, n_batches),
+            "crop_kd_loss": crop_kd_loss_sum / max(1, n_batches),
+            "sup_loss": sup_loss_sum / max(1, n_batches),
+            "proto_loss": proto_loss_sum / max(1, n_batches),
+        }
+
     # evaluation
     @torch.no_grad()
     def evaluate(self, loader: DataLoader | None = None) -> dict:

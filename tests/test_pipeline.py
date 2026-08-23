@@ -124,6 +124,56 @@ def test_end_to_end_mesh_round_beats_no_exchange_smoke(synthetic_dataset):
     assert set(gain["per_node"].keys()) == {"node_0", "node_1"}
 
 
+def test_combined_training_round_runs_without_local_train_and_produces_gain(synthetic_dataset):
+    """Smoke test for MeshSimulator(combined_training=True): a round should
+    run without ever calling local_train() separately (folded into
+    Node.train_round instead), still exchange only prototypes/logits, and
+    still produce a well-formed collaboration-gain report -- same shape of
+    assertions as the default two-phase path above, so this is a like-for-
+    like check that the opt-in path doesn't break the existing contract.
+    """
+    probe_idx, remaining_idx = carve_public_probe_set(synthetic_dataset, 0.2, seed=1)
+    shards = partition_nodes(
+        synthetic_dataset, remaining_idx, num_nodes=2, strategy="by_crop", dirichlet_alpha=0.3, seed=1
+    )
+    probe_loader = DataLoader(make_subset(synthetic_dataset, probe_idx), batch_size=4, shuffle=False)
+
+    num_crop = len(synthetic_dataset.labels.crop_classes)
+    num_disease = len(synthetic_dataset.labels.disease_classes)
+
+    baseline_nodes = build_nodes(synthetic_dataset, shards, num_crop, num_disease)
+    baseline_evals = {}
+    for node in baseline_nodes:
+        node.local_train(epochs=1, lr=1e-3)
+        baseline_evals[node.node_id] = node.evaluate()
+
+    mesh_nodes = build_nodes(synthetic_dataset, shards, num_crop, num_disease)
+    mesh = MeshSimulator(
+        mesh_nodes, probe_loader, aggregation_method="trimmed_mean", trim_fraction=0.0, krum_neighbors=1,
+        combined_training=True,
+    )
+    round_log = mesh.run_round(
+        0,
+        local_epochs=1,
+        distill_epochs=1,  # accepted but unused under combined_training
+        lr=1e-3,
+        distill_lr=1e-3,  # accepted but unused under combined_training
+        proto_weight=0.5,
+        kd_weight=0.5,
+        temperature=2.0,
+    )
+
+    assert round_log.total_bytes_exchanged > 0
+    assert round_log.per_node_train_loss == {}  # step 1 (local_train) is skipped entirely
+    assert set(round_log.per_node_distill_loss.keys()) == {"node_0", "node_1"}
+    mesh_evals = {node.node_id: node.evaluate() for node in mesh_nodes}
+
+    gain = compute_collaboration_gain(mesh_evals, baseline_evals)
+    assert "macro_gain" in gain
+    assert "worst_node_gain" in gain
+    assert set(gain["per_node"].keys()) == {"node_0", "node_1"}
+
+
 def test_scale_kd_weight_pulls_weak_nodes_harder_than_strong_nodes():
     # ahead of peers -> scaled down
     assert _scale_kd_weight(0.7, node_avg=0.8, peer_avg=0.4, min_scale=0.3, max_scale=1.5) == pytest.approx(0.7 * 0.5)

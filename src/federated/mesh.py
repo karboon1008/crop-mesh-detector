@@ -56,6 +56,7 @@ class MeshSimulator:
         adaptive_kd_weight: bool = False,
         adaptive_kd_min_scale: float = 0.3,
         adaptive_kd_max_scale: float = 1.5,
+        combined_training: bool = False,
     ):
         self.nodes = nodes
         self.probe_loader = probe_loader
@@ -65,6 +66,16 @@ class MeshSimulator:
         self.adaptive_kd_weight = adaptive_kd_weight
         self.adaptive_kd_min_scale = adaptive_kd_min_scale
         self.adaptive_kd_max_scale = adaptive_kd_max_scale
+        # When True, each round folds local supervised training, prototype
+        # alignment, and both KD losses into ONE combined-loss training
+        # phase (Node.train_round, `local_epochs` passes over train_loader)
+        # instead of the default two-phase local_train() then distill()
+        # (`local_epochs` supervised-only epochs, THEN `distill_epochs`
+        # MORE supervised+proto+KD epochs) -- see Node.train_round's
+        # docstring for why the two-phase design double-trains on the
+        # supervised objective every round. Default False preserves the
+        # exact existing behaviour and all previously reported results.
+        self.combined_training = combined_training
 
     def run_round(
         self,
@@ -90,9 +101,16 @@ class MeshSimulator:
         # not frozen. local_epochs may be a single int shared by every node,
         # or a {node_id: epochs} map (e.g. to give data-poor nodes more
         # epochs so they see a comparable number of gradient steps).
-        for node in self.nodes:
-            node_epochs = local_epochs[node.node_id] if isinstance(local_epochs, dict) else local_epochs
-            log.per_node_train_loss[node.node_id] = node.local_train(node_epochs, lr)
+        # Skipped entirely under combined_training: that path folds this
+        # same local supervised update into step 3's train_round call
+        # instead of running it here as a separate phase (see
+        # Node.train_round's docstring) -- so knowledge is broadcast from
+        # the state at the START of this round (last round's end state)
+        # rather than from a fresh mid-round local update.
+        if not self.combined_training:
+            for node in self.nodes:
+                node_epochs = local_epochs[node.node_id] if isinstance(local_epochs, dict) else local_epochs
+                log.per_node_train_loss[node.node_id] = node.local_train(node_epochs, lr)
 
         # 1b) snapshot every node's metrics right here, before any peer
         # knowledge is applied, so the pre- vs. post-distill comparison
@@ -163,20 +181,37 @@ class MeshSimulator:
                 krum_neighbors=self.krum_neighbors,
             )
 
-            log.per_node_distill_loss[node.node_id] = node.distill(
-                consensus_prototypes,
-                consensus_crop_logits,
-                crop_known_mask,
-                consensus_disease_logits,
-                disease_known_mask,
-                self.probe_loader,
-                epochs=distill_epochs,
-                lr=distill_lr,
-                proto_weight=proto_weight,
-                kd_weight=node_kd_weight,
-                crop_kd_weight=node_crop_kd_weight,
-                temperature=temperature,
-            )
+            if self.combined_training:
+                node_epochs = local_epochs[node.node_id] if isinstance(local_epochs, dict) else local_epochs
+                log.per_node_distill_loss[node.node_id] = node.train_round(
+                    consensus_prototypes,
+                    consensus_crop_logits,
+                    crop_known_mask,
+                    consensus_disease_logits,
+                    disease_known_mask,
+                    self.probe_loader,
+                    epochs=node_epochs,
+                    lr=lr,
+                    proto_weight=proto_weight,
+                    kd_weight=node_kd_weight,
+                    crop_kd_weight=node_crop_kd_weight,
+                    temperature=temperature,
+                )
+            else:
+                log.per_node_distill_loss[node.node_id] = node.distill(
+                    consensus_prototypes,
+                    consensus_crop_logits,
+                    crop_known_mask,
+                    consensus_disease_logits,
+                    disease_known_mask,
+                    self.probe_loader,
+                    epochs=distill_epochs,
+                    lr=distill_lr,
+                    proto_weight=proto_weight,
+                    kd_weight=node_kd_weight,
+                    crop_kd_weight=node_crop_kd_weight,
+                    temperature=temperature,
+                )
 
         # 4) evaluate every node after this round's exchange
         for node in self.nodes:
