@@ -57,6 +57,15 @@ training:
   # src/models/factory.py); efficientnet_lite0 has no entry there and is
   # always a no-op, matching the reasoning above.
   freeze_low_layers_in_mesh: false
+  # Experiment: folds local supervised training + prototype-alignment +
+  # both KD losses into ONE combined-loss phase per round (local_epochs
+  # passes over train_loader), instead of local_epochs of supervised-only
+  # training followed by a SEPARATE distill_epochs of supervised+proto+KD
+  # training on the same data -- the two-phase design silently trains the
+  # supervised objective twice per round. distill_epochs_per_round and
+  # distill_lr below are accepted but unused when this is true. See
+  # src/federated/node.py, Node.train_round.
+  combined_training: true
   distill_epochs_per_round: 2     # epochs spent distilling towards consensus knowledge
   rounds: 8                       # number of mesh exchange rounds — raised from 5 to give distillation more exposure to peer knowledge before local retraining reasserts specialism
   crop_loss_weight: 1.0
