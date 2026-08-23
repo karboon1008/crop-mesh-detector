@@ -159,6 +159,7 @@ def run_tomato_round_with_io(
         proto_weight=cfg.get("training.proto_weight", 0.5),
         kd_weight=cfg.get("training.kd_weight", 0.5),
         temperature=cfg.get("training.kd_temperature", 2.0),
+        crop_kd_weight=cfg.get("training.crop_kd_weight", None),
         tracker=tracker,
         round_idx=round_idx,
     )

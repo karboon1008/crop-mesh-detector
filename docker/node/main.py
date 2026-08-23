@@ -111,10 +111,12 @@ def build_runner() -> NodeRunner:
     probe_dataset = PlantVillageDataset(probe_root, image_size=image_size, global_label_map=global_map)
 
     train_idx, test_idx = train_test_split_indices(
-        list(range(len(local_dataset))), cfg.get("data.test_fraction", 0.15), cfg.get("data.seed", 42)
+        local_dataset, list(range(len(local_dataset))), cfg.get("data.test_fraction", 0.15), cfg.get("data.seed", 42)
     )
     batch_size = cfg.get("training.batch_size", 32)
-    train_loader = DataLoader(make_subset(local_dataset, train_idx), batch_size=batch_size, shuffle=True)
+    train_loader = DataLoader(
+        make_subset(local_dataset, train_idx, train=True), batch_size=batch_size, shuffle=True
+    )
     test_loader = DataLoader(make_subset(local_dataset, test_idx), batch_size=batch_size, shuffle=False)
     # shuffle=False: every node must compute probe logits over the identical
     # image order for the positional peer-logit aggregation to be meaningful.
@@ -127,14 +129,20 @@ def build_runner() -> NodeRunner:
         len(global_map.disease_classes),
         pretrained=cfg.get("models.pretrained", True),
     )
-    node = Node(node_id, model, train_loader, test_loader, device="cpu")
+    node = Node(
+        node_id, model, train_loader, test_loader, device="cpu",
+        crop_classes=global_map.crop_classes, disease_classes=global_map.disease_classes,
+    )
     shadow_model = build_model(
         arch,
         len(global_map.crop_classes),
         len(global_map.disease_classes),
         pretrained=cfg.get("models.pretrained", True),
     )
-    shadow_node = Node(node_id, shadow_model, train_loader, test_loader, device="cpu")
+    shadow_node = Node(
+        node_id, shadow_model, train_loader, test_loader, device="cpu",
+        crop_classes=global_map.crop_classes, disease_classes=global_map.disease_classes,
+    )
     tracker = ComputeEnergyTracker(
         enabled=cfg.get("energy.track_with_codecarbon", False),
         output_dir="/tmp/codecarbon",
@@ -158,6 +166,7 @@ def build_runner() -> NodeRunner:
         distill_lr=cfg.get("training.distill_lr", 0.0005),
         proto_weight=cfg.get("training.proto_weight", 0.5),
         kd_weight=cfg.get("training.kd_weight", 0.5),
+        crop_kd_weight=cfg.get("training.crop_kd_weight", None),
         temperature=cfg.get("training.kd_temperature", 2.0),
     )
 

@@ -77,8 +77,11 @@ def test_inactive_node_excluded_from_broadcast_and_distill(synthetic_dataset):
     )
 
     assert round_log.active_nodes == ["node_1", "node_2"]
-    # the disconnected node still trained locally and was evaluated...
+    # the disconnected node still trained locally and was evaluated, both
+    # pre- and post-distill (post-distill is a no-op for it since it never
+    # distills, but the snapshot is still taken)...
     assert "node_0" in round_log.per_node_train_loss
+    assert "node_0" in round_log.pre_distill_eval
     assert "node_0" in round_log.per_node_eval
     # ...but never distilled towards a peer consensus this round.
     assert "node_0" not in round_log.per_node_distill_loss
@@ -87,9 +90,7 @@ def test_inactive_node_excluded_from_broadcast_and_distill(synthetic_dataset):
     assert "node_2" in round_log.per_node_distill_loss
 
 
-def test_run_scenario_tracks_compute_and_communication_energy(
-    tmp_path, synthetic_dataset, energy_tracker, wifi_comm_estimator
-):
+def test_run_scenario_and_write_report(tmp_path, synthetic_dataset):
     probe_idx, remaining_idx = carve_public_probe_set(synthetic_dataset, 0.2, seed=2)
     shards = partition_nodes(
         synthetic_dataset, remaining_idx, num_nodes=2, strategy="by_crop", dirichlet_alpha=0.3, seed=2
@@ -111,49 +112,7 @@ def test_run_scenario_tracks_compute_and_communication_energy(
         "local_epochs": 1, "distill_epochs": 1, "lr": 1e-3, "distill_lr": 1e-3,
         "proto_weight": 0.5, "kd_weight": 0.5, "temperature": 2.0,
     }
-    records = run_scenario(
-        baseline_nodes, mesh, num_rounds=2, perturbation_hook=no_op_hook, round_kwargs=round_kwargs,
-        tracker=energy_tracker, comm_estimator=wifi_comm_estimator, radio="wifi",
-    )
-
-    assert len(records) == 2
-    for record in records:
-        assert record.baseline_compute_energy_kwh >= 0
-        assert record.mesh_compute_energy_kwh >= 0
-        # both nodes are active every round in this test, so bytes (and
-        # therefore communication energy) must be strictly positive.
-        assert record.communication_energy_j > 0
-
-    expected_j = records[0].total_bytes_exchanged * 0.00003
-    assert records[0].communication_energy_j == pytest.approx(expected_j)
-
-
-def test_run_scenario_and_write_report(tmp_path, synthetic_dataset, energy_tracker, wifi_comm_estimator):
-    probe_idx, remaining_idx = carve_public_probe_set(synthetic_dataset, 0.2, seed=2)
-    shards = partition_nodes(
-        synthetic_dataset, remaining_idx, num_nodes=2, strategy="by_crop", dirichlet_alpha=0.3, seed=2
-    )
-    probe_loader = DataLoader(make_subset(synthetic_dataset, probe_idx), batch_size=4, shuffle=False)
-    num_crop = len(synthetic_dataset.labels.crop_classes)
-    num_disease = len(synthetic_dataset.labels.disease_classes)
-
-    baseline_nodes = build_nodes(synthetic_dataset, shards, num_crop, num_disease)
-    mesh_nodes = build_nodes(synthetic_dataset, shards, num_crop, num_disease)
-    mesh = MeshSimulator(
-        mesh_nodes, probe_loader, aggregation_method="trimmed_mean", trim_fraction=0.0, krum_neighbors=1
-    )
-
-    def no_op_hook(round_idx, nodes, mesh_or_none):
-        return []
-
-    round_kwargs = {
-        "local_epochs": 1, "distill_epochs": 1, "lr": 1e-3, "distill_lr": 1e-3,
-        "proto_weight": 0.5, "kd_weight": 0.5, "temperature": 2.0,
-    }
-    records = run_scenario(
-        baseline_nodes, mesh, num_rounds=2, perturbation_hook=no_op_hook, round_kwargs=round_kwargs,
-        tracker=energy_tracker, comm_estimator=wifi_comm_estimator,
-    )
+    records = run_scenario(baseline_nodes, mesh, num_rounds=2, perturbation_hook=no_op_hook, round_kwargs=round_kwargs)
     assert len(records) == 2
     assert records[0].round_idx == 0 and records[1].round_idx == 1
 
@@ -169,55 +128,6 @@ def test_run_scenario_and_write_report(tmp_path, synthetic_dataset, energy_track
     assert len(written["rounds"]) == 2
     assert "recovery_round_mesh" in written["summary"]
     assert "recovery_round_baseline" in written["summary"]
-
-
-def test_run_scenario_and_report_record_compute_energy_method(
-    tmp_path, synthetic_dataset, energy_tracker, wifi_comm_estimator
-):
-    # energy_tracker (tests/conftest.py) is built with enabled=False, so
-    # ComputeEnergyTracker never attempts CodeCarbon and every tracked
-    # block falls back to the wall-clock * fallback_power_watts proxy —
-    # exactly the situation this project's real scenario runs are in
-    # (config.yaml's energy.track_with_codecarbon is false). Each round's
-    # record, and the report's summary.sustainability block, should say so
-    # explicitly rather than silently reporting a number with no attached
-    # method.
-    probe_idx, remaining_idx = carve_public_probe_set(synthetic_dataset, 0.2, seed=2)
-    shards = partition_nodes(
-        synthetic_dataset, remaining_idx, num_nodes=2, strategy="by_crop", dirichlet_alpha=0.3, seed=2
-    )
-    probe_loader = DataLoader(make_subset(synthetic_dataset, probe_idx), batch_size=4, shuffle=False)
-    num_crop = len(synthetic_dataset.labels.crop_classes)
-    num_disease = len(synthetic_dataset.labels.disease_classes)
-
-    baseline_nodes = build_nodes(synthetic_dataset, shards, num_crop, num_disease)
-    mesh_nodes = build_nodes(synthetic_dataset, shards, num_crop, num_disease)
-    mesh = MeshSimulator(
-        mesh_nodes, probe_loader, aggregation_method="trimmed_mean", trim_fraction=0.0, krum_neighbors=1
-    )
-
-    def no_op_hook(round_idx, nodes, mesh_or_none):
-        return []
-
-    round_kwargs = {
-        "local_epochs": 1, "distill_epochs": 1, "lr": 1e-3, "distill_lr": 1e-3,
-        "proto_weight": 0.5, "kd_weight": 0.5, "temperature": 2.0,
-    }
-    records = run_scenario(
-        baseline_nodes, mesh, num_rounds=2, perturbation_hook=no_op_hook, round_kwargs=round_kwargs,
-        tracker=energy_tracker, comm_estimator=wifi_comm_estimator, radio="wifi",
-    )
-
-    for record in records:
-        assert record.compute_energy_method == "proxy_wall_power"
-
-    report_path = write_scenario_report(
-        tmp_path, "unit_test_method", "node_0",
-        disruption_start_round=1, disruption_end_round=1,
-        config_snapshot={}, records=records,
-    )
-    report = json.loads(report_path.read_text())
-    assert report["summary"]["sustainability"]["compute_energy_method"] == "proxy_wall_power"
 
 
 def test_recovery_round_returns_none_for_out_of_range_disruption_start():
@@ -239,20 +149,13 @@ def test_recovery_round_returns_none_for_empty_records():
     assert _recovery_round([], "node_0", disruption_start_round=5, disruption_end_round=6, eval_key="mesh_eval") is None
 
 
-def test_disconnection_scenario_end_to_end_smoke(tmp_path, synthetic_dataset, energy_tracker, wifi_comm_estimator):
+def test_disconnection_scenario_end_to_end_smoke(tmp_path, synthetic_dataset):
     from src.scenarios.disconnection import make_disconnect_hook
 
     # NOTE: deviates from the task-4 brief, which specified strategy="by_crop"
-    # here. Same root cause already documented above in
-    # test_inactive_node_excluded_from_broadcast_and_distill: with only 2 crop
-    # groups in the shared `synthetic_dataset` fixture, "by_crop" round-robin
-    # can never populate a 3rd node's shard for any seed, which crashes
-    # DataLoader(shuffle=True) on the empty shard before this scenario's code
-    # ever runs. Reusing the same probe_fraction=0.2/seed=2/"dirichlet"
-    # combination that test already verified empirically gives 3 non-empty,
-    # balanced shards (sizes [9, 8, 9]) whose per-node train splits (sizes
-    # [7, 6, 7]) are also clear of the batch_size=4 trailing-batch-of-1 trap
-    # that crashes MobileNetV3's BatchNorm.
+    # here. Same reason as test_inactive_node_excluded_from_broadcast_and_distill
+    # above: with only 2 crop groups in the shared `synthetic_dataset` fixture,
+    # "by_crop" round-robin can never populate a 3rd node's shard for any seed.
     probe_idx, remaining_idx = carve_public_probe_set(synthetic_dataset, 0.2, seed=2)
     shards = partition_nodes(
         synthetic_dataset, remaining_idx, num_nodes=3, strategy="dirichlet", dirichlet_alpha=0.3, seed=2
@@ -272,10 +175,7 @@ def test_disconnection_scenario_end_to_end_smoke(tmp_path, synthetic_dataset, en
         "local_epochs": 1, "distill_epochs": 1, "lr": 1e-3, "distill_lr": 1e-3,
         "proto_weight": 0.5, "kd_weight": 0.5, "temperature": 2.0,
     }
-    records = run_scenario(
-        baseline_nodes, mesh, num_rounds=3, perturbation_hook=hook, round_kwargs=round_kwargs,
-        tracker=energy_tracker, comm_estimator=wifi_comm_estimator,
-    )
+    records = run_scenario(baseline_nodes, mesh, num_rounds=3, perturbation_hook=hook, round_kwargs=round_kwargs)
 
     report_path = write_scenario_report(
         tmp_path, "disconnection", "node_1",
@@ -321,7 +221,7 @@ def test_carve_reserve_pool_is_disjoint_from_remaining_source(synthetic_dataset)
         synthetic_dataset, remaining_idx, num_nodes=2, strategy="manual", dirichlet_alpha=0.3, seed=4,
         manual_node_crops={"node_0": ["Tomato"], "node_1": ["Potato"]},
     )
-    source_train_idx, _ = train_test_split_indices(shards[0], test_fraction=0.3, seed=4)  # node_0 grows Tomato
+    source_train_idx, _ = train_test_split_indices(synthetic_dataset, shards[0], test_fraction=0.3, seed=4)  # node_0 grows Tomato
 
     remaining_source, reserve_train_idx, reserve_test_idx = carve_reserve_pool(
         synthetic_dataset, source_train_idx, source_crop="Tomato", reserve_fraction=0.5, seed=4, test_fraction=0.3,
@@ -333,7 +233,7 @@ def test_carve_reserve_pool_is_disjoint_from_remaining_source(synthetic_dataset)
     assert len(reserve_all) > 0
 
 
-def test_class_addition_scenario_end_to_end_smoke(tmp_path, synthetic_dataset, energy_tracker, wifi_comm_estimator):
+def test_class_addition_scenario_end_to_end_smoke(tmp_path, synthetic_dataset):
     from src.scenarios.class_addition import carve_reserve_pool, make_class_addition_hook
 
     _, remaining_idx = carve_public_probe_set(synthetic_dataset, 0.1, seed=5)
@@ -346,8 +246,8 @@ def test_class_addition_scenario_end_to_end_smoke(tmp_path, synthetic_dataset, e
     num_crop = len(synthetic_dataset.labels.crop_classes)
     num_disease = len(synthetic_dataset.labels.disease_classes)
 
-    source_train_idx, source_test_idx = train_test_split_indices(shards[1], test_fraction=0.3, seed=5)  # node_1: Tomato
-    target_train_idx, target_test_idx = train_test_split_indices(shards[0], test_fraction=0.3, seed=5)  # node_0: Potato
+    source_train_idx, source_test_idx = train_test_split_indices(synthetic_dataset, shards[1], test_fraction=0.3, seed=5)  # node_1: Tomato
+    target_train_idx, target_test_idx = train_test_split_indices(synthetic_dataset, shards[0], test_fraction=0.3, seed=5)  # node_0: Potato
 
     remaining_source, reserve_train_idx, reserve_test_idx = carve_reserve_pool(
         synthetic_dataset, source_train_idx, source_crop="Tomato", reserve_fraction=0.5, seed=5, test_fraction=0.3,
@@ -355,7 +255,7 @@ def test_class_addition_scenario_end_to_end_smoke(tmp_path, synthetic_dataset, e
 
     def make_loaders(train_idx, test_idx):
         return (
-            DataLoader(make_subset(synthetic_dataset, train_idx), batch_size=4, shuffle=True),
+            DataLoader(make_subset(synthetic_dataset, train_idx), batch_size=4, shuffle=True, drop_last=True),
             DataLoader(make_subset(synthetic_dataset, test_idx), batch_size=4, shuffle=False),
         )
 
@@ -365,11 +265,19 @@ def test_class_addition_scenario_end_to_end_smoke(tmp_path, synthetic_dataset, e
     ]
 
     baseline_nodes = [
-        Node(f"node_{i}", build_model("mobilenet_v3_small", num_crop, num_disease, pretrained=False), tl, sl, device="cpu")
+        Node(
+            f"node_{i}", build_model("mobilenet_v3_small", num_crop, num_disease, pretrained=False), tl, sl,
+            device="cpu", crop_classes=synthetic_dataset.labels.crop_classes,
+            disease_classes=synthetic_dataset.labels.disease_classes,
+        )
         for i, (tl, sl) in enumerate(node_loaders)
     ]
     mesh_nodes = [
-        Node(f"node_{i}", build_model("mobilenet_v3_small", num_crop, num_disease, pretrained=False), tl, sl, device="cpu")
+        Node(
+            f"node_{i}", build_model("mobilenet_v3_small", num_crop, num_disease, pretrained=False), tl, sl,
+            device="cpu", crop_classes=synthetic_dataset.labels.crop_classes,
+            disease_classes=synthetic_dataset.labels.disease_classes,
+        )
         for i, (tl, sl) in enumerate(node_loaders)
     ]
     mesh = MeshSimulator(
@@ -384,10 +292,7 @@ def test_class_addition_scenario_end_to_end_smoke(tmp_path, synthetic_dataset, e
         "local_epochs": 1, "distill_epochs": 1, "lr": 1e-3, "distill_lr": 1e-3,
         "proto_weight": 0.5, "kd_weight": 0.5, "temperature": 2.0,
     }
-    records = run_scenario(
-        baseline_nodes, mesh, num_rounds=2, perturbation_hook=hook, round_kwargs=round_kwargs,
-        tracker=energy_tracker, comm_estimator=wifi_comm_estimator,
-    )
+    records = run_scenario(baseline_nodes, mesh, num_rounds=2, perturbation_hook=hook, round_kwargs=round_kwargs)
 
     report_path = write_scenario_report(
         tmp_path, "class_addition", "node_0",
@@ -415,7 +320,7 @@ def test_corrupted_dataset_is_noop_at_zero_severity_and_differs_otherwise(synthe
     assert not torch.equal(image_c, image_b)
 
 
-def test_distribution_shift_scenario_end_to_end_smoke(tmp_path, synthetic_dataset, energy_tracker, wifi_comm_estimator):
+def test_distribution_shift_scenario_end_to_end_smoke(tmp_path, synthetic_dataset):
     from src.scenarios.distribution_shift import make_shift_hook
 
     probe_idx, remaining_idx = carve_public_probe_set(synthetic_dataset, 0.2, seed=6)
@@ -437,10 +342,7 @@ def test_distribution_shift_scenario_end_to_end_smoke(tmp_path, synthetic_datase
         "local_epochs": 1, "distill_epochs": 1, "lr": 1e-3, "distill_lr": 1e-3,
         "proto_weight": 0.5, "kd_weight": 0.5, "temperature": 2.0,
     }
-    records = run_scenario(
-        baseline_nodes, mesh, num_rounds=2, perturbation_hook=hook, round_kwargs=round_kwargs,
-        tracker=energy_tracker, comm_estimator=wifi_comm_estimator,
-    )
+    records = run_scenario(baseline_nodes, mesh, num_rounds=2, perturbation_hook=hook, round_kwargs=round_kwargs)
 
     report_path = write_scenario_report(
         tmp_path, "distribution_shift", "node_0",
@@ -452,43 +354,3 @@ def test_distribution_shift_scenario_end_to_end_smoke(tmp_path, synthetic_datase
     event_types = [e["event_type"] for r in report["rounds"] for e in r["events"]]
     assert event_types == ["shift_applied"]
     assert report["rounds"][1]["events"][0]["details"]["severity"] == 0.5
-
-
-def test_write_scenario_report_includes_sustainability_summary(tmp_path):
-    records = [
-        ScenarioRoundRecord(
-            0, {"node_0": {"crop_accuracy": 0.5}}, {"node_0": {"crop_accuracy": 0.6}},
-            {"macro_gain": {"crop_accuracy": 0.1, "disease_accuracy": 0.05}},
-            baseline_compute_energy_kwh=0.0001, mesh_compute_energy_kwh=0.0002, communication_energy_j=50.0,
-        ),
-        ScenarioRoundRecord(
-            1, {"node_0": {"crop_accuracy": 0.55}}, {"node_0": {"crop_accuracy": 0.7}},
-            {"macro_gain": {"crop_accuracy": 0.15, "disease_accuracy": 0.08}},
-            baseline_compute_energy_kwh=0.0001, mesh_compute_energy_kwh=0.0002, communication_energy_j=50.0,
-        ),
-    ]
-    report_path = write_scenario_report(
-        tmp_path, "unit_test_energy", "node_0",
-        disruption_start_round=1, disruption_end_round=1,
-        config_snapshot={}, records=records,
-    )
-    report = json.loads(report_path.read_text())
-    sustainability = report["summary"]["sustainability"]
-    assert sustainability["total_baseline_compute_energy_kwh"] == pytest.approx(0.0002)
-    assert sustainability["total_mesh_compute_energy_kwh"] == pytest.approx(0.0004)
-    assert sustainability["total_communication_energy_j"] == pytest.approx(100.0)
-    expected_total_mesh_j = 0.0004 * 3_600_000 + 100.0
-    assert sustainability["gain_per_joule"] == pytest.approx({
-        "crop_accuracy": 0.15 / expected_total_mesh_j,
-        "disease_accuracy": 0.08 / expected_total_mesh_j,
-    })
-
-
-def test_gain_per_joule_is_none_when_no_energy_recorded():
-    from src.scenarios.harness import _gain_per_joule
-
-    records = [
-        ScenarioRoundRecord(0, {"node_0": {"crop_accuracy": 0.5}}, {"node_0": {"crop_accuracy": 0.6}}, {"macro_gain": {"crop_accuracy": 0.1}}),
-    ]
-    assert _gain_per_joule(records) is None
-    assert _gain_per_joule([]) is None

@@ -11,11 +11,11 @@ import json
 from pathlib import Path
 from typing import Callable, Optional
 
-from src.energy.tracker import CommunicationCostEstimator, ComputeEnergyTracker
-from src.evaluate import compute_collaboration_gain
+from src.evaluate import compute_collaboration_gain, scalar_metrics
 from src.federated.mesh import MeshSimulator
 from src.federated.node import Node
 from src.models.factory import build_model
+from src.reporting import build_per_class_rows, build_scenario_rows, plot_training_curves, write_csv
 
 RECOVERY_TOLERANCE = 0.05  # accuracy points a node must be within to count as "recovered"
 
@@ -37,10 +37,11 @@ class ScenarioRoundRecord:
     events: list[ScenarioEvent] = dataclasses.field(default_factory=list)
     active_nodes: list[str] = dataclasses.field(default_factory=list)
     total_bytes_exchanged: int = 0
-    baseline_compute_energy_kwh: float = 0.0
-    mesh_compute_energy_kwh: float = 0.0
-    communication_energy_j: float = 0.0
-    compute_energy_method: str = ""
+    per_node_train_loss: dict[str, float] = dataclasses.field(default_factory=dict)
+    # mesh side only, snapshot right after local_train, before distillation
+    pre_distill_eval: dict[str, dict[str, float | dict]] = dataclasses.field(default_factory=dict)
+    # node_id -> {"kd_loss", "sup_loss", "proto_loss"}
+    per_node_distill_loss: dict[str, dict[str, float]] = dataclasses.field(default_factory=dict)
 
 
 PerturbationHook = Callable[[int, "list[Node]", Optional[MeshSimulator]], "list[ScenarioEvent]"]
@@ -56,7 +57,10 @@ def require_target_node(target_node: str, node_loaders) -> None:
         raise ValueError(f"target_node '{target_node}' is not one of {ids}")
 
 
-def build_node_set(cfg, arch: str, node_loaders, num_crop: int, num_disease: int, device: str) -> list[Node]:
+def build_node_set(
+    cfg, arch: str, node_loaders, crop_classes: list[str], disease_classes: list[str], device: str,
+    pair_class_names: list[str] | None = None, class_to_crop_disease: dict[int, tuple[int, int]] | None = None,
+) -> list[Node]:
     """Builds one fresh, independent Node per shard in `node_loaders` — used
     to construct both the no-exchange baseline set and the mesh set from
     the same starting shards.
@@ -71,8 +75,14 @@ def build_node_set(cfg, arch: str, node_loaders, num_crop: int, num_disease: int
     """
     nodes = []
     for i, (train_loader, test_loader) in enumerate(node_loaders):
-        model = build_model(arch, num_crop, num_disease, pretrained=cfg.get("models.pretrained", True))
-        nodes.append(Node(f"node_{i}", model, train_loader, test_loader, device=device))
+        model = build_model(
+            arch, len(crop_classes), len(disease_classes), pretrained=cfg.get("models.pretrained", True)
+        )
+        nodes.append(Node(
+            f"node_{i}", model, train_loader, test_loader, device=device,
+            crop_classes=crop_classes, disease_classes=disease_classes,
+            pair_class_names=pair_class_names, class_to_crop_disease=class_to_crop_disease,
+        ))
     return nodes
 
 
@@ -82,15 +92,9 @@ def run_scenario(
     num_rounds: int,
     perturbation_hook: PerturbationHook,
     round_kwargs: dict,
-    tracker: ComputeEnergyTracker,
-    comm_estimator: CommunicationCostEstimator,
-    radio: str = "wifi",
 ) -> list[ScenarioRoundRecord]:
     """Drives `num_rounds` rounds of a baseline (no-exchange) node set and a
-    mesh node set through the same perturbation schedule, tracking compute
-    energy (via `tracker`, the same ComputeEnergyTracker src/train.py uses)
-    and communication energy (via `comm_estimator`, fed by the mesh round's
-    already-measured `total_bytes_exchanged`) for every round of both.
+    mesh node set through the same perturbation schedule.
 
     Convention: `perturbation_hook` is called once per round for the
     baseline set (third argument None) and once for the mesh set (third
@@ -100,54 +104,36 @@ def run_scenario(
     applied identically to both parallel simulations.
     """
     records: list[ScenarioRoundRecord] = []
-    compute_energy_method: Optional[str] = None
     for round_idx in range(num_rounds):
         events = perturbation_hook(round_idx, baseline_nodes, None)
         events = events + perturbation_hook(round_idx, mesh.nodes, mesh)
 
         baseline_eval = {}
-        baseline_compute_energy_kwh = 0.0
         for node in baseline_nodes:
-            # evaluate() is intentionally tracked *inside* this block (not
-            # after it) so the baseline's compute-energy figure covers the
-            # same operation boundary as the mesh arm's: mesh.run_round()
-            # (below) evaluates every node as part of its own tracked
-            # block. Evaluating outside would exclude that pass on the
-            # baseline side only, biasing the mesh:baseline compute-energy
-            # ratio in the mesh's favour.
-            with tracker.track(f"baseline_{node.node_id}_round_{round_idx}") as energy_record:
-                node.local_train(round_kwargs["local_epochs"], round_kwargs["lr"])
-                baseline_eval[node.node_id] = node.evaluate()
-            baseline_compute_energy_kwh += energy_record["energy_kwh"]
-            if compute_energy_method is None:
-                compute_energy_method = energy_record["method"]
+            node.local_train(round_kwargs["local_epochs"], round_kwargs["lr"])
+            baseline_eval[node.node_id] = node.evaluate()
 
-        with tracker.track(f"mesh_round_{round_idx}") as mesh_energy_record:
-            round_log = mesh.run_round(
-                round_idx,
-                local_epochs=round_kwargs["local_epochs"],
-                distill_epochs=round_kwargs["distill_epochs"],
-                lr=round_kwargs["lr"],
-                distill_lr=round_kwargs["distill_lr"],
-                proto_weight=round_kwargs["proto_weight"],
-                kd_weight=round_kwargs["kd_weight"],
-                temperature=round_kwargs["temperature"],
-            )
-        mesh_compute_energy_kwh = mesh_energy_record["energy_kwh"]
+        round_log = mesh.run_round(
+            round_idx,
+            local_epochs=round_kwargs["local_epochs"],
+            distill_epochs=round_kwargs["distill_epochs"],
+            lr=round_kwargs["lr"],
+            distill_lr=round_kwargs["distill_lr"],
+            proto_weight=round_kwargs["proto_weight"],
+            kd_weight=round_kwargs["kd_weight"],
+            crop_kd_weight=round_kwargs.get("crop_kd_weight"),
+            temperature=round_kwargs["temperature"],
+        )
         mesh_eval = {node.node_id: node.evaluate() for node in mesh.nodes}
-
-        comm_result = comm_estimator.estimate(round_log.total_bytes_exchanged, radio)
-        communication_energy_j = comm_result["energy_kwh"] * 3_600_000
 
         gain = compute_collaboration_gain(mesh_eval, baseline_eval)
         records.append(ScenarioRoundRecord(
             round_idx, baseline_eval, mesh_eval, gain, events,
             active_nodes=round_log.active_nodes,
             total_bytes_exchanged=round_log.total_bytes_exchanged,
-            baseline_compute_energy_kwh=baseline_compute_energy_kwh,
-            mesh_compute_energy_kwh=mesh_compute_energy_kwh,
-            communication_energy_j=communication_energy_j,
-            compute_energy_method=compute_energy_method or mesh_energy_record["method"],
+            per_node_train_loss=round_log.per_node_train_loss,
+            pre_distill_eval=round_log.pre_distill_eval,
+            per_node_distill_loss=round_log.per_node_distill_loss,
         ))
         print(f"  round {round_idx}: {len(events)} event(s), macro_gain={gain['macro_gain']}")
     return records
@@ -170,41 +156,20 @@ def _recovery_round(
     pre_round = max(0, disruption_start_round - 1)
     if pre_round >= len(records):
         return None
-    pre_eval = getattr(records[pre_round], eval_key).get(node_id)
-    if pre_eval is None:
+    raw_pre_eval = getattr(records[pre_round], eval_key).get(node_id)
+    if raw_pre_eval is None:
         return None
+    pre_eval = scalar_metrics(raw_pre_eval)
     for record in records:
         if record.round_idx < disruption_end_round:
             continue
         current = getattr(record, eval_key).get(node_id)
         if current is None:
             continue
+        current = scalar_metrics(current)
         if all(current[m] >= pre_eval[m] - RECOVERY_TOLERANCE for m in pre_eval):
             return record.round_idx
     return None
-
-
-def _gain_per_joule(records: list[ScenarioRoundRecord]) -> Optional[dict[str, float]]:
-    """Per-metric mapping of the final round's macro collaboration gain
-    (e.g. {"crop_accuracy": ..., "disease_accuracy": ...}) divided by the
-    total energy (compute + communication) the mesh spent across the whole
-    run — Appendix A's gain_per_joule metric. Kept as a dict per metric to
-    match how macro_gain itself is represented everywhere else in this
-    codebase, rather than collapsing multiple metrics into one scalar.
-    Returns None when no energy was recorded at all, to avoid a
-    divide-by-zero silently reporting 0.0/an empty dict as if it were a
-    measured (rather than absent) figure.
-    """
-    if not records:
-        return None
-    total_mesh_energy_j = (
-        sum(r.mesh_compute_energy_kwh for r in records) * 3_600_000
-        + sum(r.communication_energy_j for r in records)
-    )
-    if total_mesh_energy_j <= 0:
-        return None
-    final_macro_gain = records[-1].collaboration_gain.get("macro_gain", {})
-    return {metric: value / total_mesh_energy_j for metric, value in final_macro_gain.items()}
 
 
 def write_scenario_report(
@@ -215,16 +180,24 @@ def write_scenario_report(
     disruption_end_round: int,
     config_snapshot: dict,
     records: list[ScenarioRoundRecord],
+    save_plots: bool = True,
 ) -> Path:
-    """Writes outputs/scenarios/{scenario_name}.json and returns its path."""
+    """Writes outputs/scenarios/{scenario_name}.json (plus a matching .csv
+    and .png when save_plots is set) and returns the .json path.
+    """
     scenarios_dir = output_dir / "scenarios"
     scenarios_dir.mkdir(parents=True, exist_ok=True)
 
+    round_dicts = [dataclasses.asdict(r) for r in records]
+    trend_rows = build_scenario_rows(round_dicts)
+    per_class_rows = build_per_class_rows(round_dicts, [("mesh", "mesh_eval"), ("baseline", "baseline_eval")])
     report = {
         "scenario": scenario_name,
         "target_node": target_node_id,
         "config": config_snapshot,
-        "rounds": [dataclasses.asdict(r) for r in records],
+        "rounds": round_dicts,
+        "trend": trend_rows,
+        "per_class_trend": per_class_rows,
         "summary": {
             "recovery_round_mesh": _recovery_round(
                 records, target_node_id, disruption_start_round, disruption_end_round, "mesh_eval"
@@ -232,15 +205,14 @@ def write_scenario_report(
             "recovery_round_baseline": _recovery_round(
                 records, target_node_id, disruption_start_round, disruption_end_round, "baseline_eval"
             ),
-            "sustainability": {
-                "total_baseline_compute_energy_kwh": sum(r.baseline_compute_energy_kwh for r in records),
-                "total_mesh_compute_energy_kwh": sum(r.mesh_compute_energy_kwh for r in records),
-                "total_communication_energy_j": sum(r.communication_energy_j for r in records),
-                "gain_per_joule": _gain_per_joule(records),
-                "compute_energy_method": records[0].compute_energy_method if records else None,
-            },
         },
     }
     path = scenarios_dir / f"{scenario_name}.json"
     path.write_text(json.dumps(report, indent=2))
+
+    if save_plots:
+        write_csv(trend_rows, scenarios_dir / f"{scenario_name}.csv")
+        write_csv(per_class_rows, scenarios_dir / f"{scenario_name}_per_class.csv")
+        plot_training_curves(trend_rows, scenarios_dir / f"{scenario_name}.png", f"{scenario_name} scenario")
+
     return path

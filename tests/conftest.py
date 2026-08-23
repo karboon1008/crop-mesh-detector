@@ -35,26 +35,15 @@ def synthetic_dataset(tmp_path):
 def build_nodes(dataset, shards, num_crop, num_disease, arch="mobilenet_v3_small"):
     nodes = []
     for i, shard in enumerate(shards):
-        train_idx, test_idx = train_test_split_indices(shard, test_fraction=0.3, seed=1)
-        train_loader = DataLoader(make_subset(dataset, train_idx), batch_size=4, shuffle=True)
+        train_idx, test_idx = train_test_split_indices(dataset, shard, test_fraction=0.3, seed=1)
+        train_loader = DataLoader(make_subset(dataset, train_idx), batch_size=4, shuffle=True, drop_last=True)
         test_loader = DataLoader(make_subset(dataset, test_idx), batch_size=4, shuffle=False)
         model = build_model(arch, num_crop, num_disease, pretrained=False)
-        nodes.append(Node(f"node_{i}", model, train_loader, test_loader, device="cpu"))
+        nodes.append(Node(
+            f"node_{i}", model, train_loader, test_loader, device="cpu",
+            crop_classes=dataset.labels.crop_classes, disease_classes=dataset.labels.disease_classes,
+        ))
     return nodes
-
-
-@pytest.fixture
-def energy_tracker(tmp_path):
-    from src.energy.tracker import ComputeEnergyTracker
-    return ComputeEnergyTracker(enabled=False, output_dir=tmp_path, fallback_power_watts=15.0)
-
-
-@pytest.fixture
-def wifi_comm_estimator():
-    from src.energy.tracker import CommunicationCostEstimator
-    return CommunicationCostEstimator(
-        radio_energy_j_per_byte={"wifi": 0.00003}, grid_carbon_intensity_gco2_per_kwh=125
-    )
 
 
 @pytest.fixture

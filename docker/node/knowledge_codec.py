@@ -20,6 +20,8 @@ def encode_knowledge(round_idx: int, payload: KnowledgePayload) -> bytes:
             "prototypes": payload.prototypes,
             "crop_logits": payload.crop_logits,
             "disease_logits": payload.disease_logits,
+            "known_crop_classes": payload.known_crop_classes,
+            "known_disease_classes": payload.known_disease_classes,
         },
         buffer,
     )
@@ -35,5 +37,7 @@ def decode_knowledge(data: bytes) -> tuple[int, KnowledgePayload]:
         prototypes=obj["prototypes"],
         crop_logits=obj["crop_logits"],
         disease_logits=obj["disease_logits"],
+        known_crop_classes=obj["known_crop_classes"],
+        known_disease_classes=obj["known_disease_classes"],
     )
     return obj["round_idx"], payload

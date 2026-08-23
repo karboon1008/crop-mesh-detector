@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader
 from src.data.plantvillage import carve_public_probe_set, make_subset, partition_nodes
 from src.energy.tracker import CommunicationCostEstimator, ComputeEnergyTracker
 from src.evaluate import compute_collaboration_gain
-from src.federated.mesh import MeshSimulator
+from src.federated.mesh import MeshSimulator, _scale_kd_weight
 from src.models.factory import build_model, count_parameters, model_size_mb
 
 from tests.conftest import build_nodes
@@ -122,6 +122,45 @@ def test_end_to_end_mesh_round_beats_no_exchange_smoke(synthetic_dataset):
     assert "macro_gain" in gain
     assert "worst_node_gain" in gain
     assert set(gain["per_node"].keys()) == {"node_0", "node_1"}
+
+
+def test_scale_kd_weight_pulls_weak_nodes_harder_than_strong_nodes():
+    # ahead of peers -> scaled down
+    assert _scale_kd_weight(0.7, node_avg=0.8, peer_avg=0.4, min_scale=0.3, max_scale=1.5) == pytest.approx(0.7 * 0.5)
+    # behind peers -> scaled up
+    assert _scale_kd_weight(0.7, node_avg=0.4, peer_avg=0.8, min_scale=0.3, max_scale=1.5) == pytest.approx(0.7 * 1.5)
+    # far behind peers -> capped at max_scale, not scaled without bound
+    assert _scale_kd_weight(0.7, node_avg=0.1, peer_avg=0.8, min_scale=0.3, max_scale=1.5) == pytest.approx(0.7 * 1.5)
+    # a node with ~zero accuracy has nothing to divide by -> falls back to the flat weight
+    assert _scale_kd_weight(0.7, node_avg=0.0, peer_avg=0.5, min_scale=0.3, max_scale=1.5) == 0.7
+
+
+def test_adaptive_kd_weight_varies_per_node(synthetic_dataset):
+    """With adaptive_kd_weight on, a mesh round should record a distinct
+    kd_weight per node (scaled by that node's pre-round accuracy relative
+    to its peers) instead of every node using the flat config value.
+    """
+    probe_idx, remaining_idx = carve_public_probe_set(synthetic_dataset, 0.2, seed=1)
+    shards = partition_nodes(
+        synthetic_dataset, remaining_idx, num_nodes=2, strategy="by_crop", dirichlet_alpha=0.3, seed=1
+    )
+    probe_loader = DataLoader(make_subset(synthetic_dataset, probe_idx), batch_size=4, shuffle=False)
+    num_crop = len(synthetic_dataset.labels.crop_classes)
+    num_disease = len(synthetic_dataset.labels.disease_classes)
+
+    nodes = build_nodes(synthetic_dataset, shards, num_crop, num_disease)
+    mesh = MeshSimulator(
+        nodes, probe_loader, aggregation_method="trimmed_mean", trim_fraction=0.0, krum_neighbors=1,
+        adaptive_kd_weight=True,
+    )
+    round_log = mesh.run_round(
+        0, local_epochs=1, distill_epochs=1, lr=1e-3, distill_lr=1e-3, proto_weight=0.5, kd_weight=0.7,
+        temperature=2.0,
+    )
+
+    assert set(round_log.per_node_kd_weight.keys()) == {"node_0", "node_1"}
+    weights = round_log.per_node_kd_weight.values()
+    assert all(0.7 * 0.3 <= w <= 0.7 * 1.5 for w in weights)
 
 
 def test_energy_and_communication_tracking(tmp_path):

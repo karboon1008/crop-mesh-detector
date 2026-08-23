@@ -17,8 +17,8 @@ import torch
 from torch.utils.data import ConcatDataset, DataLoader
 
 from src.config import Config
-from src.data.plantvillage import load_full_dataset, make_subset, train_test_split_indices
-from src.energy.tracker import CommunicationCostEstimator, ComputeEnergyTracker
+from src.data.merged import load_merged_dataset
+from src.data.plantvillage import make_subset, train_test_split_indices
 from src.federated.mesh import MeshSimulator
 from src.scenarios.harness import (
     ScenarioEvent,
@@ -53,7 +53,7 @@ def carve_reserve_pool(dataset, source_train_indices, source_crop, reserve_fract
     n_reserve = max(1, int(len(shuffled) * reserve_fraction))
     reserve = set(shuffled[:n_reserve])
     remaining_source = [idx for idx in source_train_indices if idx not in reserve]
-    reserve_train_idx, reserve_test_idx = train_test_split_indices(list(reserve), test_fraction, seed)
+    reserve_train_idx, reserve_test_idx = train_test_split_indices(dataset, list(reserve), test_fraction, seed)
     return remaining_source, reserve_train_idx, reserve_test_idx
 
 
@@ -73,8 +73,8 @@ def make_class_addition_hook(
             return []
         target = next(n for n in nodes if n.node_id == target_node)
         target.train_loader = DataLoader(
-            ConcatDataset([target.train_loader.dataset, make_subset(dataset, reserve_train_idx)]),
-            batch_size=batch_size, shuffle=True, drop_last=True,
+            ConcatDataset([target.train_loader.dataset, make_subset(dataset, reserve_train_idx, train=True)]),
+            batch_size=batch_size, shuffle=True,
         )
         target.test_loader = DataLoader(
             ConcatDataset([target.test_loader.dataset, make_subset(dataset, reserve_test_idx)]),
@@ -126,13 +126,13 @@ def main():
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     output_dir = Path(cfg.get("output.dir", "outputs"))
-    dataset = load_full_dataset(cfg.get("data.root"), cfg.get("data.image_size", 160))
-    num_crop = len(dataset.labels.crop_classes)
-    num_disease = len(dataset.labels.disease_classes)
+    dataset = load_merged_dataset(
+        cfg.get("data.root"), cfg.get("data.plantdoc_root"), cfg.get("data.image_size", 224), cfg.get("data.seed", 42)
+    )
     if source_crop not in dataset.labels.crop_classes:
         raise ValueError(f"source_crop '{source_crop}' is not a known crop: {dataset.labels.crop_classes}")
 
-    probe_loader, node_loaders = build_dataloaders(cfg, dataset)
+    probe_loader, _global_test_loader, node_loaders, _crop_class_weights, _disease_class_weights = build_dataloaders(cfg, dataset)
     arch = args.arch or cfg.get("models.architectures", ["mobilenet_v3_small"])[0]
     batch_size = cfg.get("training.batch_size", 32)
 
@@ -146,28 +146,24 @@ def main():
         cfg.get("data.test_fraction", 0.15),
     )
     node_loaders[source_idx] = (
-        DataLoader(make_subset(dataset, remaining_source), batch_size=batch_size, shuffle=True, drop_last=True),
+        DataLoader(make_subset(dataset, remaining_source, train=True), batch_size=batch_size, shuffle=True),
         source_test_loader,
     )
 
-    baseline_nodes = build_node_set(cfg, arch, node_loaders, num_crop, num_disease, device)
-    mesh_nodes = build_node_set(cfg, arch, node_loaders, num_crop, num_disease, device)
+    baseline_nodes = build_node_set(
+        cfg, arch, node_loaders, dataset.labels.crop_classes, dataset.labels.disease_classes, device,
+        pair_class_names=dataset.base.classes, class_to_crop_disease=dataset.labels.class_to_crop_disease,
+    )
+    mesh_nodes = build_node_set(
+        cfg, arch, node_loaders, dataset.labels.crop_classes, dataset.labels.disease_classes, device,
+        pair_class_names=dataset.base.classes, class_to_crop_disease=dataset.labels.class_to_crop_disease,
+    )
     mesh = MeshSimulator(
         mesh_nodes,
         probe_loader,
         aggregation_method=cfg.get("federated.aggregation", "trimmed_mean"),
         trim_fraction=cfg.get("federated.trim_fraction", 0.2),
         krum_neighbors=cfg.get("federated.krum_neighbors", 2),
-    )
-
-    tracker = ComputeEnergyTracker(
-        enabled=cfg.get("energy.track_with_codecarbon", True),
-        output_dir=output_dir,
-        country_iso_code=cfg.get("energy.country_iso_code", "GBR"),
-    )
-    comm_estimator = CommunicationCostEstimator(
-        cfg.get("energy.radio_energy_j_per_byte", {}),
-        cfg.get("energy.grid_carbon_intensity_gco2_per_kwh", 125),
     )
 
     hook = make_class_addition_hook(
@@ -180,18 +176,16 @@ def main():
         "distill_lr": cfg.get("training.distill_lr", 0.0005),
         "proto_weight": cfg.get("training.proto_weight", 0.5),
         "kd_weight": cfg.get("training.kd_weight", 0.5),
+        "crop_kd_weight": cfg.get("training.crop_kd_weight", None),
         "temperature": cfg.get("training.kd_temperature", 2.0),
     }
-    records = run_scenario(
-        baseline_nodes, mesh, num_rounds, hook, round_kwargs,
-        tracker=tracker, comm_estimator=comm_estimator,
-    )
+    records = run_scenario(baseline_nodes, mesh, num_rounds, hook, round_kwargs)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     report_path = write_scenario_report(
         output_dir, "class_addition", target_node,
         disruption_start_round=inject_round, disruption_end_round=inject_round,
-        config_snapshot=scfg, records=records,
+        config_snapshot=scfg, records=records, save_plots=cfg.get("output.save_plots", True),
     )
     print(f"Wrote {report_path}")
 

@@ -115,7 +115,7 @@ def dedup_aware_split(
 
 from torchvision import transforms
 
-from src.data.plantvillage import IMAGENET_MEAN, IMAGENET_STD, load_full_dataset
+from src.data.plantvillage import IMAGENET_MEAN, IMAGENET_STD
 
 
 def build_train_eval_datasets(
@@ -147,10 +147,22 @@ def prepare_node1_data(
 ) -> tuple[PlantVillageDataset, list[int], PlantVillageDataset, list[int]]:
     """End-to-end: load the full dataset, scope to node_1, dedup-aware
     split. Returns (train_ds, train_idx, eval_ds, test_idx).
+
+    Uses the raw, unfiltered PlantVillageDataset (not
+    src.data.plantvillage.load_full_dataset) -- this node_1 validation
+    prototype scopes to Potato's full class set regardless of PlantDoc
+    real-world coverage, unlike the main crop/disease training pipeline.
     """
     image_size = cfg.get("data.image_size", 160)
     root = cfg.get("data.root", "data/PlantVillage")
-    dataset = load_full_dataset(root, image_size)
+    root_path = Path(root)
+    if not root_path.exists():
+        raise FileNotFoundError(
+            f"PlantVillage data not found at {root_path}. Run "
+            f"'python scripts/download_plantvillage.py' first, or point "
+            f"config.yaml's data.root at your existing copy."
+        )
+    dataset = PlantVillageDataset(root_path, image_size=image_size)
     node1_indices = get_node1_indices(dataset, cfg)
     hashes = compute_image_hashes(dataset, node1_indices)
     train_idx, test_idx = dedup_aware_split(

@@ -18,10 +18,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.config import Config
 from src.data.plantvillage import (
+    PlantVillageDataset,
     build_global_label_map,
     carve_public_probe_set,
     filter_dataset_by_crop,
-    load_full_dataset,
     partition_nodes,
     save_global_label_map,
 )
@@ -41,7 +41,20 @@ def split(cfg: Config, output_root: Path) -> None:
     # from previous runs undermining the per-node data isolation)
     shutil.rmtree(output_root, ignore_errors=True)
 
-    dataset = load_full_dataset(cfg.get("data.root"), cfg.get("data.image_size", 160))
+    # Deliberately the raw, unfiltered PlantVillageDataset here (not
+    # src.data.plantvillage.load_full_dataset, which restricts to classes
+    # with PlantDoc real-world coverage for the main crop/disease training
+    # pipeline) -- the Docker mesh demo splits across PlantVillage's full
+    # 14-crop label space unless docker_mesh.included_crops/excluded_diseases
+    # narrows it below.
+    root = Path(cfg.get("data.root"))
+    if not root.exists():
+        raise FileNotFoundError(
+            f"PlantVillage data not found at {root}. Run "
+            f"'python scripts/download_plantvillage.py' first, or point "
+            f"config.yaml's data.root at your existing copy."
+        )
+    dataset = PlantVillageDataset(root, image_size=cfg.get("data.image_size", 160))
 
     # docker_mesh.included_crops/excluded_diseases let a demo run restrict
     # the mesh to a subset of PlantVillage's 14 crops (e.g. only Apple +

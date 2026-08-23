@@ -27,8 +27,8 @@ def _make_shadow_node(synthetic_dataset, train_loader, test_loader):
 
 
 def _make_runner(tmp_path, synthetic_dataset, fetch_all_knowledge=None):
-    train_idx, test_idx = train_test_split_indices(list(range(len(synthetic_dataset))), 0.3, seed=1)
-    train_loader = DataLoader(make_subset(synthetic_dataset, train_idx), batch_size=4, shuffle=True)
+    train_idx, test_idx = train_test_split_indices(synthetic_dataset, list(range(len(synthetic_dataset))), 0.3, seed=1)
+    train_loader = DataLoader(make_subset(synthetic_dataset, train_idx, train=True), batch_size=4, shuffle=True)
     test_loader = DataLoader(make_subset(synthetic_dataset, test_idx), batch_size=4, shuffle=False)
     probe_loader = DataLoader(make_subset(synthetic_dataset, test_idx), batch_size=4, shuffle=False)
     num_crop = len(synthetic_dataset.labels.crop_classes)
@@ -97,7 +97,8 @@ def test_handle_round_gather_ignores_peer_data_for_a_different_round(tmp_path, s
     def fake_fetch_all(peer_ids, peer_bases, round_idx):
         n_probe = n_probe_holder["n"]
         stale_payload = KnowledgePayload(
-            prototypes={}, crop_logits=torch.zeros(n_probe, 2), disease_logits=torch.zeros(n_probe, 2)
+            prototypes={}, crop_logits=torch.zeros(n_probe, 2), disease_logits=torch.zeros(n_probe, 2),
+            known_crop_classes={}, known_disease_classes={},
         )
         # encoded for round 99, but we are gathering round 0 -- must be dropped
         return {"node_1": encode_knowledge(99, stale_payload)}

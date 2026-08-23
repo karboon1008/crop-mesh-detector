@@ -15,6 +15,11 @@ using its own best-scoring node) into its own subfolder, so you end up with
 all trained models ready to deploy and can pick between them after comparing
 accuracy/latency on the actual Pi:
     python scripts/export_for_pi.py --all
+
+To export from a stage-1-only run (`python -m src.train_local`, before any
+mesh training) instead, point at its output dir with --stage1-dir — node
+selection then scores by local_eval rather than mesh_eval:
+    python scripts/export_for_pi.py --stage1-dir outputs/stage1_local
 """
 
 from __future__ import annotations
@@ -78,11 +83,12 @@ def export_one(
     arch: str,
     node_id: str,
     checkpoints_dir: Path,
+    classes_path: Path,
     output_dir: Path,
     data_root: Path,
     num_parity_samples: int,
 ) -> None:
-    classes = json.loads((checkpoints_dir / "classes.json").read_text())
+    classes = json.loads(classes_path.read_text())
     crop_classes = classes["crop_classes"]
     disease_classes = classes["disease_classes"]
     image_size = classes["image_size"]
@@ -146,7 +152,13 @@ def export_one(
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoints-dir", default="outputs/checkpoints")
-    parser.add_argument("--results", default="outputs/results_summary.json")
+    parser.add_argument("--results", default=None)
+    parser.add_argument(
+        "--stage1-dir", default=None,
+        help="Export from a `python -m src.train_local` (stage 1, local-only) run instead of a stage-2 mesh "
+        "run — e.g. --stage1-dir outputs/stage1_local. Overrides --checkpoints-dir/--results and scores nodes "
+        "by local_eval instead of mesh_eval.",
+    )
     parser.add_argument("--arch", default=None, help="Override: which architecture to export")
     parser.add_argument("--node", default=None, help="Override: which node's checkpoint to export, e.g. node_0")
     parser.add_argument(
@@ -157,18 +169,28 @@ def main():
     parser.add_argument("--output-dir", default="outputs/pi_export")
     args = parser.parse_args()
 
-    checkpoints_dir = Path(args.checkpoints_dir)
+    if args.stage1_dir:
+        stage1_dir = Path(args.stage1_dir)
+        checkpoints_dir = stage1_dir / "checkpoints"
+        classes_path = stage1_dir / "classes.json"
+        results_path = Path(args.results) if args.results else stage1_dir / "results_summary.json"
+        eval_key = "local_eval"
+    else:
+        checkpoints_dir = Path(args.checkpoints_dir)
+        classes_path = checkpoints_dir / "classes.json"
+        results_path = Path(args.results) if args.results else Path("outputs/results_summary.json")
+        eval_key = "mesh_eval"
     output_dir = Path(args.output_dir)
     data_root = Path(args.data_root)
 
     if args.all:
-        archs = list_architectures(Path(args.results))
+        archs = list_architectures(results_path)
         print(f"Exporting all {len(archs)} architecture(s): {archs}")
         summary = []
         for arch in archs:
-            node_id, score = pick_best_node_for_arch(Path(args.results), arch)
+            node_id, score = pick_best_node_for_arch(results_path, arch, eval_key=eval_key)
             print(f"\n=== {arch} (best node: {node_id}, avg test accuracy {score:.4f}) ===")
-            export_one(arch, node_id, checkpoints_dir, output_dir / arch, data_root, args.num_parity_samples)
+            export_one(arch, node_id, checkpoints_dir, classes_path, output_dir / arch, data_root, args.num_parity_samples)
             summary.append((arch, node_id, score, output_dir / arch))
         print("\nAll exports done:")
         for arch, node_id, score, path in summary:
@@ -179,8 +201,8 @@ def main():
     if args.arch and args.node:
         arch, node_id = args.arch, args.node
     else:
-        arch, node_id = pick_best_arch_node(Path(args.results))
-    export_one(arch, node_id, checkpoints_dir, output_dir, data_root, args.num_parity_samples)
+        arch, node_id = pick_best_arch_node(results_path, eval_key=eval_key)
+    export_one(arch, node_id, checkpoints_dir, classes_path, output_dir, data_root, args.num_parity_samples)
     print(f"\nDone. Copy the whole {output_dir}/ folder to the Pi.")
 
 

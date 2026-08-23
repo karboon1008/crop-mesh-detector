@@ -15,8 +15,8 @@ from src.models.factory import build_model
 
 
 def _make_node(dataset):
-    train_idx, test_idx = train_test_split_indices(list(range(len(dataset))), 0.3, seed=1)
-    train_loader = DataLoader(make_subset(dataset, train_idx), batch_size=4, shuffle=True)
+    train_idx, test_idx = train_test_split_indices(dataset, list(range(len(dataset))), 0.3, seed=1)
+    train_loader = DataLoader(make_subset(dataset, train_idx, train=True), batch_size=4, shuffle=True)
     # batch_size=3 divides the 9-sample test split evenly (3,3,3) -- batch_size=4
     # would leave a trailing batch of size 1, which BatchNorm rejects in
     # model.train() mode (a pre-existing fixture-sizing trap, not something
@@ -61,12 +61,15 @@ def test_distill_calls_progress_cb_for_both_kd_and_sup_phases(synthetic_dataset)
     node.distill(
         consensus_prototypes={},
         consensus_crop_logits=torch.zeros(num_probe, num_crop),
+        crop_known_mask=torch.ones(num_crop, dtype=torch.bool),
         consensus_disease_logits=torch.zeros(num_probe, num_disease),
+        disease_known_mask=torch.ones(num_disease, dtype=torch.bool),
         probe_loader=test_loader,
         epochs=1,
         lr=1e-3,
         proto_weight=0.5,
         kd_weight=0.5,
+        crop_kd_weight=0.5,
         temperature=2.0,
         progress_cb=calls.append,
     )
@@ -84,12 +87,15 @@ def test_distill_without_progress_cb_still_works(synthetic_dataset):
     result = node.distill(
         consensus_prototypes={},
         consensus_crop_logits=torch.zeros(num_probe, num_crop),
+        crop_known_mask=torch.ones(num_crop, dtype=torch.bool),
         consensus_disease_logits=torch.zeros(num_probe, num_disease),
+        disease_known_mask=torch.ones(num_disease, dtype=torch.bool),
         probe_loader=test_loader,
         epochs=1,
         lr=1e-3,
         proto_weight=0.5,
         kd_weight=0.5,
+        crop_kd_weight=0.5,
         temperature=2.0,
     )
-    assert "total_loss" in result
+    assert "kd_loss" in result

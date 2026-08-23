@@ -59,7 +59,7 @@ def test_run_kt_round_updates_all_nodes_and_reports_bytes(corn_scoped_config):
 
     assert set(result["per_node_distill_loss"].keys()) == {"node_0", "node_1", "node_2"}
     for loss_dict in result["per_node_distill_loss"].values():
-        assert set(loss_dict.keys()) == {"kd_loss", "sup_loss", "proto_loss", "total_loss"}
+        assert set(loss_dict.keys()) == {"kd_loss", "crop_kd_loss", "sup_loss", "proto_loss"}
     assert result["total_bytes_exchanged"] > 0
     assert set(result["per_node_bytes_sent"].keys()) == {"node_0", "node_1", "node_2"}
 

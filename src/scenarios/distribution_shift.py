@@ -17,8 +17,7 @@ from torch.utils.data import DataLoader, Dataset
 from torchvision.transforms import functional as TF
 
 from src.config import Config
-from src.data.plantvillage import load_full_dataset
-from src.energy.tracker import CommunicationCostEstimator, ComputeEnergyTracker
+from src.data.merged import load_merged_dataset
 from src.federated.mesh import MeshSimulator
 from src.scenarios.harness import (
     ScenarioEvent,
@@ -61,7 +60,8 @@ def make_shift_hook(target_node: str, shift_round: int, corruption: str, severit
             return []
         target = next(n for n in nodes if n.node_id == target_node)
         target.train_loader = DataLoader(
-            CorruptedDataset(target.train_loader.dataset, severity), batch_size=batch_size, shuffle=True
+            CorruptedDataset(target.train_loader.dataset, severity),
+            batch_size=batch_size, shuffle=True,
         )
         target.test_loader = DataLoader(
             CorruptedDataset(target.test_loader.dataset, severity), batch_size=batch_size, shuffle=False
@@ -102,33 +102,29 @@ def main():
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     output_dir = Path(cfg.get("output.dir", "outputs"))
-    dataset = load_full_dataset(cfg.get("data.root"), cfg.get("data.image_size", 160))
-    num_crop = len(dataset.labels.crop_classes)
-    num_disease = len(dataset.labels.disease_classes)
-    probe_loader, node_loaders = build_dataloaders(cfg, dataset)
+    dataset = load_merged_dataset(
+        cfg.get("data.root"), cfg.get("data.plantdoc_root"), cfg.get("data.image_size", 224), cfg.get("data.seed", 42)
+    )
+    probe_loader, _global_test_loader, node_loaders, _crop_class_weights, _disease_class_weights = build_dataloaders(cfg, dataset)
     arch = args.arch or cfg.get("models.architectures", ["mobilenet_v3_small"])[0]
     batch_size = cfg.get("training.batch_size", 32)
 
     require_target_node(target_node, node_loaders)
 
-    baseline_nodes = build_node_set(cfg, arch, node_loaders, num_crop, num_disease, device)
-    mesh_nodes = build_node_set(cfg, arch, node_loaders, num_crop, num_disease, device)
+    baseline_nodes = build_node_set(
+        cfg, arch, node_loaders, dataset.labels.crop_classes, dataset.labels.disease_classes, device,
+        pair_class_names=dataset.base.classes, class_to_crop_disease=dataset.labels.class_to_crop_disease,
+    )
+    mesh_nodes = build_node_set(
+        cfg, arch, node_loaders, dataset.labels.crop_classes, dataset.labels.disease_classes, device,
+        pair_class_names=dataset.base.classes, class_to_crop_disease=dataset.labels.class_to_crop_disease,
+    )
     mesh = MeshSimulator(
         mesh_nodes,
         probe_loader,
         aggregation_method=cfg.get("federated.aggregation", "trimmed_mean"),
         trim_fraction=cfg.get("federated.trim_fraction", 0.2),
         krum_neighbors=cfg.get("federated.krum_neighbors", 2),
-    )
-
-    tracker = ComputeEnergyTracker(
-        enabled=cfg.get("energy.track_with_codecarbon", True),
-        output_dir=output_dir,
-        country_iso_code=cfg.get("energy.country_iso_code", "GBR"),
-    )
-    comm_estimator = CommunicationCostEstimator(
-        cfg.get("energy.radio_energy_j_per_byte", {}),
-        cfg.get("energy.grid_carbon_intensity_gco2_per_kwh", 125),
     )
 
     hook = make_shift_hook(target_node, shift_round, corruption, severity, batch_size)
@@ -139,18 +135,16 @@ def main():
         "distill_lr": cfg.get("training.distill_lr", 0.0005),
         "proto_weight": cfg.get("training.proto_weight", 0.5),
         "kd_weight": cfg.get("training.kd_weight", 0.5),
+        "crop_kd_weight": cfg.get("training.crop_kd_weight", None),
         "temperature": cfg.get("training.kd_temperature", 2.0),
     }
-    records = run_scenario(
-        baseline_nodes, mesh, num_rounds, hook, round_kwargs,
-        tracker=tracker, comm_estimator=comm_estimator,
-    )
+    records = run_scenario(baseline_nodes, mesh, num_rounds, hook, round_kwargs)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     report_path = write_scenario_report(
         output_dir, "distribution_shift", target_node,
         disruption_start_round=shift_round, disruption_end_round=shift_round,
-        config_snapshot=scfg, records=records,
+        config_snapshot=scfg, records=records, save_plots=cfg.get("output.save_plots", True),
     )
     print(f"Wrote {report_path}")
 

@@ -15,7 +15,7 @@ from typing import Callable
 
 from src.energy import sqlite_store
 from src.energy.tracker import ComputeEnergyTracker
-from src.federated.aggregation import aggregate_logits, aggregate_prototypes
+from src.federated.aggregation import aggregate_masked_logits, aggregate_prototypes
 from src.federated.node import KnowledgePayload, Node
 
 from knowledge_codec import decode_knowledge, encode_knowledge
@@ -57,6 +57,7 @@ class NodeRunner:
     distill_lr: float = 0.0005
     proto_weight: float = 0.5
     kd_weight: float = 0.5
+    crop_kd_weight: float | None = None
     temperature: float = 2.0
     log_file: str | None = None
     _last_round_idx: int | None = field(default=None, init=False)
@@ -199,14 +200,16 @@ class NodeRunner:
                 trim_fraction=self.trim_fraction,
                 krum_neighbors=self.krum_neighbors,
             )
-            consensus_crop_logits = aggregate_logits(
+            consensus_crop_logits, crop_known_mask = aggregate_masked_logits(
                 [p.crop_logits for p in peers],
+                [p.known_crop_classes for p in peers],
                 method=self.aggregation_method,
                 trim_fraction=self.trim_fraction,
                 krum_neighbors=self.krum_neighbors,
             )
-            consensus_disease_logits = aggregate_logits(
+            consensus_disease_logits, disease_known_mask = aggregate_masked_logits(
                 [p.disease_logits for p in peers],
+                [p.known_disease_classes for p in peers],
                 method=self.aggregation_method,
                 trim_fraction=self.trim_fraction,
                 krum_neighbors=self.krum_neighbors,
@@ -232,12 +235,15 @@ class NodeRunner:
             self.node.distill(
                 consensus_prototypes,
                 consensus_crop_logits,
+                crop_known_mask,
                 consensus_disease_logits,
+                disease_known_mask,
                 self.probe_loader,
                 epochs=self.distill_epochs,
                 lr=self.distill_lr,
                 proto_weight=self.proto_weight,
                 kd_weight=self.kd_weight,
+                crop_kd_weight=self.kd_weight if self.crop_kd_weight is None else self.crop_kd_weight,
                 temperature=self.temperature,
                 progress_cb=self._make_progress_cb(f"round_{round_idx}_distill"),
             )

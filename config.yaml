@@ -3,23 +3,31 @@
 # file rather than editing code.
 
 data:
-  root: "data/PlantVillage"      # expects class-per-folder images, e.g. "Tomato___Bacterial_spot"
-  image_size: 160
-  num_nodes: 3                    # simulated farms
+  root: "data/PlantVillage"
+  plantdoc_root: "data/PlantDoc"
+  # PlantVillage and PlantDoc are combined 1:1 per class into one project
+  # dataset (see src/data/merged.py) — every class is exactly 50% PlantVillage
+  # / 50% PlantDoc by construction, so there's no batch-mix ratio to tune here.
+  image_size: 224
+  num_nodes: 6                    # simulated farms — one per crop species (see manual_node_crops)
   probe_set_fraction: 0.05
   probe_set_large_class_threshold: 200
-  probe_set_min_samples_small_class: 8
+  probe_set_min_samples_small_class: 10
   probe_set_max_fraction_small_class: 0.2
+  global_test_fraction: 0.05      # clean set to evaluate the model knowledge transfer ability
   test_fraction: 0.15             # per-node held-out test split (used for accuracy + collaboration gain)
-  non_iid_strategy: "manual"      # "by_crop" | "by_disease" | "dirichlet" | "manual"
-  dirichlet_alpha: 0.3            # only used when non_iid_strategy == "dirichlet"
-  # Only used when non_iid_strategy == "manual" — thematically-coherent
-  # farm-type split (volume-imbalanced by design: node_2 covers fewer,
-  # higher-yield greenhouse crops than the other two).
+  non_iid_strategy: "dirichlet"   # "by_crop" | "by_disease" | "dirichlet" | "manual"
+  dirichlet_alpha: 0.5
+  # Only used when non_iid_strategy == "manual" — one crop species per node
+  # (all of that crop's disease classes included), so each simulated farm
+  # specializes in a single crop.
   manual_node_crops:
-    node_0: ["Apple", "Cherry", "Peach", "Blueberry", "Raspberry"]        # "orchard farm" — tree/bush fruit
-    node_1: ["Corn", "Potato", "Soybean", "Strawberry", "Squash"]         # "field-crop farm" — broadacre/row crops
-    node_2: ["Tomato", "Pepper,_bell", "Grape", "Orange"]                 # "greenhouse/market-garden farm" — warm-climate produce
+    node_0: ["Apple"]
+    node_1: ["Corn"]
+    node_2: ["Grape"]
+    node_3: ["Pepper,_bell"]
+    node_4: ["Potato"]
+    node_5: ["Tomato"]
   seed: 42
 
 models:
@@ -31,26 +39,58 @@ models:
   pretrained: true
 
 training:
-  local_epochs_per_round: 2       # local training epochs before each exchange round
-  distill_epochs_per_round: 1     # epochs spent distilling towards consensus knowledge
-  rounds: 5                       # number of mesh exchange rounds
-  baseline_epochs: 1              # epochs for the local-only baseline (aligned compute budget) -- TEMP: reduced from 10 for smoke run
+  local_epochs_per_round: 2       # local training epochs before each exchange round (default; per-arch overrides below)
+  # mobilenet_v3_small and mobilevit_xxs show large pre-distill accuracy
+  # swings round-to-round (~0.15-0.18) vs. efficientnet_lite0's ~0.009 —
+  # one extra local epoch lets the lower-capacity models re-consolidate
+  # before each distillation step. efficientnet_lite0 is already stable
+  # and near the accuracy ceiling, so it stays at the default of 2.
+  local_epochs_per_round_overrides:
+    mobilenet_v3_small: 3
+    mobilevit_xxs: 3
+  # Freezes the backbone stem + first two feature stages (generic,
+  # ImageNet-transferable low-level features) during stage-2 mesh
+  # training only — an experiment to reduce the round-to-round swings
+  # above by cutting how much of the backbone a node's short 2-3 epoch
+  # local fine-tune can reshape each round. Only affects
+  # mobilenet_v3_small/mobilevit_xxs (see FREEZE_LOW_LAYER_PREFIXES in
+  # src/models/factory.py); efficientnet_lite0 has no entry there and is
+  # always a no-op, matching the reasoning above.
+  freeze_low_layers_in_mesh: false
+  distill_epochs_per_round: 2     # epochs spent distilling towards consensus knowledge
+  rounds: 8                       # number of mesh exchange rounds — raised from 5 to give distillation more exposure to peer knowledge before local retraining reasserts specialism
+  crop_loss_weight: 1.0
+  disease_loss_weight: 1.5        # upweights disease cross-entropy relative to crop
+  loss_type: "cross_entropy"      # "cross_entropy" | "focal" — focal down-weights already-confident (majority-class) examples
+  focal_gamma: 2.0                # focusing parameter for focal loss (only used when loss_type == "focal")
+  crop_class_balanced: true      # inverse-frequency per-class weights within the crop loss (see compute_crop_class_weights)
+  disease_class_balanced: true    # inverse-frequency per-class weights within the disease loss (see compute_disease_class_weights)
+  baseline_epochs: 10             # epochs for the local-only baseline (aligned compute budget), for a median-sized node
+  max_epochs_per_node: 40         # cap on the size-scaled epoch count (see scale_epochs_by_node_size) for small nodes
+  early_stopping_patience: 5      # stage-1 local-only training only: stop if pair_accuracy hasn't improved for this many epochs
+  weight_decay: 0.0001            # stage-1 local-only training only: Adam L2 penalty, a second overfitting guard alongside early stopping
+  min_local_pair_accuracy: 0.6    # stage-1 sanity floor: src.train_local flags any node below this local pair_accuracy as "needs review"
   batch_size: 32
   lr: 0.001
   distill_lr: 0.0005
-  proto_weight: 0.5               # weight of prototype-alignment loss during distillation
-  kd_weight: 0.5                  # weight of logit-distillation (KD) loss during distillation
-  kd_temperature: 2.0
+  proto_weight: 0.15               # weight of prototype-alignment loss during distillation
+  kd_weight: 0.7                  # weight of disease-logit distillation (KD) loss during distillation — raised from 0.4 so cross-node consensus can outweigh each round's local retraining
+  crop_kd_weight: 0.7              # weight of crop-logit distillation loss, tuned separately from kd_weight — enabled now that non_iid_strategy=dirichlet gives peers overlapping (not exclusive) crop coverage, so a per-node known-crop-classes mask can safely aggregate cross-node crop-logit consensus the same way disease logits already do; omit/null to fall back to kd_weight
+  kd_temperature: 1.5
+  adaptive_kd_weight: true        # if true, scale kd_weight per node each round by (peer pre-round avg accuracy / this node's pre-round avg accuracy), so nodes already ahead of their peers get pulled less toward consensus and nodes behind get pulled harder, instead of every node absorbing the same flat kd_weight
+  adaptive_kd_min_scale: 0.3       # floor on the per-node scale factor above (only used when adaptive_kd_weight is true)
+  adaptive_kd_max_scale: 1.5       # ceiling on the per-node scale factor above (only used when adaptive_kd_weight is true)
 
 federated:
   aggregation: "trimmed_mean"     # "trimmed_mean" | "krum"
-  trim_fraction: 0.2              # fraction trimmed from each end (trimmed_mean only)
+  trim_fraction: 0.2               # fraction trimmed from each end (trimmed_mean only) — with num_nodes=6, each node has only 5 peers, and _trimmed_mean's k = int(n * trim_fraction) needs trim_fraction >= 0.2 to ever trim anyone at n=5; 0.15 was silently a no-op (plain mean, zero robustness). Crop- and disease-logit aggregation now pre-filter to peers with real local support for each class before this trimming runs (see aggregate_masked_logits in src/federated/aggregation.py), so this only trims among already-informed peers — it protects prototype aggregation against one stale/corrupted peer without the old risk of trimming away the lone informed peer's signal
   krum_neighbors: 2               # number of closest peers kept (krum only)
 
 energy:
-  track_with_codecarbon: false # set true if allow to track powermetrics
-  country_iso_code: "GBR"
+  track_with_codecarbon: true
+  country_iso_code: "GBR"          # Isambard is in Bristol, UK 
   grid_carbon_intensity_gco2_per_kwh: 125   # National Grid ESO 2024 GB average
+  fallback_power_watts: 15.0
   # Rough per-byte transmit energy budgets (Joules/byte), used ONLY for the
   # communication-energy estimate — swap for measured figures if available.
   radio_energy_j_per_byte:
@@ -70,7 +110,7 @@ scenarios:
     reconnect_round: 4
   class_addition:
     target_node: "node_0"
-    source_crop: "Tomato"       # must belong to a different node in manual_node_crops (currently node_2)
+    source_crop: "Tomato"       # must belong to a different node in manual_node_crops (currently node_5)
     inject_round: 2
     reserve_fraction: 0.3
   distribution_shift:

@@ -57,7 +57,9 @@ crop-mesh-detector/
 │                                   # class addition, distribution shift) sharing
 │                                   # a common round-driver harness
 ├── scripts/
-│   └── download_plantvillage.py   # fetches PlantVillage into data/PlantVillage/
+│   ├── download_plantvillage.py   # fetches PlantVillage into data/PlantVillage/
+│   └── check_energy_measurement.py # pre-flight check: is CodeCarbon really
+│                                   # reading hardware counters on this machine?
 ├── tests/
 │   └── test_pipeline.py           # end-to-end smoke test on synthetic images
 └── outputs/                        # results, emissions.csv, sustainability_report.*
@@ -118,6 +120,16 @@ minutes — this is meant to be run once, ahead of training.
 
 ### Run
 
+On a new machine or cluster (e.g. a fresh Isambard/Slurm allocation), check
+CodeCarbon can actually measure hardware energy there before you rely on the
+numbers — run this inside the job allocation itself:
+
+```bash
+python scripts/check_energy_measurement.py
+```
+
+Then train:
+
 ```bash
 python -m src.train --config config.yaml
 .venv/bin/python -m src.train --config config.yaml
@@ -131,6 +143,50 @@ python -m src.scenarios.disconnection [--config path] [--arch name]
 python -m src.scenarios.class_addition [--config path] [--arch name]
 python -m src.scenarios.distribution_shift [--config path] [--arch name]
 ```
+
+### Hyperparameter tuning
+
+`scripts/tune_hyperparams.py` runs a Bayesian (Optuna TPE) search over the
+core training hyperparameters (`lr`, `distill_lr`, `proto_weight`,
+`kd_weight`, `kd_temperature`) for one architecture. Each trial is a full
+`python -m src.train` subprocess against its own scratch output directory
+under `outputs_tuning/trials/`, scored on two objectives — maximize global
+mesh test accuracy, minimize total compute energy (kWh) — so the result is a
+Pareto front of trials rather than one "best" config:
+
+```bash
+python -m scripts.tune_hyperparams --n-trials 30 --arch efficientnet_lite0
+```
+
+Progress is checkpointed to a SQLite study db under `outputs_tuning/`, so a
+re-run with the same `--study-name` resumes instead of starting over. The
+Pareto-optimal trials (accuracy, energy, and the params that produced them)
+are printed at the end and written to `outputs_tuning/pareto_front.json`.
+Each trial's own `outputs_tuning/trials/trial_XXXX/config.yaml` records the
+exact config used, so any trial can be re-run standalone with
+`python -m src.train --config outputs_tuning/trials/trial_XXXX/config.yaml`.
+
+### Try it out: classify an image or use your laptop's camera
+
+Once a checkpoint exists in `outputs/checkpoints/` (from `python -m src.train`),
+`src/infer.py` gives quick, ad-hoc predictions — crop type, disease, and each
+one's confidence — without needing a labeled folder like `src/predict.py`
+expects:
+
+```bash
+# Classify one or more specific image files
+python -m src.infer --images path/to/leaf1.jpg path/to/leaf2.jpg
+
+# Take a snapshot with the laptop's webcam and classify it
+# (opens a preview window — press SPACE to capture, 'q' to cancel)
+python -m src.infer --camera
+
+# Continuously classify the webcam feed (prediction overlaid live, 'q' to quit)
+python -m src.infer --camera --live
+```
+
+Add `--output path/to/results.csv` to any of the above to also save the
+predictions to disk.
 
 Everything — which architectures to run, node count, non-IID strategy,
 epochs/rounds, aggregation rule, radio energy assumptions, grid carbon
@@ -164,6 +220,35 @@ hardware-based **energy** figure (kWh, location-independent) and applies
 the grid factor you set in `config.yaml` (`energy.grid_carbon_intensity_gco2_per_kwh`),
 so the reported carbon figure is reproducible regardless of where you run
 this.
+
+### Verifying real energy measurement on a new machine (e.g. an HPC cluster)
+
+CodeCarbon needs access to real hardware power counters — RAPL for CPU,
+NVML for GPU — to actually *measure* energy. When it can't reach them (common
+on shared HPC nodes, containerised allocations, or restricted permissions) it
+silently degrades to its own constant-TDP-times-load estimate instead of
+failing loudly, and the pipeline's own log still tags that block `"method":
+"codecarbon"` — so the only way to tell measured from guessed is to check.
+
+Before a real run on a new machine or cluster partition (e.g. a Slurm
+allocation on a supercomputer such as Isambard), run this **inside the actual
+job allocation**, not the login node — power counters are per-node, and a
+login node's access often doesn't match what a compute node grants:
+
+```bash
+python scripts/check_energy_measurement.py
+```
+
+It prints what CodeCarbon detected and exits `0` only if CPU energy is
+genuinely hardware-measured; otherwise it exits `2` and explains why (e.g. no
+RAPL access), and separately flags if a GPU is visible to PyTorch but not to
+CodeCarbon (GPU energy would then be missing from the report entirely, not
+just estimated).
+
+If it comes back unmeasured, either chase RAPL/NVML permissions for that
+partition, or set `energy.fallback_power_watts` in `config.yaml` to a
+realistic figure for that node type — the default (15W) models a laptop CPU
+and will badly undercount a GPU-class HPC node.
 
 ## Design choices worth knowing about
 

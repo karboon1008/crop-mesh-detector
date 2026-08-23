@@ -21,7 +21,7 @@ from src.config import Config
 from src.data.plantvillage import make_subset
 from src.energy.tracker import CommunicationCostEstimator, ComputeEnergyTracker
 from src.evaluate import compute_collaboration_gain
-from src.federated.aggregation import aggregate_logits, aggregate_prototypes
+from src.federated.aggregation import aggregate_masked_logits, aggregate_prototypes
 from src.federated.node import Node
 from src.models.factory import build_model
 from src.validation.corn_mesh_dataset import CornDiseaseView, CornLabelMap, CornMeshData, prepare_corn_mesh_data
@@ -44,6 +44,7 @@ def run_kt_round(
     proto_weight: float,
     kd_weight: float,
     temperature: float,
+    crop_kd_weight: float | None = None,
     tracker: ComputeEnergyTracker | None = None,
     round_idx: int | str = "na",
 ) -> dict:
@@ -67,6 +68,10 @@ def run_kt_round(
     per-node energy figure without misattributing one node's compute to
     another.
     """
+    # crop_kd_weight defaults to kd_weight so existing callers that only
+    # tune one flat weight keep behaving the same (mirrors
+    # src/federated/mesh.py's MeshSimulator.run_round).
+    base_crop_kd_weight = kd_weight if crop_kd_weight is None else crop_kd_weight
     payloads = {}
     for node_id, node in nodes.items():
         ctx = (
@@ -90,14 +95,16 @@ def run_kt_round(
             trim_fraction=trim_fraction,
             krum_neighbors=krum_neighbors,
         )
-        consensus_crop_logits = aggregate_logits(
+        consensus_crop_logits, crop_known_mask = aggregate_masked_logits(
             [p.crop_logits for p in peer_payloads],
+            [p.known_crop_classes for p in peer_payloads],
             method=aggregation_method,
             trim_fraction=trim_fraction,
             krum_neighbors=krum_neighbors,
         )
-        consensus_disease_logits = aggregate_logits(
+        consensus_disease_logits, disease_known_mask = aggregate_masked_logits(
             [p.disease_logits for p in peer_payloads],
+            [p.known_disease_classes for p in peer_payloads],
             method=aggregation_method,
             trim_fraction=trim_fraction,
             krum_neighbors=krum_neighbors,
@@ -109,12 +116,15 @@ def run_kt_round(
             per_node_distill_loss[node_id] = node.distill(
                 consensus_prototypes,
                 consensus_crop_logits,
+                crop_known_mask,
                 consensus_disease_logits,
+                disease_known_mask,
                 probe_loader,
                 epochs=distill_epochs,
                 lr=distill_lr,
                 proto_weight=proto_weight,
                 kd_weight=kd_weight,
+                crop_kd_weight=base_crop_kd_weight,
                 temperature=temperature,
             )
 
@@ -245,6 +255,7 @@ def run_round_with_io(
         proto_weight=cfg.get("training.proto_weight", 0.5),
         kd_weight=cfg.get("training.kd_weight", 0.5),
         temperature=cfg.get("training.kd_temperature", 2.0),
+        crop_kd_weight=cfg.get("training.crop_kd_weight", None),
         tracker=tracker,
         round_idx=round_idx,
     )

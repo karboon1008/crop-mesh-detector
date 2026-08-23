@@ -24,13 +24,41 @@ import random
 from dataclasses import dataclass, field
 from pathlib import Path
 import numpy as np
-from torch.utils.data import Dataset, Subset
+import torch
+from torch.utils.data import Dataset
 from torchvision import transforms
 from torchvision.datasets import ImageFolder
 
 # mobilenet & efficient net is trained on imagenet dataset so they share the one normalization convention
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
+
+
+def build_eval_transform(image_size: int):
+    return transforms.Compose(
+        [
+            transforms.Resize((image_size, image_size)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
+        ]
+    )
+
+
+def build_train_transform(image_size: int):
+    """Training-only augmentation. Resize/Normalize, random
+    crop+zoom, rotation/flip, color jitter. Applied to train splits only.
+    """
+    return transforms.Compose(
+        [
+            transforms.RandomResizedCrop(image_size, scale=(0.80, 1.0), ratio=(0.9, 1.10)),
+            transforms.RandomHorizontalFlip(p=0.5),
+            transforms.RandomVerticalFlip(p=0.1),
+            transforms.RandomRotation(20),
+            transforms.ColorJitter(brightness=0.15, contrast=0.15),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
+        ]
+    )
 
 
 def _parse_crop_disease(class_name: str) -> tuple[str, str]:
@@ -108,23 +136,36 @@ def load_global_label_map(path: str | Path) -> GlobalLabelMap:
     )
 
 
+class _FilteredImageFolder(ImageFolder):
+    """ImageFolder restricted to a subset of its class subdirectories,
+    so excluded classes are never scanned in the first place.
+    """
+
+    def __init__(self, root: str, allowed_classes: set[str] | None = None):
+        self._allowed_classes = allowed_classes
+        super().__init__(root)
+
+    def find_classes(self, directory: str) -> tuple[list[str], dict[str, int]]:
+        classes, _ = super().find_classes(directory)
+        if self._allowed_classes is not None:
+            classes = [c for c in classes if c in self._allowed_classes]
+        class_to_idx = {c: i for i, c in enumerate(classes)}
+        return classes, class_to_idx
+
+
 class PlantVillageDataset(Dataset):
     """Wraps torchvision's ImageFolder, exposing (image, crop_label, disease_label)."""
 
     def __init__(
         self,
         root: str | Path,
-        image_size: int = 160,
+        image_size: int = 224,
+        allowed_classes: set[str] | None = None,
         global_label_map: "GlobalLabelMap | None" = None,
     ):
-        self.transform = transforms.Compose(
-            [
-                transforms.Resize((image_size, image_size)),
-                transforms.ToTensor(),
-                transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
-            ]
-        )
-        self.base = ImageFolder(str(root))
+        self.transform = build_eval_transform(image_size)
+        self.train_transform = build_train_transform(image_size)
+        self.base = _FilteredImageFolder(str(root), allowed_classes=allowed_classes)
         if global_label_map is None:
             self.labels = self._build_label_maps(self.base.classes)
         else:
@@ -228,7 +269,11 @@ def filter_dataset_by_crop(
     return dataset
 
 
-def load_full_dataset(root: str | Path, image_size: int = 160) -> PlantVillageDataset:
+def load_full_dataset(root: str | Path, image_size: int = 224) -> PlantVillageDataset:
+    """Loads PlantVillage restricted to classes that have PlantDoc
+    real-world coverage (see plantdoc.overlapping_plantvillage_classes) —
+    PlantVillage-only classes carry no domain-shift signal for this project.
+    """
     root = Path(root)
     if not root.exists():
         raise FileNotFoundError(
@@ -236,7 +281,39 @@ def load_full_dataset(root: str | Path, image_size: int = 160) -> PlantVillageDa
             f"'python scripts/download_plantvillage.py' first, or point "
             f"config.yaml's data.root at your existing copy."
         )
-    return PlantVillageDataset(root, image_size=image_size)
+    from src.data.plantdoc import overlapping_plantvillage_classes  # local import: avoids a plantdoc<->plantvillage cycle
+
+    return PlantVillageDataset(root, image_size=image_size, allowed_classes=overlapping_plantvillage_classes())
+
+
+def _stratified_carve(
+    dataset: PlantVillageDataset,
+    indices: list[int],
+    fraction: float,
+    seed: int,
+    large_class_threshold: int,
+    min_samples_small_class: int,
+    max_fraction_small_class: float,
+) -> tuple[list[int], list[int]]:
+    all_targets = np.array(dataset.targets)
+    targets = all_targets[indices]
+    rng = random.Random(seed)
+    carved: list[int] = []
+    remaining: list[int] = []
+    for cls in sorted(set(targets.tolist())):
+        cls_indices = [indices[i] for i in range(len(indices)) if targets[i] == cls]
+        rng.shuffle(cls_indices)
+        count = len(cls_indices)
+        if count >= large_class_threshold:
+            n_cls = max(1, round(count * fraction))
+        else:
+            target_n = max(min_samples_small_class, round(count * fraction))
+            n_cls = min(target_n, int(count * max_fraction_small_class), count)
+        carved.extend(cls_indices[:n_cls])
+        remaining.extend(cls_indices[n_cls:])
+    rng.shuffle(carved)
+    rng.shuffle(remaining)
+    return carved, remaining
 
 
 def carve_public_probe_set(
@@ -255,24 +332,26 @@ def carve_public_probe_set(
     DS-FL), never for local training, so it carries no per-farm private
     information.
     """
-    targets = np.array(dataset.targets)
-    rng = random.Random(seed)
-    probe_idx: list[int] = []
-    remaining_idx: list[int] = []
-    for cls in sorted(set(targets.tolist())):
-        cls_indices = np.flatnonzero(targets == cls).tolist()
-        rng.shuffle(cls_indices)
-        count = len(cls_indices)
-        if count >= large_class_threshold:
-            n_probe_cls = max(1, round(count * probe_fraction))
-        else:
-            target_n = max(min_samples_small_class, round(count * probe_fraction))
-            n_probe_cls = min(target_n, int(count * max_fraction_small_class), count)
-        probe_idx.extend(cls_indices[:n_probe_cls])
-        remaining_idx.extend(cls_indices[n_probe_cls:])
-    rng.shuffle(probe_idx)
-    rng.shuffle(remaining_idx)
-    return probe_idx, remaining_idx
+    all_indices = list(range(len(dataset)))
+    return _stratified_carve(
+        dataset, all_indices, probe_fraction, seed,
+        large_class_threshold, min_samples_small_class, max_fraction_small_class,
+    )
+
+
+def carve_global_test_set(
+    dataset: PlantVillageDataset,
+    indices: list[int],
+    test_fraction: float,
+    seed: int,
+    large_class_threshold: int = 200,
+    min_samples_small_class: int = 8,
+    max_fraction_small_class: float = 0.2,
+) -> tuple[list[int], list[int]]:
+    return _stratified_carve(
+        dataset, indices, test_fraction, seed,
+        large_class_threshold, min_samples_small_class, max_fraction_small_class,
+    )
 
 
 def partition_nodes(
@@ -384,14 +463,90 @@ def _manual_partition(
 
 
 def train_test_split_indices(
-    indices: list[int], test_fraction: float, seed: int
+    dataset: PlantVillageDataset, indices: list[int], test_fraction: float, seed: int
 ) -> tuple[list[int], list[int]]:
+    """Splits `indices` into (train, test), stratified by original class
+    (crop+disease pair) so each class's train/test ratio stays close to
+    `test_fraction` instead of drifting under one global shuffle — matters
+    most for a node covering several disease classes of very different
+    sizes (see _stratified_carve for the equivalent probe/global-test carve).
+    """
     rng = random.Random(seed)
-    shuffled = indices.copy()
-    rng.shuffle(shuffled)
-    n_test = max(1, int(len(shuffled) * test_fraction)) if len(shuffled) > 1 else 0
-    return shuffled[n_test:], shuffled[:n_test]
+    targets = np.asarray(dataset.targets)[indices]
+    train_idx: list[int] = []
+    test_idx: list[int] = []
+    for cls in sorted(set(targets.tolist())):
+        cls_indices = [indices[i] for i in range(len(indices)) if targets[i] == cls]
+        rng.shuffle(cls_indices)
+        count = len(cls_indices)
+        n_test = 0 if count <= 1 else min(max(1, round(count * test_fraction)), count - 1)
+        test_idx.extend(cls_indices[:n_test])
+        train_idx.extend(cls_indices[n_test:])
+    rng.shuffle(train_idx)
+    rng.shuffle(test_idx)
+    return train_idx, test_idx
 
 
-def make_subset(dataset: PlantVillageDataset, indices: list[int]) -> Subset:
-    return Subset(dataset, indices)
+class TransformedSubset(Dataset):
+    def __init__(self, dataset: PlantVillageDataset, indices: list[int], transform):
+        self.dataset = dataset
+        self.indices = indices
+        self.transform = transform
+
+    def __len__(self) -> int:
+        return len(self.indices)
+
+    def __getitem__(self, i: int):
+        idx = self.indices[i]
+        image, class_idx = self.dataset.base[idx]  # raw PIL image, ImageFolder has no transform of its own
+        image = self.transform(image)
+        crop_idx, disease_idx = self.dataset.labels.class_to_crop_disease[class_idx]
+        return image, crop_idx, disease_idx
+
+
+def make_subset(dataset: PlantVillageDataset, indices: list[int], train: bool = False) -> Dataset:
+    """train=True applies the dataset's augmentation transform (for a node's
+    training split); train=False (default) applies the plain eval transform
+    (test/probe/global-test splits, so accuracy stays comparable/deterministic).
+    """
+    transform = dataset.train_transform if train else dataset.transform
+    return TransformedSubset(dataset, indices, transform)
+
+
+def _count_labels(dataset: PlantVillageDataset, indices: list[int], pair_index: int, num_classes: int) -> torch.Tensor:
+    counts = torch.zeros(num_classes)
+    targets = np.asarray(dataset.targets)[indices]
+    for t in targets:
+        pair = dataset.labels.class_to_crop_disease[int(t)]
+        counts[pair[pair_index]] += 1
+    return counts
+
+
+def _inverse_frequency_weights(counts: torch.Tensor) -> torch.Tensor:
+    """Inverse-frequency weights from raw per-class counts, computed on
+    whatever subset they were counted from (e.g. a single node's local,
+    non-IID shard) — this reweights the loss towards under-represented
+    classes in that subset without touching the subset's own label
+    distribution.
+    """
+    num_classes = counts.numel()
+    weights = torch.ones(num_classes)
+    present = counts > 0
+    weights[present] = counts.sum() / (num_classes * counts[present])
+    return weights
+
+
+def compute_disease_class_weights(dataset: PlantVillageDataset, indices: list[int]) -> torch.Tensor:
+    """Inverse-frequency class weights for the disease head's loss,
+    computed from this subset's own label counts.
+    """
+    counts = _count_labels(dataset, indices, pair_index=1, num_classes=len(dataset.labels.disease_classes))
+    return _inverse_frequency_weights(counts)
+
+
+def compute_crop_class_weights(dataset: PlantVillageDataset, indices: list[int]) -> torch.Tensor:
+    """Inverse-frequency class weights for the crop head's loss,
+    computed from this subset's own label counts.
+    """
+    counts = _count_labels(dataset, indices, pair_index=0, num_classes=len(dataset.labels.crop_classes))
+    return _inverse_frequency_weights(counts)

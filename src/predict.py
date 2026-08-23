@@ -28,7 +28,7 @@ from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 
 from src.data.plantvillage import IMAGENET_MEAN, IMAGENET_STD, _parse_crop_disease
-from src.model_selection import pick_best_arch_node
+from src.model_selection import pick_best_arch_node, pick_best_node_for_arch
 from src.models.factory import build_model
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp"}
@@ -57,16 +57,20 @@ def discover_images(folder: Path) -> list[InferenceImage]:
     return images
 
 
+def build_transform(image_size: int):
+    return transforms.Compose(
+        [
+            transforms.Resize((image_size, image_size)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
+        ]
+    )
+
+
 class InferenceDataset(Dataset):
     def __init__(self, images: list[InferenceImage], image_size: int):
         self.images = images
-        self.transform = transforms.Compose(
-            [
-                transforms.Resize((image_size, image_size)),
-                transforms.ToTensor(),
-                transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
-            ]
-        )
+        self.transform = build_transform(image_size)
 
     def __len__(self) -> int:
         return len(self.images)
@@ -74,6 +78,30 @@ class InferenceDataset(Dataset):
     def __getitem__(self, idx: int):
         image = Image.open(self.images[idx].path).convert("RGB")
         return self.transform(image), idx
+
+
+def load_model(checkpoints_dir: Path, results_path: Path, arch: str | None, node_id: str | None):
+    """Loads a trained checkpoint plus its class lists, auto-selecting the
+    best-scoring (arch, node) from results_path if arch/node_id aren't both
+    given. Shared by batch folder inference (this module) and interactive
+    single-image/camera inference (src/infer.py).
+    """
+    if arch and not node_id:
+        node_id, _ = pick_best_node_for_arch(results_path, arch)
+    elif not arch:
+        arch, node_id = pick_best_arch_node(results_path)
+
+    classes = json.loads((checkpoints_dir / "classes.json").read_text())
+    crop_classes = classes["crop_classes"]
+    disease_classes = classes["disease_classes"]
+    image_size = classes["image_size"]
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model = build_model(arch, len(crop_classes), len(disease_classes), pretrained=False)
+    state_dict = torch.load(checkpoints_dir / arch / f"{node_id}.pt", map_location=device)
+    model.load_state_dict(state_dict)
+    model.to(device).eval()
+    return model, crop_classes, disease_classes, image_size, device
 
 
 def main():
@@ -88,21 +116,9 @@ def main():
     args = parser.parse_args()
 
     checkpoints_dir = Path(args.checkpoints_dir)
-    if args.arch and args.node:
-        arch, node_id = args.arch, args.node
-    else:
-        arch, node_id = pick_best_arch_node(Path(args.results))
-
-    classes = json.loads((checkpoints_dir / "classes.json").read_text())
-    crop_classes = classes["crop_classes"]
-    disease_classes = classes["disease_classes"]
-    image_size = classes["image_size"]
-
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    model = build_model(arch, len(crop_classes), len(disease_classes), pretrained=False)
-    state_dict = torch.load(checkpoints_dir / arch / f"{node_id}.pt", map_location=device)
-    model.load_state_dict(state_dict)
-    model.to(device).eval()
+    model, crop_classes, disease_classes, image_size, device = load_model(
+        checkpoints_dir, Path(args.results), args.arch, args.node
+    )
 
     images = discover_images(Path(args.folder))
     if not images:
