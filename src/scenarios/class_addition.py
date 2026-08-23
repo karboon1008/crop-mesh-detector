@@ -57,12 +57,30 @@ def carve_reserve_pool(dataset, source_train_indices, source_crop, reserve_fract
     return remaining_source, reserve_train_idx, reserve_test_idx
 
 
-def find_source_node(manual_node_crops: dict, source_crop: str) -> str:
-    for node_key, crops in manual_node_crops.items():
-        if source_crop in crops:
-            node_idx = int(str(node_key).rsplit("_", 1)[-1])
-            return f"node_{node_idx}"
-    raise ValueError(f"source_crop '{source_crop}' is not assigned to any node in data.manual_node_crops")
+def _node_crop_counts(dataset, node_loaders, source_crop: str) -> dict[str, int]:
+    crop_idx = dataset.labels.crop_classes.index(source_crop)
+    counts = {}
+    for i, (train_loader, _) in enumerate(node_loaders):
+        indices = train_loader.dataset.indices
+        counts[f"node_{i}"] = sum(
+            1 for idx in indices
+            if dataset.labels.class_to_crop_disease[dataset.targets[idx]][0] == crop_idx
+        )
+    return counts
+
+
+def find_source_and_target_nodes(counts: dict[str, int]) -> tuple[str, str]:
+    """Picks the DONOR node (most local examples of the crop, to carve the
+    injected reserve pool from) and the TARGET node (fewest, to receive
+    them) purely from each node's actual local data -- no dependency on
+    data.manual_node_crops, so this works whether non_iid_strategy is
+    "manual" (where the target's count is genuinely zero) or "dirichlet"
+    (where every node has some non-zero exposure, so "fewest" is the
+    closest analogue to "hasn't really grown this crop yet").
+    """
+    source_node = max(counts, key=counts.get)
+    target_node = min(counts, key=counts.get)
+    return source_node, target_node
 
 
 def make_class_addition_hook(
@@ -97,16 +115,9 @@ def main():
     args = parser.parse_args()
     cfg = Config.load(args.config)
 
-    if cfg.get("data.non_iid_strategy") != "manual":
-        raise ValueError(
-            "scenarios.class_addition requires data.non_iid_strategy == 'manual' "
-            "(it looks up crop ownership via data.manual_node_crops)"
-        )
-
     scfg = cfg.get("scenarios.class_addition")
     if scfg is None:
         raise ValueError("config.yaml is missing a scenarios.class_addition section")
-    target_node = scfg["target_node"]
     source_crop = scfg["source_crop"]
     inject_round = scfg["inject_round"]
     reserve_fraction = scfg["reserve_fraction"]
@@ -115,14 +126,6 @@ def main():
 
     if not (0 <= inject_round < num_rounds):
         raise ValueError(f"scenarios.class_addition.inject_round ({inject_round}) must be in [0, {num_rounds})")
-
-    manual_node_crops = cfg.get("data.manual_node_crops", {})
-    source_node = find_source_node(manual_node_crops, source_crop)
-    if source_node == target_node:
-        raise ValueError(
-            f"source_crop '{source_crop}' is already assigned to target_node '{target_node}' — "
-            "pick a crop owned by a DIFFERENT node so the mesh has something to teach it"
-        )
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     output_dir = Path(cfg.get("output.dir", "outputs"))
@@ -135,6 +138,25 @@ def main():
     probe_loader, _global_test_loader, node_loaders, _crop_class_weights, _disease_class_weights = build_dataloaders(cfg, dataset)
     arch = args.arch or cfg.get("models.architectures", ["mobilenet_v3_small"])[0]
     batch_size = cfg.get("training.batch_size", 32)
+
+    # Under non_iid_strategy == "manual", data.manual_node_crops assigns a
+    # crop to exactly one node, so that node's count for every other crop
+    # is exactly 0 and this always reproduces the same source/target pair
+    # the config would have named explicitly. Under "dirichlet", no node
+    # owns a crop exclusively, so we pick the donor (most local examples)
+    # and target (fewest) purely from the actual per-node data instead of
+    # trusting a fixed config-file assignment that no longer holds.
+    counts = _node_crop_counts(dataset, node_loaders, source_crop)
+    source_node, target_node = find_source_and_target_nodes(counts)
+    print(
+        f"class_addition: source_crop='{source_crop}' per-node local counts={counts} "
+        f"-> donor={source_node} ({counts[source_node]} examples), target={target_node} ({counts[target_node]} examples)"
+    )
+    if source_node == target_node:
+        raise ValueError(
+            f"source_crop '{source_crop}': every node has the same local count ({counts[source_node]}) — "
+            "no node stands out as a donor vs. a target, pick a different crop"
+        )
 
     require_target_node(target_node, node_loaders)
     require_target_node(source_node, node_loaders)

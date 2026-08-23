@@ -203,14 +203,18 @@ def test_disconnection_scenario_end_to_end_smoke(tmp_path, synthetic_dataset):
     assert rounds_by_idx[1]["total_bytes_exchanged"] < rounds_by_idx[0]["total_bytes_exchanged"]
 
 
-def test_find_source_node_returns_owning_node_and_raises_for_unknown_crop():
-    from src.scenarios.class_addition import find_source_node
+def test_find_source_and_target_nodes_picks_max_and_min_by_local_count():
+    from src.scenarios.class_addition import find_source_and_target_nodes
 
-    manual_node_crops = {"node_0": ["Potato"], "node_1": ["Tomato"]}
-    assert find_source_node(manual_node_crops, "Tomato") == "node_1"
+    # "manual"-style: node_1 owns Tomato exclusively (others have 0) -- the
+    # data-driven pick must reproduce what a manual_node_crops lookup would.
+    source, target = find_source_and_target_nodes({"node_0": 0, "node_1": 12})
+    assert (source, target) == ("node_1", "node_0")
 
-    with pytest.raises(ValueError, match="not assigned to any node"):
-        find_source_node(manual_node_crops, "Corn")
+    # "dirichlet"-style: every node has some non-zero exposure -- "fewest"
+    # stands in for "hasn't really grown this crop yet".
+    source, target = find_source_and_target_nodes({"node_0": 162, "node_1": 220, "node_2": 9})
+    assert (source, target) == ("node_1", "node_2")
 
 
 def test_carve_reserve_pool_is_disjoint_from_remaining_source(synthetic_dataset):
