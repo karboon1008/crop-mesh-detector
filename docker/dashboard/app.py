@@ -30,6 +30,7 @@ from data import (
     build_log_lines,
     build_status_rows,
     is_run_complete,
+    merge_round_rows,
     merge_transfer_rows,
     rows_for_node,
     to_json_str,
@@ -47,13 +48,14 @@ NODE_BASE_URLS = {
 }
 COORDINATOR_EVENTS_URL = os.environ.get("COORDINATOR_EVENTS_URL", "http://coordinator:9000/events")
 COORDINATOR_LOG_URL = COORDINATOR_EVENTS_URL.rsplit("/", 1)[0] + "/log"
-MERGED_DB = os.environ.get("MERGED_DB", "/energy/merged.db")
 REFRESH_S = float(os.environ.get("REFRESH_S", "3"))
 
-# Each node writes its own db alongside merged.db (see docker-compose.yml's
-# per-node ENERGY_DB), so no extra env var is needed to find them.
-NODE_DB_PATHS = {node_id: str(Path(MERGED_DB).parent / f"{node_id}.db") for node_id in NODE_BASE_URLS}
-STATUS_PATH = Path(MERGED_DB).parent / "status.json"
+# Shared dir each node writes its own db into (node_0.db, node_1.db, ...) --
+# there is no merged db. The dashboard is the only place that ever combines
+# them (see data.merge_round_rows / merge_transfer_rows), purely for display.
+ENERGY_DIR = Path(os.environ.get("ENERGY_DIR", "/energy"))
+NODE_DB_PATHS = {node_id: str(ENERGY_DIR / f"{node_id}.db") for node_id in NODE_BASE_URLS}
+STATUS_PATH = ENERGY_DIR / "status.json"
 
 CHART_METRICS = [
     ("energy_kwh", "Compute energy per round"),
@@ -202,7 +204,7 @@ def render() -> None:
             _render_activity_panel(node_id, _poll_json(f"{NODE_BASE_URLS[node_id]}/log"))
     _render_activity_panel("coordinator", _poll_json(COORDINATOR_LOG_URL))
 
-    rows = read_all(MERGED_DB)
+    rows = merge_round_rows([read_all(path) for path in NODE_DB_PATHS.values()])
     with st.expander("Charts", expanded=True):
         if rows:
             df = pd.DataFrame(rows)
@@ -223,7 +225,7 @@ def render() -> None:
         else:
             st.write("No data yet — charts will appear once a round finishes.")
 
-    st.subheader("Round metrics (merged.db)")
+    st.subheader("Round metrics (combined from each node's own db)")
     if rows:
         st.dataframe(pd.DataFrame(rows), use_container_width=True)
     else:

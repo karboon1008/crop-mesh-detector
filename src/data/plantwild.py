@@ -1,7 +1,8 @@
-"""Loader for PlantWild's Tomato-labeled images (v1 and v2 builds), folded
-into the Tomato Dirichlet mesh pipeline's canonical label space (see
-src/validation/tomato_mesh_dataset.py). Both versions are pooled by the
-caller; global perceptual-hash dedup (tomato_mesh_dataset.py) is
+"""Loader for PlantWild's Tomato- and Apple-labeled images (v1 and v2
+builds), folded into the Tomato/Apple Dirichlet mesh pipelines' canonical
+label spaces (see src/validation/tomato_mesh_dataset.py and
+apple_mesh_dataset.py). Both versions are pooled by the caller; global
+perceptual-hash dedup (tomato_mesh_dataset.py / apple_mesh_dataset.py) is
 responsible for catching any near-duplicate images between the two.
 """
 
@@ -24,6 +25,22 @@ PLANTWILD_V1_CANONICAL_MAP: dict[str, str] = {
 # real download, not assumed.
 PLANTWILD_V2_CANONICAL_MAP: dict[str, str] = {
     k: v for k, v in PLANTWILD_V1_CANONICAL_MAP.items() if k != "tomato leaf"
+}
+
+# Apple's PlantWild folders keep the underscore/PlantVillage-style naming
+# convention (e.g. "Apple_Apple_scab"), unlike Tomato's lowercase free-text
+# names -- confirmed against the real download.
+PLANTWILD_V1_APPLE_CANONICAL_MAP: dict[str, str] = {
+    "Apple_Apple_scab": "Apple_scab",
+    "Apple_Black_rot": "Black_rot",
+    "Apple_Cedar_apple_rust": "Cedar_apple_rust",
+    "Apple_healthy": "healthy",
+}
+
+# v2 has no Apple_healthy folder -- confirmed against the real download,
+# not assumed.
+PLANTWILD_V2_APPLE_CANONICAL_MAP: dict[str, str] = {
+    k: v for k, v in PLANTWILD_V1_APPLE_CANONICAL_MAP.items() if k != "Apple_healthy"
 }
 
 IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG")
@@ -51,3 +68,11 @@ def load_plantwild_v1_tomato_paths(root: str | Path) -> list[tuple[str, str]]:
 
 def load_plantwild_v2_tomato_paths(root: str | Path) -> list[tuple[str, str]]:
     return _load_from_root(root, PLANTWILD_V2_CANONICAL_MAP)
+
+
+def load_plantwild_v1_apple_paths(root: str | Path) -> list[tuple[str, str]]:
+    return _load_from_root(root, PLANTWILD_V1_APPLE_CANONICAL_MAP)
+
+
+def load_plantwild_v2_apple_paths(root: str | Path) -> list[tuple[str, str]]:
+    return _load_from_root(root, PLANTWILD_V2_APPLE_CANONICAL_MAP)

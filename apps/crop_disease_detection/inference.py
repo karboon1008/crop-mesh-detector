@@ -6,6 +6,7 @@ Streamlit-specific caching wrapper around create_session().
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import numpy as np
@@ -19,6 +20,12 @@ MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 CONFIDENCE_THRESHOLD = 0.60
 
+# Fallback values used when no manifest.json sits next to model.onnx (the
+# originally bundled 14-crop/21-disease model predates per-model manifests).
+# create_session() overrides IMAGE_SIZE/MEAN/STD/CROP_CLASSES/DISEASE_CLASSES
+# from that manifest when one is present, so the app adapts to whatever
+# model is bundled (e.g. a 1-crop/10-disease Tomato-only model) instead of
+# always expecting this exact shape.
 # Order matches outputs/checkpoints/classes.json -- position is the model's
 # class index, so these lists must stay in exactly this order.
 CROP_CLASSES = [
@@ -61,18 +68,45 @@ def classify_tier(crop_confidence: float, disease_confidence: float, disease_lab
     return "healthy" if disease_label == "healthy" else "diseased"
 
 
+def _load_manifest(model_path: Path) -> dict | None:
+    manifest_path = model_path.parent / "manifest.json"
+    if not manifest_path.exists():
+        return None
+    return json.loads(manifest_path.read_text())
+
+
 def create_session(model_path: Path) -> ort.InferenceSession:
     """Loads and validates the ONNX model at model_path. Raises
     FileNotFoundError if it's missing, ValueError if its input/output shapes
-    don't match this app's hardcoded classes/image size.
+    don't match the expected classes/image size.
+
+    If a manifest.json (as written by src/validation/export_onnx.py's
+    export_checkpoint()) sits next to model_path, its crop_classes/
+    disease_classes/image_size/mean/std override this module's hardcoded
+    defaults before validation runs -- this is what lets a differently
+    shaped model (e.g. Tomato-only, 1 crop / 10 diseases) work here without
+    a code change, instead of always expecting the original
+    14-crop/21-disease shape.
     """
+    global CROP_CLASSES, DISEASE_CLASSES, IMAGE_SIZE, MEAN, STD
+
     if not model_path.exists():
         raise FileNotFoundError(
             f"No model found at {model_path}. Place an ONNX model there with input "
             f"'image' shaped (1, 3, {IMAGE_SIZE}, {IMAGE_SIZE}) and outputs "
             f"'crop_logits' ({len(CROP_CLASSES)} classes) + 'disease_logits' "
-            f"({len(DISEASE_CLASSES)} classes)."
+            f"({len(DISEASE_CLASSES)} classes) -- or include a manifest.json "
+            f"declaring a different shape (see src/validation/export_onnx.py)."
         )
+
+    manifest = _load_manifest(model_path)
+    if manifest is not None:
+        CROP_CLASSES = manifest["crop_classes"]
+        DISEASE_CLASSES = manifest["disease_classes"]
+        IMAGE_SIZE = manifest["image_size"]
+        MEAN = np.array(manifest["mean"], dtype=np.float32)
+        STD = np.array(manifest["std"], dtype=np.float32)
+
     session = ort.InferenceSession(str(model_path))
     inputs = session.get_inputs()
     outputs = session.get_outputs()

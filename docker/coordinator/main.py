@@ -4,7 +4,11 @@ asyncio.gather over httpx.AsyncClient for concurrency -- sequential calls
 would force nodes to train one at a time instead of in parallel. Exposes
 a tiny /events endpoint purely for the dashboard to poll -- it records
 only which path was called and what status came back, never touching
-knowledge content.
+knowledge content. The coordinator owns no round_metrics data at all (see
+coordinator_runner.py) -- the only thing it ever writes to disk is a
+small status.json completion marker so the dashboard knows the run has
+finished; every node's own energy/accuracy/communication numbers live
+exclusively in that node's own db.
 """
 
 from __future__ import annotations
@@ -91,13 +95,11 @@ def main() -> None:
         n: node_url_template.format(node_id=n, index=i) for i, n in enumerate(expected_nodes)
     }
     round_timeout_s = cfg.get("docker_mesh.round_timeout_s", 300)
-    energy_db = os.environ["ENERGY_DB"]
-    status_path = str(Path(energy_db).parent / "status.json")
-    # Every container start is a fresh run, not a resume -- wipe the merged
-    # db and the previous run's completion marker so the dashboard can't
-    # show a stale "final results" from before this restart. Only the
-    # coordinator ever writes these two paths.
-    Path(energy_db).unlink(missing_ok=True)
+    status_path = os.environ["STATUS_PATH"]
+    # Every container start is a fresh run, not a resume -- wipe the
+    # previous run's completion marker so the dashboard can't show a stale
+    # "final results" from before this restart. This is the only path the
+    # coordinator ever writes.
     Path(status_path).unlink(missing_ok=True)
 
     runner = CoordinatorRunner(
@@ -105,7 +107,6 @@ def main() -> None:
         node_base_urls=node_base_urls,
         num_rounds=cfg.get("training.rounds", 5),
         round_timeout_s=round_timeout_s,
-        db_path=energy_db,
         post_all=make_post_all(node_base_urls, round_timeout_s),
         health_check=make_health_check(node_base_urls),
         status_path=status_path,

@@ -9,7 +9,9 @@ services:
       - "9000:9000"
     environment:
       CONFIG_PATH: /config/config.yaml
-      ENERGY_DB: /energy/merged.db
+      # Only ever writes this one completion-marker file -- no round_metrics
+      # db of its own. See coordinator_runner.py for why.
+      STATUS_PATH: /energy/status.json
     volumes:
       - ../config.yaml:/config/config.yaml:ro
       - ../outputs/docker_mesh/energy:/energy
@@ -26,12 +28,15 @@ services:
       PROBE_ROOT: /data/probe
       CLASSES_JSON: /data/classes.json
       ENERGY_DB: /energy/node_0.db
+      HF_HUB_OFFLINE: "1"
+      HF_HUB_CACHE: /hf_cache
     volumes:
       - ../config.yaml:/config/config.yaml:ro
       - ../data/docker_mesh/node_0:/data/node_0:ro
       - ../data/docker_mesh/probe:/data/probe:ro
       - ../data/docker_mesh/classes.json:/data/classes.json:ro
       - ../outputs/docker_mesh/energy:/energy
+      - ${HF_CACHE_DIR}:/hf_cache:ro
     networks: [mesh]
 
   node_1:
@@ -45,12 +50,15 @@ services:
       PROBE_ROOT: /data/probe
       CLASSES_JSON: /data/classes.json
       ENERGY_DB: /energy/node_1.db
+      HF_HUB_OFFLINE: "1"
+      HF_HUB_CACHE: /hf_cache
     volumes:
       - ../config.yaml:/config/config.yaml:ro
       - ../data/docker_mesh/node_1:/data/node_1:ro
       - ../data/docker_mesh/probe:/data/probe:ro
       - ../data/docker_mesh/classes.json:/data/classes.json:ro
       - ../outputs/docker_mesh/energy:/energy
+      - ${HF_CACHE_DIR}:/hf_cache:ro
     networks: [mesh]
 
   node_2:
@@ -64,12 +72,15 @@ services:
       PROBE_ROOT: /data/probe
       CLASSES_JSON: /data/classes.json
       ENERGY_DB: /energy/node_2.db
+      HF_HUB_OFFLINE: "1"
+      HF_HUB_CACHE: /hf_cache
     volumes:
       - ../config.yaml:/config/config.yaml:ro
       - ../data/docker_mesh/node_2:/data/node_2:ro
       - ../data/docker_mesh/probe:/data/probe:ro
       - ../data/docker_mesh/classes.json:/data/classes.json:ro
       - ../outputs/docker_mesh/energy:/energy
+      - ${HF_CACHE_DIR}:/hf_cache:ro
     networks: [mesh]
 
   dashboard:
@@ -82,7 +93,10 @@ services:
     environment:
       NUM_NODES: "3"
       COORDINATOR_EVENTS_URL: http://coordinator:9000/events
-      MERGED_DB: /energy/merged.db
+      # The shared dir where every node writes its own db (node_0.db,
+      # node_1.db, node_2.db) plus the coordinator's status.json. No merged
+      # db exists -- the dashboard combines the per-node dbs itself.
+      ENERGY_DIR: /energy
       REFRESH_S: "3"
     volumes:
       - ../outputs/docker_mesh/energy:/energy:ro

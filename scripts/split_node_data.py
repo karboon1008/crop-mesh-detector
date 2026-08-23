@@ -20,6 +20,7 @@ from src.config import Config
 from src.data.plantvillage import (
     build_global_label_map,
     carve_public_probe_set,
+    filter_dataset_by_crop,
     load_full_dataset,
     partition_nodes,
     save_global_label_map,
@@ -41,6 +42,17 @@ def split(cfg: Config, output_root: Path) -> None:
     shutil.rmtree(output_root, ignore_errors=True)
 
     dataset = load_full_dataset(cfg.get("data.root"), cfg.get("data.image_size", 160))
+
+    # docker_mesh.included_crops/excluded_diseases let a demo run restrict
+    # the mesh to a subset of PlantVillage's 14 crops (e.g. only Apple +
+    # Tomato, with Apple's Black_rot dropped) without touching data.root or
+    # the general (non-Docker) training pipeline, which always sees the
+    # full, unfiltered dataset.
+    included_crops = cfg.get("docker_mesh.included_crops", None)
+    excluded_diseases = cfg.get("docker_mesh.excluded_diseases", None)
+    if included_crops or excluded_diseases:
+        filter_dataset_by_crop(dataset, included_crops, excluded_diseases)
+
     global_map = build_global_label_map(dataset)
     output_root.mkdir(parents=True, exist_ok=True)
     save_global_label_map(global_map, output_root / "classes.json")
@@ -50,11 +62,18 @@ def split(cfg: Config, output_root: Path) -> None:
     )
     _copy_indices(dataset, probe_idx, output_root / "probe")
 
+    # docker_mesh.non_iid_strategy overrides data.non_iid_strategy for the
+    # Docker split only -- needed because "manual" (data.manual_node_crops)
+    # assigns EVERY crop to exactly one of the 3 nodes; with included_crops
+    # trimmed down to 2 crops there's no way to keep all 3 nodes non-empty
+    # under a whole-crop-per-node assignment, so a filtered demo run should
+    # instead split by (crop, disease) class across the 3 nodes.
+    strategy = cfg.get("docker_mesh.non_iid_strategy", None) or cfg.get("data.non_iid_strategy", "manual")
     shards = partition_nodes(
         dataset,
         remaining_idx,
         cfg.get("data.num_nodes", 3),
-        cfg.get("data.non_iid_strategy", "manual"),
+        strategy,
         cfg.get("data.dirichlet_alpha", 0.3),
         cfg.get("data.seed", 42),
         manual_node_crops=cfg.get("data.manual_node_crops", None),

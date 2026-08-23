@@ -1,11 +1,17 @@
-"""Control-plane round driver: times rounds, tracks node liveness, merges
-per-round HTTP response bodies into SQLite. Never calls a node's
-/knowledge endpoint itself -- nodes fetch peer knowledge directly from
-each other, so there is no central aggregator of knowledge (that logic
-stays entirely in node_runner.py). Transport (concurrent HTTP fan-out,
-health polling) is injected as plain callables so this class is
-unit-testable with fakes -- see docker/coordinator/main.py for the real
-asyncio/httpx wiring.
+"""Control-plane round driver: times rounds and tracks node liveness only --
+it owns no metrics data of its own. Never calls a node's /knowledge endpoint
+itself -- nodes fetch peer knowledge directly from each other, so there is
+no central aggregator of knowledge (that logic stays entirely in
+node_runner.py). It also never persists round_metrics: each node already
+writes its own energy/accuracy/communication numbers straight into its own
+db (see node_runner.py) as part of answering /round/start and
+/round/gather, so a second, coordinator-owned copy would be redundant data
+-- and, worse, would look like a central store the mesh doesn't actually
+have. The dashboard reads every node's own db directly and combines them at
+render time (see docker/dashboard/data.py's merge_round_rows). Transport
+(concurrent HTTP fan-out, health polling) is injected as plain callables so
+this class is unit-testable with fakes -- see docker/coordinator/main.py
+for the real asyncio/httpx wiring.
 """
 
 from __future__ import annotations
@@ -15,8 +21,6 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
-
-from src.energy import sqlite_store
 
 MAX_ACTIVITY_LOG = 300
 
@@ -37,7 +41,6 @@ class CoordinatorRunner:
     node_base_urls: dict
     num_rounds: int
     round_timeout_s: float
-    db_path: str
     post_all: PostAll
     health_check: HealthCheck
     # Where to write a small completion marker JSON once run_all_rounds
@@ -66,37 +69,17 @@ class CoordinatorRunner:
         self._log("all nodes online")
 
     def run_round(self, round_idx: int) -> list:
+        # This is purely a scheduling fan-out: it decides WHEN nodes run
+        # /round/start and /round/gather and WHICH nodes are active, but it
+        # never reads the response bodies for anything beyond that liveness
+        # check -- the energy/accuracy/communication numbers inside them are
+        # already being written by each node into its own db (see
+        # node_runner.py's handle_round_start/handle_round_gather). Storing
+        # them again here would just be a redundant, coordinator-owned copy.
         self._log(f"round {round_idx}: dispatching /round/start to {self.expected_nodes}")
         start_results = self.post_all(self.expected_nodes, "/round/start", {"round_idx": round_idx})
         active = sorted(n for n, r in start_results.items() if r is not None)
         self._log(f"round {round_idx}: {len(active)}/{len(self.expected_nodes)} node(s) active after /round/start")
-        for node_id in active:
-            r = start_results[node_id]
-            # r["size_bytes"] is the size of ONE serialized knowledge payload.
-            # In the HTTP pull model every OTHER active peer independently
-            # fetches that same payload via its own GET /knowledge/{round_idx},
-            # so the bytes actually transmitted off this node are
-            # size_bytes * (active_n - 1). This mirrors src/federated/mesh.py's
-            # RoundLog.total_bytes_exchanged convention exactly (same
-            # "broadcast to every other active peer" multiplier), so the
-            # Docker/HTTP figure stays directly comparable to the in-process
-            # one. Both are upper bounds: they assume every active peer
-            # fetches exactly once and none drop out mid-gather.
-            sqlite_store.upsert_row(
-                self.db_path,
-                node_id,
-                round_idx,
-                _now_iso(),
-                energy_kwh=r["energy_kwh"],
-                duration_s=r["duration_s"],
-                energy_method=r["energy_method"],
-                knowledge_bytes_sent=r["size_bytes"] * max(0, len(active) - 1),
-                active=1,
-                baseline_crop_accuracy=r["baseline_crop_accuracy"],
-                baseline_disease_accuracy=r["baseline_disease_accuracy"],
-                baseline_energy_kwh=r["baseline_energy_kwh"],
-                baseline_duration_s=r["baseline_duration_s"],
-            )
 
         gather_body = {
             "round_idx": round_idx,
@@ -104,20 +87,8 @@ class CoordinatorRunner:
             "peer_bases": {n: self.node_base_urls[n] for n in active},
         }
         self._log(f"round {round_idx}: dispatching /round/gather to {active}")
-        gather_results = self.post_all(active, "/round/gather", gather_body)
+        self.post_all(active, "/round/gather", gather_body)
         self._log(f"round {round_idx}: /round/gather complete")
-        for node_id in active:
-            r = gather_results.get(node_id)
-            if r is None:
-                continue
-            sqlite_store.upsert_row(
-                self.db_path,
-                node_id,
-                round_idx,
-                _now_iso(),
-                crop_accuracy=r["crop_accuracy"],
-                disease_accuracy=r["disease_accuracy"],
-            )
         return active
 
     def run_all_rounds(self) -> None:

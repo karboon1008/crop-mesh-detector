@@ -48,6 +48,18 @@ def merge_transfer_rows(transfer_lists: list) -> list:
     return sorted(merged, key=lambda r: r["fetched_at"], reverse=True)
 
 
+def merge_round_rows(round_metrics_lists: list) -> list:
+    """Concatenates each node's own round_metrics rows (one list per node
+    db) into a single combined view, sorted the same way
+    sqlite_store.read_all sorts a single db (round_idx, then node_id).
+    There is no coordinator-owned merged db to read instead -- every node's
+    round history lives only in that node's own db, and the dashboard is
+    the one place that ever combines them, purely for display.
+    """
+    merged = [row for rows in round_metrics_lists for row in rows]
+    return sorted(merged, key=lambda r: (r["round_idx"], r["node_id"]))
+
+
 def build_final_result_payload(rows: list, transfers: list, status: dict | None) -> dict:
     """Shape of the combined "final result" JSON export: per-node round
     history, the knowledge-transfer feed, and the completion marker.

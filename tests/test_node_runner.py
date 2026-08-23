@@ -128,6 +128,33 @@ def test_handle_round_gather_with_no_peers_still_evaluates(tmp_path, synthetic_d
     assert "crop_accuracy" in response
 
 
+def test_handle_round_gather_updates_knowledge_bytes_sent_for_the_active_peer_count(
+    tmp_path, synthetic_dataset
+):
+    # No central process re-derives this -- the node itself recomputes its
+    # own knowledge_bytes_sent once it learns (via active_nodes, passed in
+    # the gather request) how many peers were actually around to fetch its
+    # payload this round. Same "broadcast to every other active peer"
+    # multiplier as src/federated/mesh.py's RoundLog.total_bytes_exchanged.
+    runner, _ = _make_runner(tmp_path, synthetic_dataset)
+    start_response = runner.handle_round_start(0)
+    runner.handle_round_gather(0, ["node_0", "node_1", "node_2"], {})
+
+    rows = sqlite_store.read_all(tmp_path / "node_0.db")
+    assert rows[0]["knowledge_bytes_sent"] == start_response["size_bytes"] * 2
+
+
+def test_handle_round_gather_records_zero_knowledge_bytes_sent_when_alone(tmp_path, synthetic_dataset):
+    # A lone active node has nobody to serve its payload to, so nothing is
+    # actually transmitted -- mesh.py's max(0, active_n - 1) gives 0 here too.
+    runner, _ = _make_runner(tmp_path, synthetic_dataset)
+    runner.handle_round_start(0)
+    runner.handle_round_gather(0, ["node_0"], {})
+
+    rows = sqlite_store.read_all(tmp_path / "node_0.db")
+    assert rows[0]["knowledge_bytes_sent"] == 0
+
+
 def test_handle_round_start_records_activity_log_entries(tmp_path, synthetic_dataset):
     runner, _ = _make_runner(tmp_path, synthetic_dataset)
     runner.handle_round_start(0)

@@ -53,11 +53,51 @@ class Node:
         self.test_loader = test_loader
         self.device = device
         self.active = active
+        # Adam's m/v moment estimates + step count, persisted across
+        # local_train/distill calls (i.e. across knowledge-transfer rounds)
+        # instead of being re-initialized to zero every call. A fresh Adam
+        # optimizer's first steps are poorly calibrated (bias-corrected
+        # m/v start at zero), which was producing a visible accuracy dip at
+        # the start of every Stage-2 round; see docs/apple_kt_diagnosis_and_next_run_tuning.md
+        # and the federated-optimization literature it cites (Mime,
+        # Karimireddy et al. 2020; FedAdamW, 2025) for why resetting
+        # moment estimates every round is a known, named problem. Each
+        # Node instance keeps its own private optimizer state (no
+        # cross-node aggregation of it), which matches how the
+        # local-only-control arm should behave and is a reasonable,
+        # simpler first step for the collective arm too.
+        self.optimizer: torch.optim.Optimizer | None = None
+        # Stage-1 (run_training) anneals its LR to ~0 over its full epoch
+        # budget via CosineAnnealingLR, then Stage-2 previously restarted
+        # every round at a flat, un-annealed `distill_lr` -- a large
+        # relative jump straight after the model had just settled near an
+        # LR of 0, independent of whether Adam's own momentum was fresh or
+        # persisted. `total_epochs`, when set by the caller (the total
+        # planned local-training epochs across every remaining Stage-2
+        # round, e.g. rounds * distill_epochs), lets `_get_optimizer` wrap
+        # the optimizer in its own CosineAnnealingLR -- created once and
+        # stepped once per epoch across every subsequent local_train/distill
+        # call, so the LR keeps decaying smoothly round-to-round instead of
+        # resetting to the same flat value every round. Left `None` (the
+        # default) preserves the old flat-LR behavior for any caller that
+        # doesn't set it (corn/tomato/mesh/scenarios are unaffected unless
+        # they opt in).
+        self.total_epochs: int | None = None
+        self.scheduler: torch.optim.lr_scheduler.LRScheduler | None = None
+
+    def _get_optimizer(self, lr: float) -> torch.optim.Optimizer:
+        if self.optimizer is None:
+            self.optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
+            if self.total_epochs is not None:
+                self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                    self.optimizer, T_max=self.total_epochs
+                )
+        return self.optimizer
 
     # local supervised training (data never leaves this method)
     def local_train(self, epochs: int, lr: float, progress_cb: ProgressCallback | None = None) -> float:
         self.model.train()
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
+        optimizer = self._get_optimizer(lr)
         total_loss, total_batches = 0.0, 0
         num_batches = len(self.train_loader)
         for epoch in range(epochs):
@@ -86,6 +126,8 @@ class Node:
                             "loss": loss.item(),
                         }
                     )
+            if self.scheduler is not None:
+                self.scheduler.step()
         return total_loss / max(1, total_batches)
 
     # knowledge extraction: prototypes + public-probe logits
@@ -157,7 +199,7 @@ class Node:
         tuning can be diagnosed from RoundLog rather than guessed at.
         """
         self.model.train()
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
+        optimizer = self._get_optimizer(lr)
         consensus_crop_logits = consensus_crop_logits.to(self.device)
         consensus_disease_logits = consensus_disease_logits.to(self.device)
 
@@ -228,6 +270,8 @@ class Node:
                             "loss": sup_loss.item() + proto_loss.item(),
                         }
                     )
+            if self.scheduler is not None:
+                self.scheduler.step()
 
         return {
             "kd_loss": kd_loss_sum / max(1, kd_batches),

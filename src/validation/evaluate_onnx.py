@@ -7,6 +7,7 @@ writes a per-image + aggregate-summary report.json.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -14,6 +15,22 @@ import onnxruntime
 from PIL import Image
 
 from src.data.plantvillage import PlantVillageDataset
+
+
+def _win_long_path(path: str) -> str:
+    """Applies the `\\\\?\\` extended-length-path prefix on Windows so
+    Image.open() can read files whose absolute path exceeds MAX_PATH
+    (260 chars) -- same fix as apple_mesh_dataset.py's helper of the same
+    name, needed here too since run_evaluation() opens test-set images
+    directly by path rather than through a dataset's __getitem__. No-op on
+    non-Windows platforms and already-prefixed/UNC paths.
+    """
+    if os.name != "nt" or path.startswith("\\\\?\\"):
+        return path
+    abs_path = os.path.abspath(path)
+    if abs_path.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + abs_path.lstrip("\\")
+    return "\\\\?\\" + abs_path
 
 
 def preprocess_image(image: Image.Image, image_size: int, mean: list[float], std: list[float]) -> np.ndarray:
@@ -104,7 +121,7 @@ def run_evaluation(
         expected_crop = eval_ds.labels.crop_classes[crop_gt_idx]
         expected_disease = eval_ds.labels.disease_classes[disease_gt_idx]
 
-        with Image.open(path) as img:
+        with Image.open(_win_long_path(path)) as img:
             image_array = preprocess_image(img, manifest["image_size"], manifest["mean"], manifest["std"])
         crop_idx, crop_conf, disease_idx, disease_conf = predict_onnx(session, image_array)
         predicted_crop = manifest["crop_classes"][crop_idx]

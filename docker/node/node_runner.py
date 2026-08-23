@@ -244,6 +244,21 @@ class NodeRunner:
 
         self._log("round_gather", f"round {round_idx}: evaluating")
         eval_result = self.node.evaluate()
+        extra_fields = {}
+        # active_nodes (received from the coordinator's gather request, which
+        # includes this node itself) is the first point this node knows how
+        # many peers actually fetched its knowledge payload this round -- not
+        # known yet at handle_round_start time. Recomputing (and overwriting)
+        # knowledge_bytes_sent here, rather than having some central process
+        # compute it from this node's response body, keeps every row in this
+        # node's own db fully self-contained: no other service ever needs to
+        # touch round_metrics for this node's data to be complete. Same
+        # "broadcast to every other active peer" multiplier as
+        # src/federated/mesh.py's RoundLog.total_bytes_exchanged.
+        if self._last_round_idx == round_idx and self._last_knowledge_bytes is not None:
+            extra_fields["knowledge_bytes_sent"] = len(self._last_knowledge_bytes) * max(
+                0, len(active_nodes) - 1
+            )
         sqlite_store.upsert_row(
             self.db_path,
             self.node_id,
@@ -252,6 +267,7 @@ class NodeRunner:
             crop_accuracy=eval_result["crop_accuracy"],
             disease_accuracy=eval_result["disease_accuracy"],
             active=1,
+            **extra_fields,
         )
         self._log(
             "round_gather",

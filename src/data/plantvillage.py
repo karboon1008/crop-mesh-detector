@@ -180,6 +180,54 @@ class PlantVillageDataset(Dataset):
         return self.base.targets
 
 
+def filter_dataset_by_crop(
+    dataset: PlantVillageDataset,
+    included_crops: list[str] | None = None,
+    excluded_diseases: dict[str, list[str]] | None = None,
+) -> PlantVillageDataset:
+    """Restricts `dataset` in place to only `included_crops` (all crops kept
+    if None) and drops any (crop, disease) pair named in `excluded_diseases`
+    (e.g. {"Apple": ["Black_rot"]}). Intended for docker_mesh demo runs that
+    only want a subset of PlantVillage's 14 crops -- the general training
+    pipeline (src/train.py) always uses the unfiltered dataset, so this is
+    opt-in rather than a change to load_full_dataset's default behaviour.
+
+    Rebuilds labels.crop_classes/disease_classes from what's left, so a
+    filtered run's classes.json and model heads are sized for exactly its
+    own crops/diseases instead of carrying the full 14-crop label space
+    with most slots never seeing a single training example.
+    """
+    excluded_diseases = excluded_diseases or {}
+    old_classes = dataset.base.classes
+    keep_old_idx: list[int] = []
+    kept_class_names: list[str] = []
+    for old_idx, name in enumerate(old_classes):
+        crop, disease = _parse_crop_disease(name)
+        if included_crops is not None and crop not in included_crops:
+            continue
+        if disease in excluded_diseases.get(crop, []):
+            continue
+        keep_old_idx.append(old_idx)
+        kept_class_names.append(name)
+
+    if not kept_class_names:
+        raise ValueError(
+            "filter_dataset_by_crop excluded every class -- check "
+            "included_crops/excluded_diseases against the actual PlantVillage folder names"
+        )
+
+    old_to_new = {old_idx: new_idx for new_idx, old_idx in enumerate(keep_old_idx)}
+    dataset.base.samples = [
+        (path, old_to_new[cls_idx]) for path, cls_idx in dataset.base.samples if cls_idx in old_to_new
+    ]
+    dataset.base.imgs = dataset.base.samples
+    dataset.base.targets = [cls_idx for _, cls_idx in dataset.base.samples]
+    dataset.base.classes = kept_class_names
+    dataset.base.class_to_idx = {name: i for i, name in enumerate(kept_class_names)}
+    dataset.labels = dataset._build_label_maps(kept_class_names)
+    return dataset
+
+
 def load_full_dataset(root: str | Path, image_size: int = 160) -> PlantVillageDataset:
     root = Path(root)
     if not root.exists():
