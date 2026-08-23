@@ -22,14 +22,17 @@ import torch
 import torch.nn.functional as F
 from PIL import Image
 
-from src.model_selection import pick_best_arch_node
+from src.model_selection import pick_best_arch_node, pick_best_node_for_arch
 from src.models.factory import build_model
 from src.predict import build_transform
 
 
 def load_model(stage1_dir: Path, stage2_dir: Path, arch: str | None, node_id: str | None):
-    if not (arch and node_id):
-        arch, node_id = pick_best_arch_node(stage2_dir / "results_summary.json", eval_key="mesh_eval")
+    results_path = stage2_dir / "results_summary.json"
+    if arch and not node_id:
+        node_id, _ = pick_best_node_for_arch(results_path, arch, eval_key="mesh_eval")
+    elif not arch:
+        arch, node_id = pick_best_arch_node(results_path, eval_key="mesh_eval")
 
     classes = json.loads((stage1_dir / "classes.json").read_text())
     crop_classes = classes["crop_classes"]
