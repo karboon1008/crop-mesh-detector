@@ -1,0 +1,21 @@
+# apps/crop_disease_detection/docker-compose.yml
+#
+# Standalone compose file for this app only -- not part of
+# docker/docker-compose.yml's mesh simulation stack. Run from this directory:
+#   docker compose up --build
+# Then open http://localhost:8502
+#
+# Bind mounts (relative to this file) put the model and DB on the host:
+# replace apps/model/model.onnx and restart (`docker compose restart`) to
+# deploy an updated model; detections.db lives in ./data, not inside the
+# container.
+services:
+  crop-disease-detection:
+    build:
+      context: ../..
+      dockerfile: apps/crop_disease_detection/Dockerfile
+    ports:
+      - "8502:8501"
+    volumes:
+      - ../model:/app/apps/model
+      - ./data:/app/apps/crop_disease_detection/data
