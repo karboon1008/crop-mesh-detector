@@ -12,7 +12,7 @@ Three lightweight backbones are trained and compared: **MobileNetV3-Small**,
 
 ## Team
 
-**Team name:** HiveMind — Cambridge Edge AI Innovation for Sustainability Challenge 2026
+**Team name:** HiveMind
 
 **Lead representative:** Wong E Chern
 
