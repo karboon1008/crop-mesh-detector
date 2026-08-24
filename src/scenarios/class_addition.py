@@ -186,6 +186,7 @@ def main():
         aggregation_method=cfg.get("federated.aggregation", "trimmed_mean"),
         trim_fraction=cfg.get("federated.trim_fraction", 0.2),
         krum_neighbors=cfg.get("federated.krum_neighbors", 2),
+        combined_training=cfg.get("training.combined_training", False),
     )
 
     hook = make_class_addition_hook(
