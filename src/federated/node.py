@@ -5,11 +5,18 @@ exposing images, labels-in-bulk, or model weights to anyone else.
 
 from __future__ import annotations
 from dataclasses import dataclass
+from typing import Callable
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from src.metrics import head_metrics
+
+# Called with a small dict of progress info after every batch, when provided.
+# Deliberately cheap to invoke (dict + a few numbers) -- callers that care
+# about wall-clock cost (e.g. inside a tracked energy scope) are expected to
+# throttle on their own side rather than this method skipping calls.
+ProgressCallback = Callable[[dict], None]
 
 Prototypes = dict[tuple[str, int], torch.Tensor]
 
@@ -76,6 +83,37 @@ class Node:
         self.test_loader = test_loader
         self.device = device
         self.active = active
+        # Adam's m/v moment estimates + step count, persisted across
+        # local_train/distill calls (i.e. across knowledge-transfer rounds)
+        # instead of being re-initialized to zero every call. A fresh Adam
+        # optimizer's first steps are poorly calibrated (bias-corrected
+        # m/v start at zero), which was producing a visible accuracy dip at
+        # the start of every Stage-2 round; see docs/apple_kt_diagnosis_and_next_run_tuning.md
+        # and the federated-optimization literature it cites (Mime,
+        # Karimireddy et al. 2020; FedAdamW, 2025) for why resetting
+        # moment estimates every round is a known, named problem. Each
+        # Node instance keeps its own private optimizer state (no
+        # cross-node aggregation of it), which matches how the
+        # local-only-control arm should behave and is a reasonable,
+        # simpler first step for the collective arm too.
+        self.optimizer: torch.optim.Optimizer | None = None
+        # Stage-1 (run_training) anneals its LR to ~0 over its full epoch
+        # budget via CosineAnnealingLR, then Stage-2 previously restarted
+        # every round at a flat, un-annealed `distill_lr` -- a large
+        # relative jump straight after the model had just settled near an
+        # LR of 0, independent of whether Adam's own momentum was fresh or
+        # persisted. `total_epochs`, when set by the caller (the total
+        # planned local-training epochs across every remaining Stage-2
+        # round, e.g. rounds * distill_epochs), lets `_get_optimizer` wrap
+        # the optimizer in its own CosineAnnealingLR -- created once and
+        # stepped once per epoch across every subsequent local_train/distill
+        # call, so the LR keeps decaying smoothly round-to-round instead of
+        # resetting to the same flat value every round. Left `None` (the
+        # default) preserves the old flat-LR behavior for any caller that
+        # doesn't set it (corn/tomato/mesh/scenarios are unaffected unless
+        # they opt in).
+        self.total_epochs: int | None = None
+        self.scheduler: torch.optim.lr_scheduler.LRScheduler | None = None
         # class names for readable per-class metrics/confusion matrices in
         # evaluate() — falls back to positional labels if not provided.
         self.crop_classes = crop_classes or [f"crop_{i}" for i in range(model.crop_head.out_features)]
@@ -104,10 +142,21 @@ class Node:
             {pair: idx for idx, pair in class_to_crop_disease.items()} if class_to_crop_disease else None
         )
 
+    def _get_optimizer(self, lr: float, weight_decay: float = 0.0) -> torch.optim.Optimizer:
+        if self.optimizer is None:
+            self.optimizer = torch.optim.Adam(
+                (p for p in self.model.parameters() if p.requires_grad), lr=lr, weight_decay=weight_decay
+            )
+            if self.total_epochs is not None:
+                self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                    self.optimizer, T_max=self.total_epochs
+                )
+        return self.optimizer
+
     # local supervised training (data never leaves this method)
     def local_train(
         self, epochs: int, lr: float, val_loader: DataLoader | None = None, patience: int | None = None,
-        weight_decay: float = 0.0,
+        weight_decay: float = 0.0, progress_cb: ProgressCallback | None = None,
     ) -> float:
         """If `val_loader` and `patience` are both given, evaluates this
         node's pair_accuracy (crop AND disease both correct — see
@@ -122,23 +171,33 @@ class Node:
         (Adam's L2 penalty) is a second, complementary guard against the
         same small-node overfitting risk — also opt-in (default 0, i.e.
         today's behaviour), also stage-1-only in practice.
+
+        Without `val_loader`/`patience` (the mesh's per-round calls), uses
+        the Node's persistent optimizer/scheduler (see `_get_optimizer`)
+        instead of a fresh one, so momentum and LR annealing carry over
+        across rounds.
         """
         early_stopping = val_loader is not None and patience is not None
         if early_stopping and self.pair_to_class_idx is None:
             raise ValueError(
                 "local_train early stopping needs pair_class_names/class_to_crop_disease set on this Node"
             )
-        optimizer = torch.optim.Adam(
-            (p for p in self.model.parameters() if p.requires_grad), lr=lr, weight_decay=weight_decay
-        )
-        scheduler = torch.optim.lr_scheduler.OneCycleLR(
-            optimizer, max_lr=lr, steps_per_epoch=len(self.train_loader), epochs=epochs
-        )
+        if early_stopping:
+            optimizer = torch.optim.Adam(
+                (p for p in self.model.parameters() if p.requires_grad), lr=lr, weight_decay=weight_decay
+            )
+            scheduler = torch.optim.lr_scheduler.OneCycleLR(
+                optimizer, max_lr=lr, steps_per_epoch=len(self.train_loader), epochs=epochs
+            )
+        else:
+            optimizer = self._get_optimizer(lr, weight_decay=weight_decay)
+            scheduler = None
         best_score, best_state, epochs_without_improvement = -1.0, None, 0
         total_loss, total_batches = 0.0, 0
-        for _epoch in range(epochs):
+        num_batches = len(self.train_loader)
+        for epoch in range(epochs):
             self.model.train()
-            for images, crop_labels, disease_labels in self.train_loader:
+            for batch_idx, (images, crop_labels, disease_labels) in enumerate(self.train_loader):
                 images = images.to(self.device)
                 crop_labels = crop_labels.to(self.device)
                 disease_labels = disease_labels.to(self.device)
@@ -152,9 +211,23 @@ class Node:
                 )
                 loss.backward()
                 optimizer.step()
-                scheduler.step()
+                if scheduler is not None:
+                    scheduler.step()
                 total_loss += loss.item()
                 total_batches += 1
+                if progress_cb is not None:
+                    progress_cb(
+                        {
+                            "phase": "local_train",
+                            "epoch": epoch + 1,
+                            "epochs": epochs,
+                            "batch": batch_idx + 1,
+                            "num_batches": num_batches,
+                            "loss": loss.item(),
+                        }
+                    )
+            if scheduler is None and self.scheduler is not None:
+                self.scheduler.step()
 
             if early_stopping:
                 val_score = self.evaluate(val_loader)["pair_accuracy"]
@@ -243,19 +316,20 @@ class Node:
         kd_weight: float,
         crop_kd_weight: float,
         temperature: float,
+        progress_cb: ProgressCallback | None = None,
     ) -> dict[str, float]:
         self.model.train()
-        optimizer = torch.optim.Adam((p for p in self.model.parameters() if p.requires_grad), lr=lr)
-        total_steps = epochs * (len(probe_loader) + len(self.train_loader))
-        scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=lr, total_steps=total_steps)
+        optimizer = self._get_optimizer(lr)
         consensus_crop_logits = consensus_crop_logits.to(self.device)
         crop_known_mask = crop_known_mask.to(self.device)
         consensus_disease_logits = consensus_disease_logits.to(self.device)
         disease_known_mask = disease_known_mask.to(self.device)
 
+        num_kd_batches = len(probe_loader)
+        num_sup_batches = len(self.train_loader)
         kd_loss_sum, crop_kd_loss_sum, kd_batches = 0.0, 0.0, 0
         sup_loss_sum, proto_loss_sum, sup_batches = 0.0, 0.0, 0
-        for _ in range(epochs):
+        for epoch in range(epochs):
             # (a) knowledge-distillation using the shared public probe dataset
             for batch_idx, (images, _, _) in enumerate(probe_loader):
                 images = images.to(self.device)
@@ -276,14 +350,24 @@ class Node:
                 optimizer.zero_grad()
                 (kd_weight * kd_loss + crop_kd_weight * crop_kd_loss).backward()
                 optimizer.step()
-                scheduler.step()
 
                 kd_loss_sum += kd_loss.item()
                 crop_kd_loss_sum += crop_kd_loss.item()
                 kd_batches += 1
+                if progress_cb is not None:
+                    progress_cb(
+                        {
+                            "phase": "distill_kd",
+                            "epoch": epoch + 1,
+                            "epochs": epochs,
+                            "batch": batch_idx + 1,
+                            "num_batches": num_kd_batches,
+                            "loss": kd_loss.item(),
+                        }
+                    )
 
             # (b) supervised learning + prototype alignment on local labeled data only
-            for images, crop_labels, disease_labels in self.train_loader:
+            for batch_idx, (images, crop_labels, disease_labels) in enumerate(self.train_loader):
                 images = images.to(self.device)
                 crop_labels = crop_labels.to(self.device)
                 disease_labels = disease_labels.to(self.device)
@@ -302,10 +386,22 @@ class Node:
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
-                scheduler.step()
                 sup_loss_sum += sup_loss.item()
                 proto_loss_sum += proto_loss.item()
                 sup_batches += 1
+                if progress_cb is not None:
+                    progress_cb(
+                        {
+                            "phase": "distill_sup",
+                            "epoch": epoch + 1,
+                            "epochs": epochs,
+                            "batch": batch_idx + 1,
+                            "num_batches": num_sup_batches,
+                            "loss": sup_loss.item() + proto_loss.item(),
+                        }
+                    )
+            if self.scheduler is not None:
+                self.scheduler.step()
 
         return {
             "kd_loss": kd_loss_sum / max(1, kd_batches),

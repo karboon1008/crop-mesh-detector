@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import numpy as np
-from sklearn.metrics import confusion_matrix, precision_recall_fscore_support
 
 
 def _top_confusions(cm: np.ndarray, labels: list[str]) -> list[dict]:
@@ -19,6 +18,13 @@ def _top_confusions(cm: np.ndarray, labels: list[str]) -> list[dict]:
 
 
 def head_metrics(y_true: list[int], y_pred: list[int], class_names: list[str]) -> dict:
+    # scikit-learn is imported here rather than at module scope so that the
+    # reporting/summarising side of the codebase — which only re-reads
+    # already-computed metrics out of JSON — stays importable without it.
+    # That is what lets `python -m src.scenarios.summarise` regenerate the
+    # published tables on a machine with neither sklearn nor torch installed.
+    from sklearn.metrics import confusion_matrix, precision_recall_fscore_support
+
     labels = list(range(len(class_names)))
     per_class_precision, per_class_recall, per_class_f1, support = precision_recall_fscore_support(
         y_true, y_pred, labels=labels, average=None, zero_division=0

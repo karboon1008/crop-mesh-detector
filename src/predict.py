@@ -28,7 +28,7 @@ from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 
 from src.data.plantvillage import IMAGENET_MEAN, IMAGENET_STD, _parse_crop_disease
-from src.model_selection import pick_best_arch_node
+from src.model_selection import pick_best_arch_node, pick_best_node_for_arch
 from src.models.factory import build_model
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp"}
@@ -86,7 +86,9 @@ def load_model(checkpoints_dir: Path, results_path: Path, arch: str | None, node
     given. Shared by batch folder inference (this module) and interactive
     single-image/camera inference (src/infer.py).
     """
-    if not (arch and node_id):
+    if arch and not node_id:
+        node_id, _ = pick_best_node_for_arch(results_path, arch)
+    elif not arch:
         arch, node_id = pick_best_arch_node(results_path)
 
     classes = json.loads((checkpoints_dir / "classes.json").read_text())

@@ -15,7 +15,13 @@ def scalar_metrics(eval_: dict) -> dict[str, float]:
 
 
 def pooled_metrics(evals: dict[str, dict]) -> dict:
-    if not evals:
+    # "detail" (per-class confusion matrices) is only present on evals
+    # produced by src.federated.node.Node.evaluate() -- callers scoring
+    # exported ONNX models (e.g. src.validation.evaluate_onnx's report
+    # "summary" blocks) pass a flatter dict with no "detail" key, so pooled
+    # (confusion-matrix-based) metrics simply aren't available for those
+    # and are skipped rather than raising.
+    if not evals or "detail" not in next(iter(evals.values())):
         return {}
     heads = next(iter(evals.values()))["detail"].keys()
     return {

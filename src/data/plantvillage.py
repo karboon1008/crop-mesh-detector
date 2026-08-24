@@ -19,6 +19,7 @@ per node; only derived, non-invertible artefacts ever leave a node
 """
 
 from __future__ import annotations
+import json
 import random
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -84,6 +85,57 @@ class LabelMaps:
     class_to_crop_disease: dict[int, tuple[int, int]] = field(default_factory=dict)
 
 
+@dataclass
+class GlobalLabelMap:
+    """Class-name-keyed label map, shared across every node container so
+    each node's locally-discovered ImageFolder classes map to the SAME
+    global crop/disease indices as every other node — required for the
+    prototype/logit exchange to align positionally. Keyed by class NAME,
+    not the numeric ImageFolder index used by LabelMaps.class_to_crop_disease,
+    because that index is only meaningful relative to one specific
+    ImageFolder instance (and a node's local ImageFolder only discovers
+    whatever subset of class folders it physically has).
+    """
+
+    crop_classes: list[str]
+    disease_classes: list[str]
+    name_to_crop_disease: dict[str, tuple[int, int]]
+
+
+def build_global_label_map(dataset: "PlantVillageDataset") -> GlobalLabelMap:
+    name_to_crop_disease = {
+        dataset.base.classes[idx]: cd
+        for idx, cd in dataset.labels.class_to_crop_disease.items()
+    }
+    return GlobalLabelMap(
+        crop_classes=list(dataset.labels.crop_classes),
+        disease_classes=list(dataset.labels.disease_classes),
+        name_to_crop_disease=name_to_crop_disease,
+    )
+
+
+def save_global_label_map(label_map: GlobalLabelMap, path: str | Path) -> None:
+    Path(path).write_text(
+        json.dumps(
+            {
+                "crop_classes": label_map.crop_classes,
+                "disease_classes": label_map.disease_classes,
+                "name_to_crop_disease": label_map.name_to_crop_disease,
+            },
+            indent=2,
+        )
+    )
+
+
+def load_global_label_map(path: str | Path) -> GlobalLabelMap:
+    data = json.loads(Path(path).read_text())
+    return GlobalLabelMap(
+        crop_classes=data["crop_classes"],
+        disease_classes=data["disease_classes"],
+        name_to_crop_disease={k: tuple(v) for k, v in data["name_to_crop_disease"].items()},
+    )
+
+
 class _FilteredImageFolder(ImageFolder):
     """ImageFolder restricted to a subset of its class subdirectories,
     so excluded classes are never scanned in the first place.
@@ -104,11 +156,37 @@ class _FilteredImageFolder(ImageFolder):
 class PlantVillageDataset(Dataset):
     """Wraps torchvision's ImageFolder, exposing (image, crop_label, disease_label)."""
 
-    def __init__(self, root: str | Path, image_size: int = 224, allowed_classes: set[str] | None = None):
+    def __init__(
+        self,
+        root: str | Path,
+        image_size: int = 224,
+        allowed_classes: set[str] | None = None,
+        global_label_map: "GlobalLabelMap | None" = None,
+    ):
         self.transform = build_eval_transform(image_size)
         self.train_transform = build_train_transform(image_size)
         self.base = _FilteredImageFolder(str(root), allowed_classes=allowed_classes)
-        self.labels = self._build_label_maps(self.base.classes)
+        if global_label_map is None:
+            self.labels = self._build_label_maps(self.base.classes)
+        else:
+            self.labels = self._apply_global_label_map(self.base.classes, global_label_map)
+
+    @staticmethod
+    def _apply_global_label_map(class_names: list[str], global_label_map: "GlobalLabelMap") -> LabelMaps:
+        missing = [c for c in class_names if c not in global_label_map.name_to_crop_disease]
+        if missing:
+            raise ValueError(
+                f"Classes {missing} are not present in the supplied global label map "
+                f"(classes.json) — the split data and classes.json are out of sync."
+            )
+        class_to_crop_disease = {
+            i: global_label_map.name_to_crop_disease[name] for i, name in enumerate(class_names)
+        }
+        return LabelMaps(
+            crop_classes=list(global_label_map.crop_classes),
+            disease_classes=list(global_label_map.disease_classes),
+            class_to_crop_disease=class_to_crop_disease,
+        )
 
     @staticmethod
     def _build_label_maps(class_names: list[str]) -> LabelMaps:
@@ -141,6 +219,54 @@ class PlantVillageDataset(Dataset):
     def targets(self) -> list[int]:
         """Original ImageFolder class index per sample — used for partitioning."""
         return self.base.targets
+
+
+def filter_dataset_by_crop(
+    dataset: PlantVillageDataset,
+    included_crops: list[str] | None = None,
+    excluded_diseases: dict[str, list[str]] | None = None,
+) -> PlantVillageDataset:
+    """Restricts `dataset` in place to only `included_crops` (all crops kept
+    if None) and drops any (crop, disease) pair named in `excluded_diseases`
+    (e.g. {"Apple": ["Black_rot"]}). Intended for docker_mesh demo runs that
+    only want a subset of PlantVillage's 14 crops -- the general training
+    pipeline (src/train.py) always uses the unfiltered dataset, so this is
+    opt-in rather than a change to load_full_dataset's default behaviour.
+
+    Rebuilds labels.crop_classes/disease_classes from what's left, so a
+    filtered run's classes.json and model heads are sized for exactly its
+    own crops/diseases instead of carrying the full 14-crop label space
+    with most slots never seeing a single training example.
+    """
+    excluded_diseases = excluded_diseases or {}
+    old_classes = dataset.base.classes
+    keep_old_idx: list[int] = []
+    kept_class_names: list[str] = []
+    for old_idx, name in enumerate(old_classes):
+        crop, disease = _parse_crop_disease(name)
+        if included_crops is not None and crop not in included_crops:
+            continue
+        if disease in excluded_diseases.get(crop, []):
+            continue
+        keep_old_idx.append(old_idx)
+        kept_class_names.append(name)
+
+    if not kept_class_names:
+        raise ValueError(
+            "filter_dataset_by_crop excluded every class -- check "
+            "included_crops/excluded_diseases against the actual PlantVillage folder names"
+        )
+
+    old_to_new = {old_idx: new_idx for new_idx, old_idx in enumerate(keep_old_idx)}
+    dataset.base.samples = [
+        (path, old_to_new[cls_idx]) for path, cls_idx in dataset.base.samples if cls_idx in old_to_new
+    ]
+    dataset.base.imgs = dataset.base.samples
+    dataset.base.targets = [cls_idx for _, cls_idx in dataset.base.samples]
+    dataset.base.classes = kept_class_names
+    dataset.base.class_to_idx = {name: i for i, name in enumerate(kept_class_names)}
+    dataset.labels = dataset._build_label_maps(kept_class_names)
+    return dataset
 
 
 def load_full_dataset(root: str | Path, image_size: int = 224) -> PlantVillageDataset:

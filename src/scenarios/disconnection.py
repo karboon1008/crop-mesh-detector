@@ -18,7 +18,9 @@ from src.data.merged import load_merged_dataset
 from src.federated.mesh import MeshSimulator
 from src.scenarios.harness import (
     ScenarioEvent,
+    build_energy_accounting,
     build_node_set,
+    build_provenance,
     require_target_node,
     run_scenario,
     write_scenario_report,
@@ -91,6 +93,7 @@ def main():
         combined_training=cfg.get("training.combined_training", False),
     )
 
+    tracker, comm_estimator = build_energy_accounting(cfg, output_dir)
     round_kwargs = {
         "local_epochs": cfg.get("training.local_epochs_per_round", 2),
         "distill_epochs": cfg.get("training.distill_epochs_per_round", 1),
@@ -105,6 +108,7 @@ def main():
         baseline_nodes, mesh, num_rounds,
         make_disconnect_hook(target_node, disconnect_round, reconnect_round),
         round_kwargs,
+        tracker=tracker, comm_estimator=comm_estimator,
     )
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -112,6 +116,10 @@ def main():
         output_dir, "disconnection", target_node,
         disruption_start_round=disconnect_round, disruption_end_round=reconnect_round,
         config_snapshot=scfg, records=records, save_plots=cfg.get("output.save_plots", True),
+        provenance=build_provenance(
+            cfg, arch, num_rounds, node_loaders, tracker,
+            offline_rounds=list(range(disconnect_round, reconnect_round)),
+        ),
     )
     print(f"Wrote {report_path}")
 

@@ -130,6 +130,92 @@ def test_run_scenario_and_write_report(tmp_path, synthetic_dataset):
     assert "recovery_round_baseline" in written["summary"]
 
 
+def test_run_scenario_tracks_compute_and_communication_energy(
+    tmp_path, synthetic_dataset, energy_tracker, wifi_comm_estimator
+):
+    probe_idx, remaining_idx = carve_public_probe_set(synthetic_dataset, 0.2, seed=2)
+    shards = partition_nodes(
+        synthetic_dataset, remaining_idx, num_nodes=2, strategy="by_crop", dirichlet_alpha=0.3, seed=2
+    )
+    probe_loader = DataLoader(make_subset(synthetic_dataset, probe_idx), batch_size=4, shuffle=False)
+    num_crop = len(synthetic_dataset.labels.crop_classes)
+    num_disease = len(synthetic_dataset.labels.disease_classes)
+
+    baseline_nodes = build_nodes(synthetic_dataset, shards, num_crop, num_disease)
+    mesh_nodes = build_nodes(synthetic_dataset, shards, num_crop, num_disease)
+    mesh = MeshSimulator(
+        mesh_nodes, probe_loader, aggregation_method="trimmed_mean", trim_fraction=0.0, krum_neighbors=1
+    )
+
+    round_kwargs = {
+        "local_epochs": 1, "distill_epochs": 1, "lr": 1e-3, "distill_lr": 1e-3,
+        "proto_weight": 0.5, "kd_weight": 0.5, "temperature": 2.0,
+    }
+    records = run_scenario(
+        baseline_nodes, mesh, num_rounds=2, perturbation_hook=lambda *_: [], round_kwargs=round_kwargs,
+        tracker=energy_tracker, comm_estimator=wifi_comm_estimator, radio="wifi",
+    )
+
+    for record in records:
+        assert record.baseline_compute_energy_kwh > 0
+        assert record.mesh_compute_energy_kwh > 0
+        # both nodes are active every round here, so bytes — and therefore
+        # communication energy — must be strictly positive.
+        assert record.communication_energy_j > 0
+        assert record.communication_energy_j == pytest.approx(record.total_bytes_exchanged * 0.00003)
+
+    report_path = write_scenario_report(
+        tmp_path, "unit_test_energy", "node_0",
+        disruption_start_round=1, disruption_end_round=1,
+        config_snapshot={}, records=records, save_plots=False,
+        provenance={"architecture": "mobilenet_v3_small", "compute_energy_method": "proxy_wall_power"},
+    )
+    written = json.loads(report_path.read_text())
+    sustainability = written["summary"]["sustainability"]
+    assert sustainability["total_mesh_compute_energy_kwh"] == pytest.approx(
+        sum(r.mesh_compute_energy_kwh for r in records)
+    )
+    assert sustainability["total_communication_energy_j"] == pytest.approx(
+        sum(r.communication_energy_j for r in records)
+    )
+    assert sustainability["gain_per_joule"] is not None
+    assert sustainability["gain_per_additional_joule"] is not None
+    assert "adaptation_gain" in written["summary"]["adaptation"]
+    assert "retention_gain" in written["summary"]["retention"]
+    assert written["provenance"]["compute_energy_method"] == "proxy_wall_power"
+    assert written["disruption_start_round"] == 1
+
+
+def test_run_scenario_without_trackers_records_no_energy(synthetic_dataset):
+    # Energy accounting is optional, so the harness stays usable in a smoke
+    # test — but an un-instrumented run must report zero spend and, via
+    # write_scenario_report, a null (not zero) gain-per-joule.
+    probe_idx, remaining_idx = carve_public_probe_set(synthetic_dataset, 0.2, seed=3)
+    shards = partition_nodes(
+        synthetic_dataset, remaining_idx, num_nodes=2, strategy="by_crop", dirichlet_alpha=0.3, seed=3
+    )
+    probe_loader = DataLoader(make_subset(synthetic_dataset, probe_idx), batch_size=4, shuffle=False)
+    num_crop = len(synthetic_dataset.labels.crop_classes)
+    num_disease = len(synthetic_dataset.labels.disease_classes)
+
+    mesh = MeshSimulator(
+        build_nodes(synthetic_dataset, shards, num_crop, num_disease), probe_loader,
+        aggregation_method="trimmed_mean", trim_fraction=0.0, krum_neighbors=1,
+    )
+    records = run_scenario(
+        build_nodes(synthetic_dataset, shards, num_crop, num_disease), mesh, num_rounds=1,
+        perturbation_hook=lambda *_: [],
+        round_kwargs={
+            "local_epochs": 1, "distill_epochs": 1, "lr": 1e-3, "distill_lr": 1e-3,
+            "proto_weight": 0.5, "kd_weight": 0.5, "temperature": 2.0,
+        },
+    )
+
+    assert records[0].baseline_compute_energy_kwh == 0.0
+    assert records[0].mesh_compute_energy_kwh == 0.0
+    assert records[0].communication_energy_j == 0.0
+
+
 def test_recovery_round_returns_none_for_out_of_range_disruption_start():
     # disruption_start_round is far beyond the available records, so
     # pre_round (disruption_start_round - 1) indexes past the end of the
@@ -203,18 +289,53 @@ def test_disconnection_scenario_end_to_end_smoke(tmp_path, synthetic_dataset):
     assert rounds_by_idx[1]["total_bytes_exchanged"] < rounds_by_idx[0]["total_bytes_exchanged"]
 
 
-def test_find_source_and_target_nodes_picks_max_and_min_by_local_count():
-    from src.scenarios.class_addition import find_source_and_target_nodes
+def test_find_source_node_picks_richest_peer_and_excludes_the_target():
+    from src.scenarios.class_addition import find_source_node
 
-    # "manual"-style: node_1 owns Tomato exclusively (others have 0) -- the
-    # data-driven pick must reproduce what a manual_node_crops lookup would.
-    source, target = find_source_and_target_nodes({"node_0": 0, "node_1": 12})
-    assert (source, target) == ("node_1", "node_0")
+    # the peer holding the most of the crop is the one with knowledge worth
+    # teaching, and the target itself must never be picked as its own teacher.
+    counts = {"node_0": 5, "node_1": 40, "node_2": 12}
+    assert find_source_node(counts, "Tomato") == "node_1"
+    assert find_source_node(counts, "Tomato", exclude_node="node_1") == "node_2"
 
-    # "dirichlet"-style: every node has some non-zero exposure -- "fewest"
-    # stands in for "hasn't really grown this crop yet".
-    source, target = find_source_and_target_nodes({"node_0": 162, "node_1": 220, "node_2": 9})
-    assert (source, target) == ("node_1", "node_2")
+    with pytest.raises(ValueError, match="nothing to teach"):
+        find_source_node({"node_0": 0, "node_1": 7}, "Tomato", exclude_node="node_1")
+
+
+def test_crop_counts_per_node_reads_ownership_off_the_shards(synthetic_dataset):
+    from src.scenarios.class_addition import crop_counts_per_node
+
+    _, remaining_idx = carve_public_probe_set(synthetic_dataset, 0.1, seed=11)
+    shards = partition_nodes(
+        synthetic_dataset, remaining_idx, num_nodes=2, strategy="manual", dirichlet_alpha=0.3, seed=11,
+        manual_node_crops={"node_0": ["Potato"], "node_1": ["Tomato"]},
+    )
+    node_loaders = [
+        (DataLoader(make_subset(synthetic_dataset, shard), batch_size=4), None) for shard in shards
+    ]
+
+    counts = crop_counts_per_node(synthetic_dataset, node_loaders, "Tomato")
+    assert counts["node_0"] == 0
+    assert counts["node_1"] > 0
+
+
+def test_withhold_crop_from_node_removes_and_returns_exactly_that_crop(synthetic_dataset):
+    from src.scenarios.class_addition import indices_of_crop, withhold_crop_from_node
+
+    _, remaining_idx = carve_public_probe_set(synthetic_dataset, 0.1, seed=12)
+    train_idx, test_idx = train_test_split_indices(synthetic_dataset, remaining_idx, test_fraction=0.3, seed=12)
+
+    remaining_train, remaining_test, withheld_train, withheld_test = withhold_crop_from_node(
+        synthetic_dataset, train_idx, test_idx, "Tomato"
+    )
+
+    assert withheld_train, "fixture should contain Tomato training samples to withhold"
+    # nothing is duplicated or lost, and no Tomato survives in the remainder.
+    assert set(remaining_train).isdisjoint(withheld_train)
+    assert set(remaining_train) | set(withheld_train) == set(train_idx)
+    assert set(remaining_test) | set(withheld_test) == set(test_idx)
+    assert indices_of_crop(synthetic_dataset, remaining_train, "Tomato") == []
+    assert indices_of_crop(synthetic_dataset, remaining_test, "Tomato") == []
 
 
 def test_carve_reserve_pool_is_disjoint_from_remaining_source(synthetic_dataset):
@@ -289,8 +410,8 @@ def test_class_addition_scenario_end_to_end_smoke(tmp_path, synthetic_dataset):
     )
 
     hook = make_class_addition_hook(
-        "node_0", "Tomato", inject_round=1, reserve_train_idx=reserve_train_idx,
-        reserve_test_idx=reserve_test_idx, dataset=synthetic_dataset, batch_size=4,
+        "node_0", "Tomato", inject_round=1, inject_train_idx=reserve_train_idx,
+        inject_test_idx=reserve_test_idx, dataset=synthetic_dataset, batch_size=4,
     )
     round_kwargs = {
         "local_epochs": 1, "distill_epochs": 1, "lr": 1e-3, "distill_lr": 1e-3,
