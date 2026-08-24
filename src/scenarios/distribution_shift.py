@@ -21,7 +21,9 @@ from src.data.merged import load_merged_dataset
 from src.federated.mesh import MeshSimulator
 from src.scenarios.harness import (
     ScenarioEvent,
+    build_energy_accounting,
     build_node_set,
+    build_provenance,
     require_target_node,
     run_scenario,
     write_scenario_report,
@@ -127,6 +129,7 @@ def main():
         krum_neighbors=cfg.get("federated.krum_neighbors", 2),
     )
 
+    tracker, comm_estimator = build_energy_accounting(cfg, output_dir)
     hook = make_shift_hook(target_node, shift_round, corruption, severity, batch_size)
     round_kwargs = {
         "local_epochs": cfg.get("training.local_epochs_per_round", 2),
@@ -138,13 +141,19 @@ def main():
         "crop_kd_weight": cfg.get("training.crop_kd_weight", None),
         "temperature": cfg.get("training.kd_temperature", 2.0),
     }
-    records = run_scenario(baseline_nodes, mesh, num_rounds, hook, round_kwargs)
+    records = run_scenario(
+        baseline_nodes, mesh, num_rounds, hook, round_kwargs,
+        tracker=tracker, comm_estimator=comm_estimator,
+    )
 
     output_dir.mkdir(parents=True, exist_ok=True)
     report_path = write_scenario_report(
         output_dir, "distribution_shift", target_node,
         disruption_start_round=shift_round, disruption_end_round=shift_round,
         config_snapshot=scfg, records=records, save_plots=cfg.get("output.save_plots", True),
+        provenance=build_provenance(
+            cfg, arch, num_rounds, node_loaders, tracker, corruption=corruption, severity=severity,
+        ),
     )
     print(f"Wrote {report_path}")
 

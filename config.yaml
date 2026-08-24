@@ -110,9 +110,17 @@ scenarios:
     reconnect_round: 4
   class_addition:
     target_node: "node_0"
-    source_crop: "Tomato"       # must belong to a different node in manual_node_crops (currently node_5)
+    source_crop: "Tomato"       # at least one node OTHER than target_node must hold this crop, so the mesh has a teacher
     inject_round: 2
-    reserve_fraction: 0.3
+    # "auto" | "target_withheld" | "peer_reserve" -- how the "new" class is
+    # produced (see src/scenarios/class_addition.py). "auto" withholds the
+    # target's own source_crop samples until inject_round when it has any
+    # (the case under an overlapping partition such as dirichlet, where the
+    # target would otherwise already know every crop and there would be no
+    # new class to add), and otherwise carves a slice out of the teacher
+    # peer's shard (the case under a disjoint partition such as manual).
+    injection_source: "auto"
+    reserve_fraction: 0.3       # peer_reserve mode only: fraction of the teacher peer's source_crop images injected
   distribution_shift:
     target_node: "node_2"
     shift_round: 2

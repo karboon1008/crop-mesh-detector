@@ -117,7 +117,10 @@ def write_csv(rows: list[dict], path: Path) -> None:
                 seen.add(key)
                 fieldnames.append(key)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", newline="") as f:
+    # encoding is explicit because the default is platform-dependent (cp1252
+    # on Windows), which silently produces CSVs that aren't valid UTF-8 as
+    # soon as a cell holds a non-ASCII character.
+    with path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)

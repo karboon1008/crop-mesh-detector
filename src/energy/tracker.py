@@ -64,6 +64,15 @@ class ComputeEnergyTracker:
             except Exception:
                 self._codecarbon_available = False
 
+    @property
+    def measurement_method(self) -> str:
+        """Which method this tracker will use for the next block —
+        "codecarbon" or the disclosed "proxy_wall_power" fallback. Reported
+        alongside every energy figure so an estimate is never mistaken for
+        a measurement.
+        """
+        return "codecarbon" if self._codecarbon_available else "proxy_wall_power"
+
     @contextmanager
     def track(self, label: str):
         """Usage:

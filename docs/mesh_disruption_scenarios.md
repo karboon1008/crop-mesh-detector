@@ -24,11 +24,42 @@ mesh's benefit is a direct, like-for-like number, not just a description.
 | `Node.active` flag | [`src/federated/node.py`](../src/federated/node.py) | Marks a node connected (`True`, default) or disconnected (`False`). |
 | Round filtering | [`src/federated/mesh.py`](../src/federated/mesh.py) | `MeshSimulator.run_round` still trains and evaluates every node every round, but a disconnected node's knowledge never enters the exchange pool and it never receives/distils a peer consensus. |
 | Scenario harness | [`src/scenarios/harness.py`](../src/scenarios/harness.py) | Runs a baseline node set and a mesh node set side by side under an identical disruption schedule, computes the collaboration gain each round, and writes the JSON report. |
+| Derived metrics | [`src/scenarios/metrics.py`](../src/scenarios/metrics.py) | Computes adaptation gain, retention gain, energy totals, and the gain-per-cost ratios from a report's per-round records. Pure dict-in/dict-out, so it needs neither the dataset nor torch. |
+| Summariser | [`src/scenarios/summarise.py`](../src/scenarios/summarise.py) | Reads the three JSON reports and writes consolidated JSON, Markdown, and CSV. Every figure is recomputed from the per-round records rather than read back from a stored summary. |
+| Automation | [`src/scenarios/run_all.py`](../src/scenarios/run_all.py) | Runs all three scenarios in separate subprocesses, then summarises them. One command, no manual sequencing. |
 
 All three scenario scripts are independently runnable and follow the same
 pattern: load the real dataset → build two nodesets (baseline, mesh) →
 run N rounds, applying the scenario's disruption at a configured round →
 write `outputs/scenarios/{scenario_name}.json`.
+
+## Running everything in one command
+
+```bash
+# run all three scenarios, then consolidate the reports
+python -m src.scenarios.run_all [--config path] [--arch name]
+
+# run a subset
+python -m src.scenarios.run_all --scenarios class_addition distribution_shift
+
+# re-derive every table from reports that already exist (no dataset, no torch)
+python -m src.scenarios.summarise --output-dir outputs
+```
+
+`run_all` is a convenience wrapper over the same three entry points —
+nothing in the scenario code is reachable only through it. It executes
+each scenario in its own subprocess so that one failure doesn't abort the
+others, reports each one's wall-clock time and exit status, and then calls
+the summariser.
+
+The summariser writes four files into `outputs/scenarios/`: `summary.json`
+(all derived metrics for all scenarios), `summary.md` (the same content as
+Markdown tables), `summary.csv` (one row per scenario), and
+`summary_per_round.csv` (one row per scenario-round). Because it recomputes
+everything from the per-round records, it is the fastest way for a reviewer
+to check any number quoted in this document or in the research document's
+§10 against the raw evidence — and it runs without `torch`,
+`scikit-learn`, or the PlantVillage download.
 
 **Methodology note — compute-energy figures are a wall-clock proxy, not a
 CodeCarbon measurement.** This environment does not run CodeCarbon
@@ -176,12 +207,29 @@ being grown at a *different* farm mid-run (e.g. crop rotation) — that
 node has never seen the crop before.
 
 **What the script does** ([`src/scenarios/class_addition.py`](../src/scenarios/class_addition.py)):
-before the run starts, it carves a `reserve_fraction` slice of the
-`source_crop`'s samples **out of the source node's own shard** (no
-duplication — the source node simply starts with slightly fewer of its
-own images). At `inject_round`, that reserved slice is spliced into the
-target node's train and test sets, so it suddenly has training signal
-*and* test coverage for a crop it never had before.
+it arranges for the target node to genuinely lack `source_crop` before
+`inject_round`, then splices that crop's samples into the target's train
+*and* test sets at `inject_round`, so it suddenly has training signal and
+test coverage for a crop it never had before. There are two ways to
+arrange the "genuinely lacks it" precondition, and which one applies
+depends on how the data was partitioned:
+
+| `injection_source` | When it applies | What it does |
+|---|---|---|
+| `target_withheld` | Partitions where every node holds some of every crop (`dirichlet`, `label_skew`) | Removes `source_crop` from the target node's own shard before round 0 and gives it back at `inject_round`. The class is genuinely unseen, because the target never trained on it. |
+| `peer_reserve` | Partitions where nodes hold disjoint crops (`manual`) | Carves a `reserve_fraction` slice of `source_crop` out of a *peer's* shard (no duplication — the peer starts with slightly fewer of its own images) and injects that slice at `inject_round`. |
+| `auto` (default) | Always | Picks `target_withheld` if the target actually owns the crop, `peer_reserve` otherwise. This is what makes the scenario run correctly under whichever partitioning is configured. |
+
+The mechanism actually used, and the per-node crop counts it was chosen
+from, are recorded in the report's `provenance` block, so a reviewer never
+has to infer which path ran.
+
+**Note on the archived run below:** it predates `injection_source` and used
+the `peer_reserve` path under a disjoint partition. The shipped
+`config.yaml` uses a `dirichlet` partition, so `auto` now selects
+`target_withheld` — the stricter test. A re-run today will therefore not
+reproduce the accuracy figures in the table below, and should show a
+sharper injection-round drop on both arms.
 
 **How to run:**
 ```bash
@@ -193,9 +241,10 @@ python -m src.scenarios.class_addition [--config path] [--arch name]
 | Key | Value used | Meaning |
 |---|---|---|
 | `target_node` | `node_0` | Node that gains the new crop |
-| `source_crop` | `Tomato` | Crop currently owned by `node_2` |
+| `source_crop` | `Tomato` | Crop withheld from the target, or carved out of a peer |
 | `inject_round` | `2` | Round the crop appears at `node_0` |
-| `reserve_fraction` | `0.3` | Fraction of `node_2`'s Tomato images carved out and injected |
+| `injection_source` | `auto` | `auto`, `target_withheld`, or `peer_reserve` (see above) |
+| `reserve_fraction` | `0.3` | `peer_reserve` only: fraction of the peer's images carved out and injected |
 
 **Result** (target node `node_0`, real PlantVillage run — 4,393 Tomato
 samples injected at round 2):
@@ -344,6 +393,50 @@ converted to Joules) the mesh nodeset spent across the whole run — see
 and §4 for why Baseline B (local-only, zero exchange) is the comparison
 point.
 
+### Adaptability metrics (from `src/scenarios/metrics.py`)
+
+`summarise` recomputes two node-level adaptability metrics that the
+recovery-round comparison alone doesn't capture. **Adaptation gain** is the
+mean of (mesh − baseline) accuracy for the *target* node across all
+post-disruption rounds — how much better off the disrupted node is for
+having peers, while disrupted. **Retention gain** is how much less accuracy
+the mesh arm gave up at the disruption round than the baseline arm did,
+with each arm's drop floored at zero.
+
+| Scenario | Adaptation gain (crop / disease) | Retention gain (crop / disease) |
+|---|---|---|
+| Disconnection | +0.50pp / +0.45pp | −0.92pp / +0.00pp |
+| Class Addition | **+8.04pp / +11.16pp** | **+3.18pp / +9.43pp** |
+| Distribution Shift | +1.17pp / +6.74pp | +1.30pp / +5.00pp |
+
+The pattern is the one the design predicts: collaboration pays most where
+the disruption is a *knowledge gap* (class addition — a node lacks what
+its peers have), pays moderately where it is partly one (distribution
+shift), and pays essentially nothing where it is not one at all
+(disconnection removes signal rather than revealing a deficiency). The
+negative crop retention on Disconnection is real and reported as such: the
+mesh arm dips at the disconnect round because it loses a peer signal it had
+been benefiting from, which the baseline arm never had to lose.
+
+Two figures alongside `gain_per_joule` complete the Appendix E picture.
+**`gain_per_additional_joule`** divides the same gain by
+`(mesh compute − baseline compute) + communication`, i.e. only the energy
+collaboration *added* — 3.73e-08 / 7.28e-08 (Disconnection, as measured;
+1.02e-07 / 1.99e-07 with round 3 corrected), 3.47e-07 / 6.62e-07 (Class
+Addition), 3.60e-07 / 6.60e-07 (Distribution Shift). **`gain_per_byte`**
+divides it by total bytes exchanged — 4.87e-10 / 9.51e-10, 1.20e-09 /
+2.30e-09, and 1.25e-09 / 2.30e-09 respectively.
+
+The useful reading of these: communication is **0.86–0.87%** of the
+additional energy in the two uncontaminated runs. Over 99% of what
+collaboration costs is on-device computation, not radio — a direct
+consequence of exchanging kilobyte-scale prototypes rather than
+megabyte-scale weights, and it means the distillation schedule, not the
+transport, is the lever that matters for sustainability here. There is no
+compute *saving* being negated by communication in these runs, because
+distillation is work done on top of local training rather than instead of
+it; that is stated plainly rather than framed away.
+
 ### Measurement-boundary note (evaluate() inside vs. outside the tracked block)
 
 The per-round `mesh_compute_energy_kwh` figures in `outputs/scenarios/*.json`
@@ -380,6 +473,16 @@ outputs/scenarios/class_addition.json
 outputs/scenarios/distribution_shift.json
 ```
 
+`summarise` (invoked directly, or automatically by `run_all`) adds four
+consolidated files derived from those reports:
+
+```
+outputs/scenarios/summary.json          # every derived metric, all scenarios
+outputs/scenarios/summary.md            # the same, as Markdown tables
+outputs/scenarios/summary.csv           # one row per scenario
+outputs/scenarios/summary_per_round.csv # one row per scenario-round
+```
+
 Each file contains: the config used, a per-round record (baseline eval,
 mesh eval, collaboration gain, events fired that round, byte counts, and
 each round's `communication_energy_j` plus `baseline_compute_energy_kwh` /
@@ -397,7 +500,14 @@ of `outputs/` — re-run the commands above to regenerate it.
 `compute_energy_method` was added after the three JSON files above were
 generated, so those specific files don't contain that key yet; a future
 re-run (under the current code) would include it, always as
-`"proxy_wall_power"` in this environment.
+`"proxy_wall_power"` in this environment. The same applies to the
+`provenance` block (architecture, node count, partition strategy, energy
+measurement method, injection mechanism), `disruption_start_round` /
+`disruption_end_round`, and the `adaptation`/`retention`/`efficiency`
+sub-blocks of `summary`: all were added afterwards, so the archived files
+lack them and `summarise` reconstructs the derived ones from the per-round
+records instead. A re-run under the current code emits a strict superset of
+what the archived files contain.
 
 All three runs above used a single architecture (`mobilenet_v3_small`,
 the default) rather than the full 3-architecture sweep `src/train.py`
