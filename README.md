@@ -1,14 +1,30 @@
 # Crop-Mesh-Detector
 
-A **computer-simulation-only** implementation of the decentralised knowledge-mesh
-design from the accompanying *WheatMesh* report (Solution A), adapted to the
-public **PlantVillage** dataset for joint **crop-type** and **crop-disease**
-detection. No hardware, radios, or real farms are involved — every "node" is a
-Python object holding its own private data shard, running in a single process
-on your machine.
+A **computer-simulation-only** implementation of **HiveMind**'s decentralised
+knowledge-mesh design (the accompanying research document), adapted to
+**PlantVillage and PlantDoc** (merged 1:1 per class) for joint **crop-type**
+and **crop-disease** detection across six simulated farm nodes. No hardware,
+radios, or real farms are involved — every "node" is a Python object holding
+its own private data shard, running in a single process on your machine.
 
 Three lightweight backbones are trained and compared: **MobileNetV3-Small**,
 **EfficientNet-Lite0**, and **MobileViT-XXS**.
+
+## Team
+
+**Team name:** HiveMind — Cambridge Edge AI Innovation for Sustainability Challenge 2026
+
+**Lead representative:** Wong E Chern
+
+**Other team members:** Yap Kar Boon, Muhammad Aiman bin Rosli, Dr Chang Siow Wee, Leo Yung Lynn
+
+**University affiliation:** University of Bristol (MScR Student)
+
+## Licence
+
+MIT — see [`LICENSE`](LICENSE). Pre-existing third-party dependencies (PyTorch,
+timm, CodeCarbon, etc.) retain their own licences; see the research document's
+Pre-Existing IP Disclosure section for the full list.
 
 ## The core constraint this project satisfies
 
