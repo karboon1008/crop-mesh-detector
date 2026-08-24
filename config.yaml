@@ -56,7 +56,7 @@ training:
   # mobilenet_v3_small/mobilevit_xxs (see FREEZE_LOW_LAYER_PREFIXES in
   # src/models/factory.py); efficientnet_lite0 has no entry there and is
   # always a no-op, matching the reasoning above.
-  freeze_low_layers_in_mesh: true
+  freeze_low_layers_in_mesh: false
   # Experiment: folds local supervised training + prototype-alignment +
   # both KD losses into ONE combined-loss phase per round (local_epochs
   # passes over train_loader), instead of local_epochs of supervised-only
