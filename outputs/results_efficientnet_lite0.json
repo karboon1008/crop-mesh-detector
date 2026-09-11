@@ -1,0 +1,92 @@
+{
+  "architecture": "efficientnet_lite0",
+  "params": 3415843,
+  "model_size_mb": 13.030406951904297,
+  "baseline_eval": {
+    "node_0": {
+      "crop_accuracy": 0.9978054133138259,
+      "disease_accuracy": 0.9963423555230432
+    },
+    "node_1": {
+      "crop_accuracy": 0.9975822050290135,
+      "disease_accuracy": 0.9859767891682786
+    },
+    "node_2": {
+      "crop_accuracy": 0.99907019990702,
+      "disease_accuracy": 0.990469549046955
+    }
+  },
+  "mesh_eval": {
+    "node_0": {
+      "crop_accuracy": 0.9992684711046086,
+      "disease_accuracy": 0.9992684711046086
+    },
+    "node_1": {
+      "crop_accuracy": 0.9995164410058027,
+      "disease_accuracy": 0.9941972920696325
+    },
+    "node_2": {
+      "crop_accuracy": 1.0,
+      "disease_accuracy": 0.996978149697815
+    }
+  },
+  "collaboration_gain": {
+    "mesh_macro": {
+      "crop_accuracy": 0.9995949707034705,
+      "disease_accuracy": 0.9968146376240187
+    },
+    "baseline_macro": {
+      "crop_accuracy": 0.9981526060832865,
+      "disease_accuracy": 0.9909295645794255
+    },
+    "macro_gain": {
+      "crop_accuracy": 0.001442364620183989,
+      "disease_accuracy": 0.005885073044593181
+    },
+    "mesh_worst_node": {
+      "crop_accuracy": 0.9992684711046086,
+      "disease_accuracy": 0.9941972920696325
+    },
+    "baseline_worst_node": {
+      "crop_accuracy": 0.9975822050290135,
+      "disease_accuracy": 0.9859767891682786
+    },
+    "worst_node_gain": {
+      "crop_accuracy": 0.0016862660755950776,
+      "disease_accuracy": 0.008220502901353899
+    },
+    "per_node": {
+      "node_0": {
+        "mesh": {
+          "crop_accuracy": 0.9992684711046086,
+          "disease_accuracy": 0.9992684711046086
+        },
+        "baseline": {
+          "crop_accuracy": 0.9978054133138259,
+          "disease_accuracy": 0.9963423555230432
+        }
+      },
+      "node_1": {
+        "mesh": {
+          "crop_accuracy": 0.9995164410058027,
+          "disease_accuracy": 0.9941972920696325
+        },
+        "baseline": {
+          "crop_accuracy": 0.9975822050290135,
+          "disease_accuracy": 0.9859767891682786
+        }
+      },
+      "node_2": {
+        "mesh": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.996978149697815
+        },
+        "baseline": {
+          "crop_accuracy": 0.99907019990702,
+          "disease_accuracy": 0.990469549046955
+        }
+      }
+    }
+  },
+  "total_bytes_exchanged": 13553400
+}
