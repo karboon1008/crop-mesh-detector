@@ -321,11 +321,11 @@ class Node:
     def distill(
         self,
         consensus_prototypes: Prototypes,
-        consensus_crop_logits: torch.Tensor,
+        consensus_crop_logits: torch.Tensor | None,
         crop_known_mask: torch.Tensor,
-        consensus_disease_logits: torch.Tensor,
+        consensus_disease_logits: torch.Tensor | None,
         disease_known_mask: torch.Tensor,
-        probe_loader: DataLoader, # shared public probe dataset
+        probe_loader: DataLoader | None, # shared public probe dataset; None = no usable peer logits, skip KD
         epochs: int,
         lr: float, # learning rate
         proto_weight: float,
@@ -336,18 +336,19 @@ class Node:
     ) -> dict[str, float]:
         self.model.train()
         optimizer = self._get_optimizer(lr)
-        consensus_crop_logits = consensus_crop_logits.to(self.device)
+        if probe_loader is not None:
+            consensus_crop_logits = consensus_crop_logits.to(self.device)
+            consensus_disease_logits = consensus_disease_logits.to(self.device)
         crop_known_mask = crop_known_mask.to(self.device)
-        consensus_disease_logits = consensus_disease_logits.to(self.device)
         disease_known_mask = disease_known_mask.to(self.device)
 
-        num_kd_batches = len(probe_loader)
+        num_kd_batches = len(probe_loader) if probe_loader is not None else 0
         num_sup_batches = len(self.train_loader)
         kd_loss_sum, crop_kd_loss_sum, kd_batches = 0.0, 0.0, 0
         sup_loss_sum, proto_loss_sum, sup_batches = 0.0, 0.0, 0
         for epoch in range(epochs):
             # (a) knowledge-distillation using the shared public probe dataset
-            for batch_idx, (images, _, _) in enumerate(probe_loader):
+            for batch_idx, (images, _, _) in enumerate(probe_loader if probe_loader is not None else []):
                 if images.shape[0] < 2:
                     continue  # BatchNorm can't train on a single-image batch
                 images = images.to(self.device)

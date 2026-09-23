@@ -116,10 +116,9 @@ Then every batch, only when it is triggered:
    proportion) of the images no earlier batch used:
    `continual.first_batch_size` (20,000) for batch 0,
    `continual.next_batch_size` (3,000) for each `--next-batch`.
-4. **Probe slice**: a stratified 5% of this batch (`data.probe_set_fraction`,
-   e.g. 150 of 3,000) is added to the public probe set shared by all nodes.
-   The probe set is **cumulative**: batch *b*'s probe set is every batch's
-   slice from 0 to *b*, in order.
+4. **Probe set**: a stratified 5% of this batch (`data.probe_set_fraction`,
+   e.g. 150 of 3,000) becomes this batch's public probe set, shared by all
+   nodes. It is **not cumulative**: each batch uses only its own probe images.
 5. **Deliver** the other 95% of the batch to the nodes that own the images.
 6. **Each node splits its own arrivals** into private train/test,
    85% / 15% (`data.test_fraction`), stratified per class.
@@ -130,12 +129,11 @@ Then every batch, only when it is triggered:
 A node that receives fewer than 2 train images or no test image in a batch
 sits that batch out, keeping its model, EMA, and database entry.
 
-**Probe logits across batches**: a teacher uploads logits for the probe
-set as it stands when it uploads. An entry left over from an earlier batch
-therefore covers only the probe images up to that batch. Because the probe
-set only grows by appending, those images are the first part of today's
-probe set, in the same order. A learner distils on the probe images that
-*every* entry it retrieved covers: the probe set as of the oldest entry.
+**Probe logits across batches**: probe logits are predictions on one
+batch's probe images, so they only line up with that batch. A learner takes
+prototypes from every node's latest entry, but probe logits only from
+entries uploaded in the *current* batch. If no node uploaded this batch, it
+distils with prototype alignment only (no probe-logit KD).
 
 ### Batch 0 (every node teaches and learns)
 
@@ -143,7 +141,7 @@ probe set, in the same order. A learner distils on the probe images that
    heads → logits → cross-entropy → backward → weights updated.
 2. **Pre-distill evaluation** on the batch's private test set.
 3. **Knowledge extraction**: prototypes (mean feature per class over the
-   private train set) and probe logits (logits per image of the probe set so far).
+   private train set) and probe logits (logits per image of this batch's probe set).
 4. **Upload** each node's prototypes + probe logits to the one shared
    database, labelled with the node id.
 5. Every node is a teacher, so every node's knowledge is available to all others.

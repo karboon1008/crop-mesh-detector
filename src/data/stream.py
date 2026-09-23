@@ -14,11 +14,10 @@ Then each batch, only when it's triggered:
   - hand every other image of the batch to the node that owns it
   - each node splits what it received into its private train/test
 
-The probe set is cumulative: batch b's probe is every batch's probe slice
-from 0 to b, in batch order. A node that last uploaded in an earlier batch
-still has its logits in the knowledge database, computed on the probe as
-it stood then — a prefix of today's probe — so its logits still line up
-image-for-image with everyone else's on that prefix.
+The probe set is NOT cumulative: each batch uses only its own probe slice.
+Probe logits therefore only line up with the batch they were computed on,
+so a learner only takes logits from entries uploaded in the same batch
+(see src/federated/continual.py).
 
 Everything is saved to stream.json after every change, so the next trigger
 (a separate process, possibly days later) continues from exactly where the
@@ -106,12 +105,6 @@ class DataStream:
         used |= {idx for batch in self.batches for split in batch["nodes"].values()
                  for idx in split["train_idx"] + split["test_idx"]}
         return sorted(idx for shard in self.node_shards for idx in shard if idx not in used)
-
-    def probe_upto(self, batch_idx: int) -> list[int]:
-        """The cumulative probe set as of `batch_idx`: every probe slice from
-        batch 0 to `batch_idx`, in batch order.
-        """
-        return [idx for batch in self.batches[: batch_idx + 1] for idx in batch["probe_idx"]]
 
     def next_batch(self, dataset, size: int, probe_fraction: float, test_fraction: float, seed: int) -> dict:
         """Draws the next batch, carves its probe slice, routes the rest to

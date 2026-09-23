@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import io
 import sqlite3
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -117,23 +118,42 @@ class KnowledgeStore:
             )
         return size
 
-    def fetch_peers(self, node_id: str, batch_idx: int) -> dict[str, tuple[int, KnowledgePayload]]:
+    def fetch_peers(
+        self, node_id: str, batch_idx: int, logits_batch: int | None = None,
+    ) -> dict[str, tuple[int, KnowledgePayload]]:
         """Every OTHER node's latest entry as {peer_id: (uploaded_in_batch, payload)}
         — the requesting node's own entry is never returned, so a node can't
-        distil towards its own knowledge. Logs each retrieval's size.
+        distil towards its own knowledge.
+
+        `logits_batch`: probe logits only line up with the probe set of the
+        batch they were computed on. When given, an entry uploaded in any
+        other batch comes back with its probe logits left out (empty
+        tensors) — only its prototypes and class counts are retrieved, and
+        only those bytes are logged.
         """
         now = _now()
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT node_id, batch_idx, size_bytes, payload FROM knowledge WHERE node_id != ? ORDER BY node_id",
+                "SELECT node_id, batch_idx, payload FROM knowledge WHERE node_id != ? ORDER BY node_id",
                 (node_id,),
             ).fetchall()
+            peers = {}
+            for peer, peer_batch, blob in rows:
+                payload = decode_payload(blob)
+                if logits_batch is not None and peer_batch != logits_batch:
+                    payload = replace(
+                        payload,
+                        crop_logits=payload.crop_logits[:0],
+                        disease_logits=payload.disease_logits[:0],
+                    )
+                peers[peer] = (peer_batch, payload)
             conn.executemany(
                 "INSERT INTO retrievals (batch_idx, from_node, to_node, from_batch_idx, size_bytes, fetched_at) "
                 "VALUES (?, ?, ?, ?, ?, ?)",
-                [(batch_idx, peer, node_id, peer_batch, size, now) for peer, peer_batch, size, _ in rows],
+                [(batch_idx, peer, node_id, peer_batch, payload.size_bytes(), now)
+                 for peer, (peer_batch, payload) in peers.items()],
             )
-        return {peer: (peer_batch, decode_payload(blob)) for peer, peer_batch, _, blob in rows}
+        return peers
 
     def entries(self) -> list[dict]:
         """Current live entries (without the payload blobs)."""

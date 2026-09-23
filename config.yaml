@@ -6,7 +6,7 @@ data:
   root: "data/PlantVillage"       # PlantVillage is the only dataset (all class folders are used)
   image_size: 224
   num_nodes: 6                    # simulated farms
-  probe_set_fraction: 0.05        # share of EACH batch carved (stratified) into the public probe set; the probe set accumulates batch by batch
+  probe_set_fraction: 0.05        # share of EACH batch carved (stratified) into that batch's public probe set (not cumulative)
   # the three probe_set_* keys below only apply to the scenarios' static split (src/scenarios/)
   probe_set_large_class_threshold: 200
   probe_set_min_samples_small_class: 10

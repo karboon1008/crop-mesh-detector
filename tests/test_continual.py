@@ -101,8 +101,6 @@ def test_stream_draws_new_images_each_batch_and_survives_reload(pv_root, tmp_pat
         assert not set(batch["probe_idx"]) & node_images(batch)  # probe images never reach a node
         assert len(node_images(batch)) == size - probe_size
     assert not (node_images(first) | set(first["probe_idx"])) & (node_images(second) | set(second["probe_idx"]))
-    assert reloaded.probe_upto(0) == first["probe_idx"]
-    assert reloaded.probe_upto(1) == first["probe_idx"] + second["probe_idx"]  # cumulative, in batch order
     assert len(reloaded.remaining()) == pool_size - 100
     for node_i, shard in enumerate(stream.node_shards):  # each image goes to its owner
         split = first["nodes"][f"node_{node_i}"]
@@ -146,9 +144,16 @@ def test_knowledge_store_replaces_entries_and_excludes_self(tmp_path):
     peer_batch, payload = peers["node_0"]
     assert peer_batch == 1 and torch.equal(payload.crop_logits, torch.full((5, 2), 2.0))
 
+    # logits uploaded for another batch's probe set are left out
+    stale = store.fetch_peers("node_0", batch_idx=1, logits_batch=1)["node_1"][1]
+    assert stale.crop_logits.shape[0] == 0 and stale.prototypes  # prototypes still come through
+    assert stale.size_bytes() < _payload(1.0).size_bytes()
+
     with sqlite3.connect(tmp_path / "k.db") as conn:
         assert conn.execute("SELECT COUNT(*) FROM uploads").fetchone()[0] == 3
-        assert conn.execute("SELECT from_node, to_node FROM retrievals").fetchall() == [("node_0", "node_1")]
+        assert conn.execute("SELECT from_node, to_node FROM retrievals").fetchall() == [
+            ("node_0", "node_1"), ("node_1", "node_0"),
+        ]
 
 
 def _run_cli(monkeypatch, cfg_path, *flags):
@@ -190,13 +195,14 @@ def test_cli_runs_batch_zero_then_one_batch_per_trigger(pv_root, tmp_path, monke
     assert [log["batch_idx"] for log in logs] == [0, 1, 2]
     stream = json.loads((out / "continual" / "stream.json").read_text())
     assert [b["size"] for b in stream["batches"]] == [60, 40, 40]
-    # a learner distils on the probe prefix every retrieved entry covers:
-    # the probe as of the oldest entry it used (3, 3+2, or 3+2+2 images)
+    # probe logits only come from entries uploaded THIS batch (each batch has
+    # its own 2-image probe); older entries contribute prototypes only
     for log in logs[1:]:
         for r in log["per_node"].values():
             if r["distilled"]:
-                oldest = min(r["peers_used"].values())
-                assert r["probe_images_used"] == [3, 5, 7][oldest]
+                fresh = sorted(p for p, b in r["peers_used"].items() if b == log["batch_idx"])
+                assert r["logit_peers"] == fresh
+                assert r["probe_images_used"] == (2 if fresh else 0)
     assert json.loads((run_dir / "state.json").read_text())["completed_batches"] == 3
     later = [r for log in logs[1:] for r in log["per_node"].values()]
     assert later and all(r["prev_ema"] is not None for r in later)  # EMA carried across processes
@@ -210,3 +216,26 @@ def test_cli_runs_batch_zero_then_one_batch_per_trigger(pv_root, tmp_path, monke
 
     _run_cli(monkeypatch, cfg_path, "--reset")  # start over from batch 0
     assert len(json.loads((run_dir / "batch_logs.json").read_text())) == 1
+
+
+def test_distill_without_fresh_peer_logits_uses_prototypes_only(pv_root):
+    """No node uploaded this batch -> no probe logits line up with this
+    batch's probe set; distillation runs on sup + prototype loss alone."""
+    from torch.utils.data import DataLoader
+
+    from src.data.plantvillage import make_subset
+    from src.federated.node import Node
+    from src.models.factory import build_model
+
+    dataset = PlantVillageDataset(pv_root, image_size=32)
+    num_crop, num_disease = len(dataset.labels.crop_classes), len(dataset.labels.disease_classes)
+    loader = DataLoader(make_subset(dataset, list(range(16))), batch_size=8)
+    node = Node("node_0", build_model("mobilenet_v3_small", num_crop, num_disease, pretrained=False), loader, loader)
+    prototypes, _, _ = node.compute_prototypes()
+
+    losses = node.distill(
+        prototypes, None, torch.zeros(num_crop, dtype=torch.bool), None, torch.zeros(num_disease, dtype=torch.bool),
+        None, epochs=1, lr=1e-3, proto_weight=0.1, kd_weight=0.5, crop_kd_weight=0.5, temperature=2.0,
+    )
+    assert losses["kd_loss"] == 0.0 and losses["crop_kd_loss"] == 0.0
+    assert losses["sup_loss"] > 0

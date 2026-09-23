@@ -15,15 +15,17 @@ Per batch, every node:
                             learner  if EMA < ema_threshold (default 0.8)
                           (a node can be both, or neither — then it just
                           keeps its locally trained model)
-  4. teachers             extract prototypes (private train set: mean
-                          feature per class) + probe logits (the probe set
-                          as it stands this batch: logits per image) and
-                          upload them, replacing their previous entry
+  4. teachers             extract prototypes (this batch's private train
+                          set: mean feature per class) + probe logits (this
+                          batch's probe set: logits per image) and upload
+                          them, replacing their previous entry
   5. learners             retrieve every OTHER node's latest entry,
                           aggregate prototypes and probe logits with
                           trimmed mean / Krum (own knowledge excluded), and
-                          distil towards that consensus — on the probe
-                          images every retrieved entry covers
+                          distil towards that consensus. Probe logits only
+                          count from entries uploaded THIS batch (older
+                          entries' logits are for an older batch's probe
+                          images); prototypes count from every entry
   6. post-distill eval    same private test set as step 2
   7. record               post vs. pre (did distillation help?), bytes
                           uploaded/downloaded, compute energy per phase
@@ -36,16 +38,16 @@ didn't upload this time. Models carry over from batch to batch.
 from __future__ import annotations
 
 from contextlib import contextmanager
-from dataclasses import dataclass, field, replace
-from typing import Callable
+from dataclasses import dataclass, field
 
+import torch
 from torch.utils.data import DataLoader
 
 from src.energy.tracker import ComputeEnergyTracker
 from src.evaluate import scalar_metrics
 from src.federated.aggregation import aggregate_masked_logits, aggregate_prototypes
 from src.federated.knowledge_store import KnowledgeStore
-from src.federated.node import KnowledgePayload, Node
+from src.federated.node import Node
 
 TEACHER = "teacher"
 LEARNER = "learner"
@@ -56,10 +58,6 @@ def update_ema(prev_ema: float | None, value: float, alpha: float) -> float:
     if prev_ema is None:
         return value
     return alpha * value + (1 - alpha) * prev_ema
-
-
-def _truncate_probe(payload: KnowledgePayload, n: int) -> KnowledgePayload:
-    return replace(payload, crop_logits=payload.crop_logits[:n], disease_logits=payload.disease_logits[:n])
 
 
 def decide_roles(batch_idx: int, ema: float, prev_ema: float | None, threshold: float) -> list[str]:
@@ -88,7 +86,8 @@ class NodeBatchRecord:
     uploaded: bool = False
     distilled: bool = False
     peers_used: dict[str, int] = field(default_factory=dict)  # peer -> batch its entry was uploaded in
-    probe_images_used: int = 0  # probe images the distillation ran on (shared by every peer's entry)
+    logit_peers: list[str] = field(default_factory=list)  # peers whose probe logits were fresh (uploaded this batch)
+    probe_images_used: int = 0  # probe images KD ran on (0 = no fresh peer logits, prototypes only)
     distill_loss: dict[str, float] = field(default_factory=dict)
     post_distill_eval: dict = field(default_factory=dict)
     distill_gain: dict[str, float] = field(default_factory=dict)  # post - pre, per scalar metric
@@ -166,8 +165,7 @@ class ContinualMesh:
         self,
         batch_idx: int,
         batch_loaders: dict[str, tuple],
-        probe_size: int,
-        probe_loader_for: Callable[[int], DataLoader],
+        probe_loader: DataLoader,
         local_epochs: dict[str, int],
         lr: float,
         distill_epochs: int,
@@ -181,8 +179,7 @@ class ContinualMesh:
         crop_class_weights, disease_class_weights) for this batch. Nodes
         missing from it received no usable data this batch and sit it out.
 
-        `probe_size`: images in the cumulative probe set as of this batch;
-        `probe_loader_for(n)`: an unshuffled loader over its first n images.
+        `probe_loader`: an unshuffled loader over THIS batch's probe set.
         """
         crop_kd_weight = kd_weight if crop_kd_weight is None else crop_kd_weight
         log = BatchLog(batch_idx=batch_idx)
@@ -213,15 +210,14 @@ class ContinualMesh:
             record.roles = decide_roles(batch_idx, record.ema, record.prev_ema, self.ema_threshold)
             log.per_node[node.node_id] = record
 
-        # 4) teachers extract knowledge (probe logits over the whole probe set
-        # as it stands now) and upload it, replacing their old entry
-        full_probe_loader = probe_loader_for(probe_size)
+        # 4) teachers extract knowledge (probe logits on this batch's probe
+        # set) and upload it, replacing their old entry
         for node in present:
             record = log.per_node[node.node_id]
             if TEACHER not in record.roles:
                 continue
             with self._track(record, "knowledge_extraction"):
-                payload = node.compute_knowledge(full_probe_loader)
+                payload = node.compute_knowledge(probe_loader)
             record.bytes_uploaded = self.store.upload(node.node_id, batch_idx, payload)
             record.uploaded = True
 
@@ -231,36 +227,42 @@ class ContinualMesh:
             record = log.per_node[node.node_id]
             if LEARNER not in record.roles:
                 continue
-            peers = self.store.fetch_peers(node.node_id, batch_idx)
+            peers = self.store.fetch_peers(node.node_id, batch_idx, logits_batch=batch_idx)
             if not peers:
                 continue  # nobody has uploaded anything yet
             record.peers_used = {peer: peer_batch for peer, (peer_batch, _) in peers.items()}
             record.bytes_downloaded = sum(payload.size_bytes() for _, payload in peers.values())
             peer_payloads = [payload for _, payload in peers.values()]
-            # an entry uploaded in an earlier batch only covers the probe as it
-            # was then (a prefix of today's) — distil on what every peer covers
-            record.probe_images_used = min(p.crop_logits.shape[0] for p in peer_payloads)
-            peer_payloads = [_truncate_probe(p, record.probe_images_used) for p in peer_payloads]
-            probe_loader = probe_loader_for(record.probe_images_used)
+            # only entries uploaded this batch carry logits for this batch's probe
+            logit_payloads = [p for p in peer_payloads if p.crop_logits.shape[0] > 0]
+            record.logit_peers = sorted(peer for peer, (_, p) in peers.items() if p.crop_logits.shape[0] > 0)
+            record.probe_images_used = len(probe_loader.dataset) if logit_payloads else 0
 
             with self._track(record, "distill"):
                 consensus_prototypes = aggregate_prototypes(
                     [p.prototypes for p in peer_payloads], method=self.aggregation_method,
                     trim_fraction=self.trim_fraction, krum_neighbors=self.krum_neighbors,
                 )
-                consensus_crop_logits, crop_known_mask = aggregate_masked_logits(
-                    [p.crop_logits for p in peer_payloads], [p.known_crop_classes for p in peer_payloads],
-                    method=self.aggregation_method, trim_fraction=self.trim_fraction,
-                    krum_neighbors=self.krum_neighbors,
-                )
-                consensus_disease_logits, disease_known_mask = aggregate_masked_logits(
-                    [p.disease_logits for p in peer_payloads], [p.known_disease_classes for p in peer_payloads],
-                    method=self.aggregation_method, trim_fraction=self.trim_fraction,
-                    krum_neighbors=self.krum_neighbors,
-                )
+                if logit_payloads:
+                    consensus_crop_logits, crop_known_mask = aggregate_masked_logits(
+                        [p.crop_logits for p in logit_payloads], [p.known_crop_classes for p in logit_payloads],
+                        method=self.aggregation_method, trim_fraction=self.trim_fraction,
+                        krum_neighbors=self.krum_neighbors,
+                    )
+                    consensus_disease_logits, disease_known_mask = aggregate_masked_logits(
+                        [p.disease_logits for p in logit_payloads], [p.known_disease_classes for p in logit_payloads],
+                        method=self.aggregation_method, trim_fraction=self.trim_fraction,
+                        krum_neighbors=self.krum_neighbors,
+                    )
+                else:
+                    # no teacher uploaded this batch: prototype alignment only, no KD
+                    ref = peer_payloads[0]
+                    consensus_crop_logits = consensus_disease_logits = None
+                    crop_known_mask = torch.zeros(ref.crop_logits.shape[1], dtype=torch.bool)
+                    disease_known_mask = torch.zeros(ref.disease_logits.shape[1], dtype=torch.bool)
                 record.distill_loss = node.distill(
                     consensus_prototypes, consensus_crop_logits, crop_known_mask,
-                    consensus_disease_logits, disease_known_mask, probe_loader,
+                    consensus_disease_logits, disease_known_mask, probe_loader if logit_payloads else None,
                     epochs=distill_epochs, lr=distill_lr, proto_weight=proto_weight,
                     kd_weight=kd_weight, crop_kd_weight=crop_kd_weight, temperature=temperature,
                 )

@@ -12,7 +12,7 @@ Add --arch <name> to any of these to run only one architecture.
 
 A trigger:
   1. draws the new batch — a stratified sample of the images no earlier
-     batch used — carves a stratified 5% of it into the (cumulative) public
+     batch used — carves a stratified 5% of it into this batch's public
      probe set, hands every other image to the node that owns it, and lets
      each node split what it got into private train/test 85/15
      (src/data/stream.py)
@@ -130,6 +130,7 @@ def batch_summary_rows(batch_logs: list[dict], metric: str, comm_estimator: Comm
                 "uploaded": r["uploaded"],
                 "distilled": r["distilled"],
                 "peers_used": len(r["peers_used"]),
+                "logit_peers": len(r["logit_peers"]),
                 "probe_images_used": r["probe_images_used"],
                 f"pre_{metric}": round(pre[metric], 4),
                 f"post_{metric}": round(post[metric], 4),
@@ -244,12 +245,11 @@ def run_architecture(cfg, arch, dataset, stream, tracker, comm_estimator, device
             # handful of new images up to dozens of epochs would just overfit them
             epochs = [base_local_epochs] * len(present)
 
-        probe_idx = stream.probe_upto(b)
-        print(f"  batch {b}: {stream.batches[b]['size']} images, probe set now {len(probe_idx)} images")
+        probe_idx = stream.batches[b]["probe_idx"]
+        print(f"  batch {b}: {stream.batches[b]['size']} images, probe set {len(probe_idx)} images")
         log = mesh.run_batch(
             b, batch_loaders,
-            probe_size=len(probe_idx),
-            probe_loader_for=lambda n: build_probe_loader(cfg, dataset, probe_idx[:n]),
+            probe_loader=build_probe_loader(cfg, dataset, probe_idx),
             local_epochs={node.node_id: e for node, e in zip(present, epochs)},
             lr=lr,
             distill_epochs=cfg.get("training.distill_epochs_per_round", 1),
@@ -366,8 +366,7 @@ def main():
     if batch is not None:
         print(f"New batch {batch['batch_idx']}: {batch['size']} images (stratified), "
               f"{len(stream.remaining())} images left for future batches")
-        print(f"  probe: {len(batch['probe_idx'])} images carved from this batch "
-              f"(cumulative probe set now {len(stream.probe_upto(batch['batch_idx']))})")
+        print(f"  probe: {len(batch['probe_idx'])} images carved from this batch")
         for node_id, split in batch["nodes"].items():
             print(f"  {node_id}: {len(split['train_idx'])} train / {len(split['test_idx'])} test")
 
