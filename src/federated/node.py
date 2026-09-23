@@ -159,6 +159,18 @@ class Node:
                 group["lr"] = lr
         return self.optimizer
 
+    def state(self) -> dict:
+        """Model weights + optimizer state, for picking up in a later process."""
+        return {
+            "model": self.model.state_dict(),
+            "optimizer": self.optimizer.state_dict() if self.optimizer is not None else None,
+        }
+
+    def load_state(self, state: dict, lr: float) -> None:
+        self.model.load_state_dict(state["model"])
+        if state.get("optimizer") is not None:
+            self._get_optimizer(lr).load_state_dict(state["optimizer"])
+
     # local supervised training (data never leaves this method)
     def local_train(
         self, epochs: int, lr: float, val_loader: DataLoader | None = None, patience: int | None = None,

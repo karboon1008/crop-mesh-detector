@@ -1,37 +1,18 @@
-"""Turns the PlantVillage pool into the splits the mesh runs on:
+"""Splitting helpers for the PlantVillage pool:
 
     PlantVillage (all classes)
     ├── global probe set  (data.probe_set_fraction, default 5%, stratified)
     │     public, identical for every node, FIXED for every continual batch
     └── private pool      (the other 95%)
-          └── partition_nodes -> 6 non-IID node shards
-                └── each shard -> continual.num_batches batches (a stream)
-                      └── each batch -> private train / private test
+          └── partition_nodes -> which node each image belongs to (non-IID)
 
-The probe set is carved once and never changes across batches: a node that
-stops uploading keeps its last payload in the knowledge store, so its probe
-logits have to stay positionally aligned with every later batch's logits.
-
-Two ways to cut a node's shard into a stream (continual.batch_strategy):
-
-  - "stratified":  every batch is a stratified random 1/num_batches slice
-                   of the shard — same class mix each batch, just new images
-                   (tests "more data of the same kind keeps arriving").
-  - "incremental": a node's classes arrive over time — the first
-                   `initial_class_fraction` of its classes appear in batch
-                   0, the rest are introduced evenly over the later
-                   batches, and a class keeps appearing in every batch from
-                   the one it was introduced in (tests "new diseases show up
-                   on the farm while old ones persist" — the case where
-                   peers that already know a class should help).
-
-Each batch is then split into private train/test (data.test_fraction),
-stratified per class, and batches never share an image.
+The continual stream (src/data/stream.py) then draws each batch as a
+stratified sample of the images not used yet, and each node splits its own
+arrivals into private train/test only when the batch arrives.
 """
 
 from __future__ import annotations
 
-import math
 import random
 from dataclasses import dataclass
 
@@ -47,20 +28,11 @@ from src.data.plantvillage import (
     train_test_split_indices,
 )
 
-BATCH_STRATEGIES = ("stratified", "incremental")
-
 
 @dataclass
 class BatchSplit:
     train_idx: list[int]
     test_idx: list[int]
-
-
-@dataclass
-class ContinualSplits:
-    probe_idx: list[int]
-    # node_batches[node][batch] -> that node's private train/test for that batch
-    node_batches: list[list[BatchSplit]]
 
 
 def carve_probe_and_partition(cfg, dataset) -> tuple[list[int], list[list[int]]]:
@@ -87,83 +59,41 @@ def carve_probe_and_partition(cfg, dataset) -> tuple[list[int], list[list[int]]]
     return probe_idx, shards
 
 
-def split_shard_into_batches(
-    dataset,
-    shard: list[int],
-    num_batches: int,
-    strategy: str = "stratified",
-    initial_class_fraction: float = 0.5,
-    seed: int = 42,
-) -> list[list[int]]:
-    """Cuts one node's shard into `num_batches` disjoint index lists (see
-    the module docstring for the two strategies). Every shard index lands
-    in exactly one batch.
+def stratified_sample(dataset, pool: list[int], n: int, seed: int) -> list[int]:
+    """Exactly min(n, len(pool)) indices from `pool`, with every class
+    represented in proportion to its share of `pool` (largest-remainder
+    rounding, so the per-class counts always add up to n).
     """
-    if num_batches < 1:
-        raise ValueError("num_batches must be >= 1")
-    if strategy not in BATCH_STRATEGIES:
-        raise ValueError(f"Unknown continual.batch_strategy: {strategy!r} (expected one of {BATCH_STRATEGIES})")
-
+    n = min(n, len(pool))
     rng = random.Random(seed)
-    targets = np.asarray(dataset.targets)[shard]
+    targets = np.asarray(dataset.targets)[pool]
     by_class: dict[int, list[int]] = {}
-    for idx, cls in zip(shard, targets.tolist()):
+    for idx, cls in zip(pool, targets.tolist()):
         by_class.setdefault(cls, []).append(idx)
     classes = sorted(by_class)
-
-    # class -> first batch it appears in
-    if strategy == "stratified" or num_batches == 1:
-        first_batch = {cls: 0 for cls in classes}
-    else:
-        order = classes.copy()
-        rng.shuffle(order)
-        n_initial = min(len(order), max(1, math.ceil(len(order) * initial_class_fraction)))
-        first_batch = {cls: 0 for cls in order[:n_initial]}
-        later = order[n_initial:]
-        for offset, group in enumerate(np.array_split(np.array(later, dtype=int), num_batches - 1)):
-            for cls in group.tolist():
-                first_batch[cls] = offset + 1
-
-    batches: list[list[int]] = [[] for _ in range(num_batches)]
+    quotas = {cls: n * len(by_class[cls]) / len(pool) for cls in classes}
+    counts = {cls: int(quotas[cls]) for cls in classes}
+    shortfall = n - sum(counts.values())
+    for cls in sorted(classes, key=lambda c: (quotas[c] - counts[c], len(by_class[c])), reverse=True)[:shortfall]:
+        counts[cls] += 1
+    sample: list[int] = []
     for cls in classes:
-        cls_indices = by_class[cls].copy()
-        rng.shuffle(cls_indices)
-        active = list(range(first_batch[cls], num_batches))
-        for batch_idx, chunk in zip(active, np.array_split(np.array(cls_indices, dtype=int), len(active))):
-            batches[batch_idx].extend(chunk.tolist())
-    for batch in batches:
-        rng.shuffle(batch)
-    return batches
+        sample.extend(rng.sample(by_class[cls], counts[cls]))
+    rng.shuffle(sample)
+    return sample
 
 
-def build_continual_splits(cfg, dataset) -> ContinualSplits:
-    probe_idx, shards = carve_probe_and_partition(cfg, dataset)
-    seed = cfg.get("data.seed", 42)
-    test_fraction = cfg.get("data.test_fraction", 0.2)
-    node_batches = []
-    for node_i, shard in enumerate(shards):
-        batches = split_shard_into_batches(
-            dataset,
-            shard,
-            cfg.get("continual.num_batches", 4),
-            cfg.get("continual.batch_strategy", "stratified"),
-            cfg.get("continual.initial_class_fraction", 0.5),
-            seed=seed + node_i,
-        )
-        node_batches.append([
-            BatchSplit(*train_test_split_indices(dataset, batch, test_fraction, seed)) for batch in batches
-        ])
-    empty = [
-        f"node_{n} batch {b} ({len(s.train_idx)} train / {len(s.test_idx)} test)"
-        for n, batches in enumerate(node_batches) for b, s in enumerate(batches)
-        if not s.train_idx or not s.test_idx
-    ]
-    if empty:
-        raise ValueError(
-            "Continual split left a node batch with no train or no test images: " + ", ".join(empty)
-            + " — lower continual.num_batches or data.num_nodes, or raise data.dirichlet_alpha."
-        )
-    return ContinualSplits(probe_idx=probe_idx, node_batches=node_batches)
+def split_node_arrival(dataset, indices: list[int], test_fraction: float, seed: int) -> BatchSplit:
+    """A node's own train/test split of the images it just received —
+    stratified per class, and with at least one test image whenever it got
+    two or more (a small arrival where every class has a single image would
+    otherwise put everything in train and leave nothing to evaluate on).
+    """
+    train_idx, test_idx = train_test_split_indices(dataset, indices, test_fraction, seed)
+    if not test_idx and len(train_idx) >= 2:
+        rng = random.Random(seed)
+        test_idx = [train_idx.pop(rng.randrange(len(train_idx)))]
+    return BatchSplit(train_idx, test_idx)
 
 
 def build_probe_loader(cfg, dataset, probe_idx: list[int]) -> DataLoader:

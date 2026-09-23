@@ -84,44 +84,50 @@ crop-mesh-detector/
 
 ## How it works, end to end
 
-`python -m src.train` runs the whole thing in one go — there is no separate
-local-only stage and no warm-start from an earlier run.
+There is no separate local-only stage. Data arrives in batches, one batch
+per trigger, the way it would in the field:
+
+```bash
+python -m src.train                 # start: set up the stream and run batch 0 (20,000 images)
+python -m src.train --next-batch    # a new batch of 1,000 images arrives and is run on the saved models
+python -m src.train --next-batch    # ...and another 1,000, until PlantVillage runs out
+python -m src.train --reset         # throw everything away and start again from batch 0
+```
+
+Between triggers, everything is saved under `outputs/continual/`: which
+images arrived in which batch, every node's model and optimizer, the EMAs,
+and the knowledge database. Each trigger picks up exactly where the last
+one stopped.
 
 ### Data preprocessing and splits
 
-1. **Load PlantVillage** (every class folder) and parse each folder name
-   (e.g. `Tomato___Bacterial_spot`) into two labels: crop type (`Tomato`) and
-   disease (`Bacterial_spot`). Train images get augmentation (random resized
-   crop, flips, rotation, colour jitter); test/probe images only get
-   resize + ImageNet normalisation.
-2. **Global probe set** — a stratified 5% (`data.probe_set_fraction`) of
-   every class. It is public, identical for every node, and **fixed for
-   every continual batch** (a node that stops uploading keeps its last
+Set up once, on the first run:
+
+1. **Load PlantVillage** (every class folder, ~54k images) and parse each
+   folder name (e.g. `Tomato___Bacterial_spot`) into two labels: crop type
+   (`Tomato`) and disease (`Bacterial_spot`).
+2. **Global probe set** — a stratified 5% (`data.probe_set_fraction`,
+   ~2.7k images) of every class. Public, identical for every node, and
+   **fixed for every batch** (a node that stops uploading keeps its last
    entry in the database, so everyone's probe logits must stay aligned).
-3. **Private pool** — the other 95% is partitioned over the 6 nodes
-   (non-IID, Dirichlet label skew by default).
-4. **Continual batches** — each node's shard is cut into
-   `continual.num_batches` (default 4; 3–5 recommended) disjoint batches
-   that arrive one after another, and each batch is split stratified into
-   private train / private test (`data.test_fraction`, default 20%).
+3. **Ownership** — every other image is assigned to the node (farm) that
+   would photograph it, non-IID (Dirichlet label skew by default).
 
-Suggested split (defaults), PlantVillage ≈ 54k images:
+Then every batch, only when it is triggered:
 
-| Split | Share | Notes |
-|---|---|---|
-| Global probe | 5% (~2.7k) | fixed across all batches, shared by all nodes |
-| Node shards | 95% (~9k per node on average, skewed) | Dirichlet α=0.5 over 6 nodes |
-| Per batch | 1/4 of a node's shard on average | 80% private train / 20% private test |
+4. **Draw the batch** — a **stratified** sample (every class in
+   proportion) of the images no earlier batch used:
+   `continual.first_batch_size` (20,000) for batch 0,
+   `continual.next_batch_size` (1,000) for each `--next-batch`.
+5. **Deliver** each image to the node that owns it.
+6. **Each node splits its own arrivals** into private train/test
+   (`data.test_fraction`, 20%, stratified per class).
+7. **Preprocessing** happens as images are read: train images get
+   augmentation (random resized crop, flips, rotation, colour jitter);
+   test/probe images only get resize + ImageNet normalisation.
 
-Two ways to cut a shard into batches (`continual.batch_strategy`):
-
-- `"incremental"` (default) — half of a node's classes appear in batch 0,
-  the rest are introduced evenly over the later batches, and old classes
-  keep appearing (new diseases emerge on a farm while old ones persist).
-  This is where knowledge from peers who have already seen a class should
-  help most.
-- `"stratified"` — every batch has the same class mix, just new images
-  (more data of the same kind keeps arriving).
+A node that receives fewer than 2 train images or no test image in a batch
+sits that batch out, keeping its model, EMA, and database entry.
 
 ### Batch 0 (every node teaches and learns)
 
@@ -140,9 +146,11 @@ Two ways to cut a shard into batches (`continual.batch_strategy`):
 9. **Record** whether post beats pre, bytes uploaded/downloaded, and
    compute energy per phase.
 
-### Later batches (continuing from the models above)
+### Later batches (each `--next-batch`, continuing from the saved models)
 
-1. Local training on the new batch's private train set.
+1. Local training on the new batch's private train set (a flat
+   `training.local_epochs_per_round`; only batch 0 scales epochs up for
+   small nodes).
 2. Pre-distill evaluation on the new batch's private test set.
 3. Update an EMA of the pre-distill metric (`continual.ema_metric`,
    `ema_alpha`):
@@ -198,8 +206,8 @@ python scripts/check_energy_measurement.py
 Then train:
 
 ```bash
-python -m src.train --config config.yaml
-.venv/bin/python -m src.train --config config.yaml
+python -m src.train --config config.yaml                # batch 0
+python -m src.train --config config.yaml --next-batch   # each further batch
 ```
 
 To run the mesh simulation scenarios (each writes a JSON report to
@@ -259,6 +267,7 @@ Everything — which architectures to run, node count, non-IID strategy,
 epochs/rounds, aggregation rule, radio energy assumptions, grid carbon
 intensity — is controlled from `config.yaml`. Results land in `outputs/`:
 
+- `continual/stream.json` — which images arrived in which batch, at which node
 - `continual/<architecture>/knowledge.db` — the shared knowledge database
   (latest entry per node + upload/retrieval logs with byte sizes)
 - `continual/<architecture>/batch_summary.csv` — one row per (batch, node):

@@ -1,10 +1,13 @@
-"""Continual mesh: PlantVillage splits, the shared knowledge database, the
-EMA teacher/learner rule, and one end-to-end run on synthetic images."""
+"""Continual mesh: the stratified batch stream, the shared knowledge
+database, the EMA teacher/learner rule, and the trigger-by-trigger CLI on
+synthetic images."""
 
 from __future__ import annotations
 
 import json
 import sqlite3
+import sys
+from collections import Counter
 
 import numpy as np
 import pytest
@@ -13,8 +16,8 @@ from PIL import Image
 
 from src.config import Config
 from src.data.plantvillage import PlantVillageDataset
-from src.data.splits import build_continual_splits, split_shard_into_batches
-from src.energy.tracker import CommunicationCostEstimator, ComputeEnergyTracker
+from src.data.splits import split_node_arrival, stratified_sample
+from src.data.stream import DataStream
 from src.federated.continual import LEARNER, TEACHER, decide_roles, update_ema
 from src.federated.knowledge_store import KnowledgeStore
 from src.federated.node import KnowledgePayload
@@ -49,7 +52,7 @@ def _cfg(root, tmp_path, **continual) -> Config:
             "probe_set_max_fraction_small_class": 0.2, "test_fraction": 0.25,
             "non_iid_strategy": "dirichlet", "dirichlet_alpha": 1.0,
         },
-        "continual": {"num_batches": 3, "batch_strategy": "stratified", **continual},
+        "continual": {"first_batch_size": 60, "next_batch_size": 24, "first_batch_local_epochs": 1, **continual},
         "models": {"architectures": ["mobilenet_v3_small"], "pretrained": False},
         "training": {
             "local_epochs_per_round": 1, "distill_epochs_per_round": 1, "batch_size": 8,
@@ -61,31 +64,49 @@ def _cfg(root, tmp_path, **continual) -> Config:
     })
 
 
-@pytest.mark.parametrize("strategy", ["stratified", "incremental"])
-def test_continual_splits_are_disjoint_and_cover_the_pool(pv_root, tmp_path, strategy):
+def test_stratified_sample_is_exact_and_proportional(pv_root):
     dataset = PlantVillageDataset(pv_root, image_size=32)
-    splits = build_continual_splits(_cfg(pv_root, tmp_path, batch_strategy=strategy), dataset)
-
-    seen = list(splits.probe_idx)
-    for batches in splits.node_batches:
-        assert len(batches) == 3
-        for split in batches:
-            seen += split.train_idx + split.test_idx
-    assert sorted(seen) == list(range(len(dataset)))  # every image exactly once
-    assert len(splits.probe_idx) == 2 * len(CLASSES)   # 5% per class, min 2
+    pool = list(range(len(dataset)))
+    sample = stratified_sample(dataset, pool, 60, seed=0)
+    assert len(sample) == len(set(sample)) == 60
+    counts = Counter(np.asarray(dataset.targets)[sample].tolist())
+    assert set(counts.values()) == {10}  # 6 equal classes -> 10 each
+    assert len(stratified_sample(dataset, pool[:5], 60, seed=0)) == 5  # capped at what's left
 
 
-def test_incremental_batches_introduce_classes_over_time(pv_root):
+def test_split_node_arrival_keeps_at_least_one_test_image(pv_root):
     dataset = PlantVillageDataset(pv_root, image_size=32)
-    shard = list(range(len(dataset)))
-    batches = split_shard_into_batches(dataset, shard, 3, "incremental", initial_class_fraction=0.5, seed=0)
-    targets = np.asarray(dataset.targets)
-    classes_per_batch = [set(targets[b].tolist()) for b in batches]
+    one_per_class = [0, 24, 48]  # a single image of each of three classes
+    split = split_node_arrival(dataset, one_per_class, test_fraction=0.2, seed=0)
+    assert len(split.test_idx) == 1 and len(split.train_idx) == 2
 
-    assert len(classes_per_batch[0]) == 3                     # half the classes at the start
-    assert classes_per_batch[0] < classes_per_batch[1] < classes_per_batch[2]  # old classes persist, new ones join
-    assert classes_per_batch[2] == set(range(len(CLASSES)))
-    assert sorted(i for b in batches for i in b) == shard
+
+def test_stream_draws_new_images_each_batch_and_survives_reload(pv_root, tmp_path):
+    cfg = _cfg(pv_root, tmp_path)
+    dataset = PlantVillageDataset(pv_root, image_size=32)
+    path = tmp_path / "stream.json"
+    stream = DataStream.create(cfg, dataset, path)
+    pool_size = len(stream.remaining())
+    first = stream.next_batch(dataset, 60, 0.25, seed=0)
+
+    reloaded = DataStream.load(cfg, dataset, path)  # a later trigger is a new process
+    second = reloaded.next_batch(dataset, 24, 0.25, seed=0)
+
+    def images(batch):
+        return {i for s in batch["nodes"].values() for i in s["train_idx"] + s["test_idx"]}
+
+    assert first["size"] == len(images(first)) == 60 and second["size"] == len(images(second)) == 24
+    assert not images(first) & images(second)          # never the same image twice
+    assert not images(first) & set(stream.probe_idx)    # probe images never arrive
+    assert len(reloaded.remaining()) == pool_size - 84
+    for node_i, shard in enumerate(stream.node_shards):  # each image goes to its owner
+        split = first["nodes"][f"node_{node_i}"]
+        assert set(split["train_idx"] + split["test_idx"]) <= set(shard)
+
+    other = _cfg(pv_root, tmp_path)
+    other._data["data"]["seed"] = 1
+    with pytest.raises(ValueError, match="different dataset/config"):
+        DataStream.load(other, dataset, path)
 
 
 def test_decide_roles_follows_the_ema_rule():
@@ -125,34 +146,53 @@ def test_knowledge_store_replaces_entries_and_excludes_self(tmp_path):
         assert conn.execute("SELECT from_node, to_node FROM retrievals").fetchall() == [("node_0", "node_1")]
 
 
-def test_end_to_end_continual_run(pv_root, tmp_path):
-    from src.train import build_probe_loader, run_continual
+def _run_cli(monkeypatch, cfg_path, *flags):
+    from src import train
 
-    cfg = _cfg(pv_root, tmp_path, ema_threshold=1.1)  # threshold > 1: every node stays a learner
-    dataset = PlantVillageDataset(pv_root, image_size=32)
-    splits = build_continual_splits(cfg, dataset)
+    monkeypatch.setattr(sys, "argv", ["train", "--config", str(cfg_path), *flags])
+    train.main()
+
+
+def test_cli_runs_batch_zero_then_one_batch_per_trigger(pv_root, tmp_path, monkeypatch):
+    import yaml
+
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(yaml.safe_dump(_cfg(pv_root, tmp_path, ema_threshold=1.1).as_dict()))
     out = tmp_path / "out"
-    tracker = ComputeEnergyTracker(enabled=False, output_dir=out)
-    comm = CommunicationCostEstimator({"wifi": 0.00003}, 125)
+    run_dir = out / "continual" / "mobilenet_v3_small"
 
-    result = run_continual(
-        cfg, "mobilenet_v3_small", dataset, splits, build_probe_loader(cfg, dataset, splits.probe_idx),
-        tracker, comm, "cpu", out,
-    )
+    with pytest.raises(SystemExit):  # nothing to continue yet
+        _run_cli(monkeypatch, cfg_path, "--next-batch")
 
-    summary = result["continual"]
-    assert summary["num_batches"] == 3
-    batch0 = summary["per_batch"][0]
-    assert batch0["teachers"] == batch0["learners"] == ["node_0", "node_1", "node_2"]
-    assert summary["num_distillations"] >= 3  # at least every node in batch 0
-    assert summary["total_bytes_uploaded"] > 0 and summary["total_bytes_downloaded"] > 0
-    assert summary["total_compute_energy_kwh"] > 0
-    assert set(result["mesh_eval"]) == {"node_0", "node_1", "node_2"}
-
-    logs = json.loads((out / "continual" / "mobilenet_v3_small" / "batch_logs.json").read_text())
+    _run_cli(monkeypatch, cfg_path)  # batch 0
+    logs = json.loads((run_dir / "batch_logs.json").read_text())
+    assert len(logs) == 1
     first = logs[0]["per_node"]["node_0"]
+    assert first["roles"] == ["teacher", "learner"]
     assert sorted(first["peers_used"]) == ["node_1", "node_2"]  # own knowledge excluded
     assert first["bytes_uploaded"] > 0 and first["bytes_downloaded"] > 0
     assert {"local_train", "evaluate", "knowledge_extraction", "distill"} <= set(first["energy_kwh"])
-    assert (out / "continual" / "mobilenet_v3_small" / "batch_summary.csv").exists()
+    weights_after_0 = torch.load(run_dir / "nodes" / "node_0.pt")["model"]
+
+    _run_cli(monkeypatch, cfg_path)  # no trigger: nothing new runs
+    assert len(json.loads((run_dir / "batch_logs.json").read_text())) == 1
+
+    _run_cli(monkeypatch, cfg_path, "--next-batch")  # batch 1, on top of the saved models
+    _run_cli(monkeypatch, cfg_path, "--next-batch")  # batch 2
+    logs = json.loads((run_dir / "batch_logs.json").read_text())
+    assert [log["batch_idx"] for log in logs] == [0, 1, 2]
+    stream = json.loads((out / "continual" / "stream.json").read_text())
+    assert [b["size"] for b in stream["batches"]] == [60, 24, 24]
+    assert json.loads((run_dir / "state.json").read_text())["completed_batches"] == 3
+    later = [r for log in logs[1:] for r in log["per_node"].values()]
+    assert later and all(r["prev_ema"] is not None for r in later)  # EMA carried across processes
+    weights_after_2 = torch.load(run_dir / "nodes" / "node_0.pt")["model"]
+    assert any(not torch.equal(weights_after_0[k], weights_after_2[k]) for k in weights_after_0)
+
+    result = json.loads((out / "results_summary.json").read_text())["mobilenet_v3_small"]
+    assert result["continual"]["num_batches"] == 3
+    assert (run_dir / "batch_summary.csv").exists()
     assert (out / "checkpoints" / "mobilenet_v3_small" / "node_0.pt").exists()
+
+    _run_cli(monkeypatch, cfg_path, "--reset")  # start over from batch 0
+    assert len(json.loads((run_dir / "batch_logs.json").read_text())) == 1

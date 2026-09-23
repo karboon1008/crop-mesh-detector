@@ -1,24 +1,35 @@
-"""Entry point: one end-to-end continual-mesh run on PlantVillage — no
-separate local-only stage, no warm-start from a previous run.
+"""Entry point for the continual mesh on PlantVillage. Each invocation is
+one trigger, and data arrives batch by batch, like in the field:
 
-    python -m src.train --config config.yaml
-    python -m src.train --config config.yaml --arch mobilenet_v3_small
+    python -m src.train                 # first run: set up the stream, run batch 0
+                                        # (continual.first_batch_size images, default 20,000)
+    python -m src.train --next-batch    # a new batch arrives (continual.next_batch_size,
+                                        # default 1,000) and is run on top of the saved models
+    python -m src.train --next-batch    # ...and again, until PlantVillage runs out
+    python -m src.train --reset         # throw everything away and start again from batch 0
 
-For every configured architecture:
+Add --arch <name> to any of these to run only one architecture.
 
-  1. PlantVillage -> 5% global probe set + 95% private pool -> 6 non-IID
-     node shards -> each shard cut into continual.num_batches batches, each
-     with its own private train/test split (see src/data/splits.py).
-  2. Batch by batch, every node trains locally, evaluates, and — depending
-     on its EMA-based role — uploads its knowledge to the shared database
-     and/or retrieves its peers' knowledge and distils towards it (see
-     src/federated/continual.py). Models carry over between batches.
-  3. Per node and batch it records pre- vs. post-distill accuracy, bytes
-     uploaded/downloaded, and compute energy per phase.
+A trigger:
+  1. draws the new batch — a stratified sample of the images no earlier
+     batch used — hands each image to the node that owns it, and lets each
+     node split what it got into private train/test (src/data/stream.py)
+  2. for every architecture, reloads each node's model/optimizer, EMA, and
+     the shared knowledge database, and runs the batch: local training,
+     pre-distill eval, EMA roles, upload/retrieve + distil, post-distill
+     eval (src/federated/continual.py)
+  3. saves everything again and rewrites the reports.
+
+An architecture that missed earlier batches (e.g. a crashed or --arch-only
+trigger) is brought up to date before the new batch, so every
+architecture always ends up having seen the same stream.
 
 Outputs (under output.dir, default outputs/):
+  continual/stream.json                 which images arrived in which batch, at which node
   continual/<arch>/knowledge.db         the shared knowledge database
-  continual/<arch>/batch_logs.json      every NodeBatchRecord, in full
+  continual/<arch>/nodes/<node>.pt      each node's model + optimizer (for the next trigger)
+  continual/<arch>/state.json           batches completed + each node's EMA
+  continual/<arch>/batch_logs.json      every node's record for every batch
   continual/<arch>/batch_summary.csv    one row per (batch, node)
   results_<arch>.json, results_summary.json
   checkpoints/<arch>/<node>.pt, checkpoints/classes.json
@@ -30,6 +41,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
+import shutil
 import statistics
 from pathlib import Path
 
@@ -37,7 +49,8 @@ import torch
 
 from src.config import Config
 from src.data.plantvillage import load_full_dataset
-from src.data.splits import build_batch_loaders, build_continual_splits, build_probe_loader
+from src.data.splits import build_batch_loaders, build_probe_loader
+from src.data.stream import DataStream
 from src.energy.tracker import (
     CommunicationCostEstimator,
     ComputeEnergyTracker,
@@ -82,23 +95,39 @@ def build_nodes(cfg, arch: str, dataset, num_nodes: int, device: str) -> list[No
     return nodes
 
 
-def batch_summary_rows(batch_logs: list[BatchLog], metric: str, comm_estimator: CommunicationCostEstimator) -> list[dict]:
+def batch_log_to_json(log: BatchLog) -> dict:
+    def record_json(record):
+        d = dataclasses.asdict(record)
+        d["pre_distill_eval"] = scalar_metrics(record.pre_distill_eval)
+        d["post_distill_eval"] = scalar_metrics(record.post_distill_eval)
+        d["total_bytes"] = record.total_bytes
+        d["total_energy_kwh"] = record.total_energy_kwh
+        return d
+
+    return {
+        "batch_idx": log.batch_idx,
+        "absent": log.absent,
+        "per_node": {nid: record_json(r) for nid, r in log.per_node.items()},
+    }
+
+
+def batch_summary_rows(batch_logs: list[dict], metric: str, comm_estimator: CommunicationCostEstimator) -> list[dict]:
+    has_wifi = "wifi" in comm_estimator.radio_energy_j_per_byte
     rows = []
     for log in batch_logs:
-        for record in log.per_node.values():
-            pre, post = record.pre_distill_eval, record.post_distill_eval
-            wifi = comm_estimator.estimate(record.total_bytes, "wifi") if "wifi" in comm_estimator.radio_energy_j_per_byte else {}
+        for r in log["per_node"].values():
+            pre, post = r["pre_distill_eval"], r["post_distill_eval"]
             rows.append({
-                "batch": record.batch_idx,
-                "node": record.node_id,
-                "num_train": record.num_train,
-                "num_test": record.num_test,
-                "roles": "+".join(record.roles) or "idle",
-                "ema": round(record.ema, 4),
-                "prev_ema": None if record.prev_ema is None else round(record.prev_ema, 4),
-                "uploaded": record.uploaded,
-                "distilled": record.distilled,
-                "peers_used": len(record.peers_used),
+                "batch": r["batch_idx"],
+                "node": r["node_id"],
+                "num_train": r["num_train"],
+                "num_test": r["num_test"],
+                "roles": "+".join(r["roles"]) or "idle",
+                "ema": round(r["ema"], 4),
+                "prev_ema": None if r["prev_ema"] is None else round(r["prev_ema"], 4),
+                "uploaded": r["uploaded"],
+                "distilled": r["distilled"],
+                "peers_used": len(r["peers_used"]),
                 f"pre_{metric}": round(pre[metric], 4),
                 f"post_{metric}": round(post[metric], 4),
                 f"gain_{metric}": round(post[metric] - pre[metric], 4),
@@ -106,63 +135,78 @@ def batch_summary_rows(batch_logs: list[BatchLog], metric: str, comm_estimator: 
                 "post_crop_accuracy": round(post["crop_accuracy"], 4),
                 "pre_disease_accuracy": round(pre["disease_accuracy"], 4),
                 "post_disease_accuracy": round(post["disease_accuracy"], 4),
-                "improved": record.improved,
-                "bytes_uploaded": record.bytes_uploaded,
-                "bytes_downloaded": record.bytes_downloaded,
-                "compute_energy_kwh": record.total_energy_kwh,
-                "wifi_comm_energy_kwh": wifi.get("energy_kwh", 0.0),
-                "duration_s": round(sum(record.duration_s.values()), 2),
+                "improved": r["improved"],
+                "bytes_uploaded": r["bytes_uploaded"],
+                "bytes_downloaded": r["bytes_downloaded"],
+                "compute_energy_kwh": r["total_energy_kwh"],
+                "wifi_comm_energy_kwh": (
+                    comm_estimator.estimate(r["total_bytes"], "wifi")["energy_kwh"] if has_wifi else 0.0
+                ),
+                "duration_s": round(sum(r["duration_s"].values()), 2),
             })
     return rows
 
 
-def summarise_run(batch_logs: list[BatchLog], metric: str) -> dict:
-    """Headline numbers for one architecture: how often distillation
-    helped, by how much, and what it cost.
+def summarise_run(batch_logs: list[dict], metric: str) -> dict:
+    """Headline numbers for one architecture across every batch so far: how
+    often distillation helped, by how much, and what it cost.
     """
-    distilled = [r for log in batch_logs for r in log.per_node.values() if r.distilled]
+    distilled = [r for log in batch_logs for r in log["per_node"].values() if r["distilled"]]
     per_batch = []
     for log in batch_logs:
-        records = list(log.per_node.values())
-        batch_distilled = [r for r in records if r.distilled]
+        records = list(log["per_node"].values())
         per_batch.append({
-            "batch": log.batch_idx,
-            "teachers": [r.node_id for r in records if "teacher" in r.roles],
-            "learners": [r.node_id for r in records if "learner" in r.roles],
-            f"mean_pre_{metric}": statistics.mean(r.pre_distill_eval[metric] for r in records),
-            f"mean_post_{metric}": statistics.mean(r.post_distill_eval[metric] for r in records),
-            "num_distilled": len(batch_distilled),
-            "num_improved": sum(r.improved for r in batch_distilled),
-            "bytes_uploaded": sum(r.bytes_uploaded for r in records),
-            "bytes_downloaded": sum(r.bytes_downloaded for r in records),
-            "compute_energy_kwh": log.total_energy_kwh,
+            "batch": log["batch_idx"],
+            "nodes_present": [r["node_id"] for r in records],
+            "nodes_absent": log["absent"],
+            "teachers": [r["node_id"] for r in records if "teacher" in r["roles"]],
+            "learners": [r["node_id"] for r in records if "learner" in r["roles"]],
+            f"mean_pre_{metric}": statistics.mean(r["pre_distill_eval"][metric] for r in records) if records else None,
+            f"mean_post_{metric}": statistics.mean(r["post_distill_eval"][metric] for r in records) if records else None,
+            "num_distilled": sum(r["distilled"] for r in records),
+            "num_improved": sum(r["improved"] for r in records),
+            "bytes_uploaded": sum(r["bytes_uploaded"] for r in records),
+            "bytes_downloaded": sum(r["bytes_downloaded"] for r in records),
+            "compute_energy_kwh": sum(r["total_energy_kwh"] for r in records),
         })
     return {
         "metric": metric,
         "num_batches": len(batch_logs),
         "num_distillations": len(distilled),
-        "num_improved": sum(r.improved for r in distilled),
-        "mean_distill_gain": (
-            statistics.mean(r.distill_gain[metric] for r in distilled) if distilled else 0.0
-        ),
+        "num_improved": sum(r["improved"] for r in distilled),
+        "mean_distill_gain": statistics.mean(r["distill_gain"][metric] for r in distilled) if distilled else 0.0,
         "total_bytes_uploaded": sum(b["bytes_uploaded"] for b in per_batch),
         "total_bytes_downloaded": sum(b["bytes_downloaded"] for b in per_batch),
-        "total_bytes_exchanged": sum(log.total_bytes for log in batch_logs),
-        "total_compute_energy_kwh": sum(log.total_energy_kwh for log in batch_logs),
+        "total_bytes_exchanged": sum(b["bytes_uploaded"] + b["bytes_downloaded"] for b in per_batch),
+        "total_compute_energy_kwh": sum(b["compute_energy_kwh"] for b in per_batch),
         "per_batch": per_batch,
     }
 
 
-def run_continual(cfg, arch, dataset, splits, probe_loader, tracker, comm_estimator, device, output_dir: Path) -> dict:
-    run_dir = output_dir / "continual" / arch
-    run_dir.mkdir(parents=True, exist_ok=True)
-    num_nodes = len(splits.node_batches)
-    num_batches = len(splits.node_batches[0])
-    metric = cfg.get("continual.ema_metric", "pair_accuracy")
+def _read_json(path: Path, default):
+    return json.loads(path.read_text()) if path.exists() else default
 
-    nodes = build_nodes(cfg, arch, dataset, num_nodes, device)
+
+def run_architecture(cfg, arch, dataset, stream, probe_loader, tracker, comm_estimator, device, output_dir: Path) -> dict:
+    """Runs every stream batch this architecture hasn't run yet, saving its
+    state after each one, then rewrites its reports.
+    """
+    run_dir = output_dir / "continual" / arch
+    node_dir = run_dir / "nodes"
+    node_dir.mkdir(parents=True, exist_ok=True)
+    state_path, logs_path = run_dir / "state.json", run_dir / "batch_logs.json"
+    state = _read_json(state_path, {"completed_batches": 0, "ema": {}})
+    batch_logs = _read_json(logs_path, [])
+    metric = cfg.get("continual.ema_metric", "pair_accuracy")
+    lr = cfg.get("training.lr", 0.001)
+
+    nodes = build_nodes(cfg, arch, dataset, stream.num_nodes, device)
+    if state["completed_batches"] > 0:
+        for node in nodes:
+            node.load_state(torch.load(node_dir / f"{node.node_id}.pt", map_location=device), lr)
     mesh = ContinualMesh(
-        nodes, probe_loader, KnowledgeStore(run_dir / "knowledge.db"), tracker,
+        nodes, probe_loader,
+        KnowledgeStore(run_dir / "knowledge.db", reset=state["completed_batches"] == 0), tracker,
         aggregation_method=cfg.get("federated.aggregation", "trimmed_mean"),
         trim_fraction=cfg.get("federated.trim_fraction", 0.2),
         krum_neighbors=cfg.get("federated.krum_neighbors", 2),
@@ -171,25 +215,37 @@ def run_continual(cfg, arch, dataset, splits, probe_loader, tracker, comm_estima
         ema_metric=metric,
         label_prefix=f"{arch}_",
     )
+    mesh.ema.update(state["ema"])
 
     base_local_epochs = cfg.get(
         f"training.local_epochs_per_round_overrides.{arch}", cfg.get("training.local_epochs_per_round", 2)
     )
-    max_epochs = cfg.get("training.max_epochs_per_node", 40)
-    batch_logs: list[BatchLog] = []
-    for b in range(num_batches):
-        batch_loaders = {
-            node.node_id: build_batch_loaders(cfg, dataset, splits.node_batches[i][b])
-            for i, node in enumerate(nodes)
-        }
-        base = cfg.get("continual.first_batch_local_epochs", base_local_epochs) if b == 0 else base_local_epochs
-        epochs = scale_epochs_by_node_size(
-            base, [len(batch_loaders[n.node_id][0].dataset) for n in nodes], max_epochs
-        )
+    for b in range(state["completed_batches"], stream.num_batches):
+        # a node needs >= 2 train images (BatchNorm) and >= 1 test image to take part
+        batch_loaders = {}
+        for node in nodes:
+            split = stream.node_split(b, node.node_id)
+            if len(split.train_idx) >= 2 and split.test_idx:
+                batch_loaders[node.node_id] = build_batch_loaders(cfg, dataset, split)
+        present = [n for n in nodes if n.node_id in batch_loaders]
+        if b == 0:
+            # the big first batch: scale epochs up for small nodes so every
+            # node gets a comparable number of gradient steps from ImageNet init
+            epochs = scale_epochs_by_node_size(
+                cfg.get("continual.first_batch_local_epochs", base_local_epochs),
+                [len(batch_loaders[n.node_id][0].dataset) for n in present],
+                cfg.get("training.max_epochs_per_node", 40),
+            ) if present else []
+        else:
+            # small follow-up batches: a flat epoch count — scaling a node with a
+            # handful of new images up to dozens of epochs would just overfit them
+            epochs = [base_local_epochs] * len(present)
+
+        print(f"  batch {b}: {stream.batches[b]['size']} images")
         log = mesh.run_batch(
             b, batch_loaders,
-            local_epochs={node.node_id: e for node, e in zip(nodes, epochs)},
-            lr=cfg.get("training.lr", 0.001),
+            local_epochs={node.node_id: e for node, e in zip(present, epochs)},
+            lr=lr,
             distill_epochs=cfg.get("training.distill_epochs_per_round", 1),
             distill_lr=cfg.get("training.distill_lr", 0.0005),
             proto_weight=cfg.get("training.proto_weight", 0.5),
@@ -197,47 +253,57 @@ def run_continual(cfg, arch, dataset, splits, probe_loader, tracker, comm_estima
             crop_kd_weight=cfg.get("training.crop_kd_weight", None),
             temperature=cfg.get("training.kd_temperature", 2.0),
         )
-        batch_logs.append(log)
-        print(f"  batch {b}: {log.total_bytes} bytes exchanged, {log.total_energy_kwh:.6f} kWh compute")
         for record in log.per_node.values():
             pre, post = record.pre_distill_eval[metric], record.post_distill_eval[metric]
             print(
-                f"    {record.node_id}: roles={'+'.join(record.roles) or 'idle':<15} "
-                f"EMA={record.ema:.3f} {metric} pre={pre:.3f} post={post:.3f} "
+                f"    {record.node_id}: {record.num_train:>5} train / {record.num_test:>4} test  "
+                f"roles={'+'.join(record.roles) or 'idle':<15} EMA={record.ema:.3f} "
+                f"{metric} pre={pre:.3f} post={post:.3f} "
                 f"({'improved' if record.improved else 'distilled, no gain' if record.distilled else 'no distill'})"
             )
+        for node_id in log.absent:
+            print(f"    {node_id}: too few images this batch — sat it out")
+        print(f"    {log.total_bytes} bytes exchanged, {log.total_energy_kwh:.6f} kWh compute")
 
-    def _jsonable(record):
-        d = dataclasses.asdict(record)
-        d["pre_distill_eval"] = scalar_metrics(record.pre_distill_eval)
-        d["post_distill_eval"] = scalar_metrics(record.post_distill_eval)
-        return d
+        # save after every batch so a crash never loses a finished one
+        for node in nodes:
+            torch.save(node.state(), node_dir / f"{node.node_id}.pt")
+        batch_logs.append(batch_log_to_json(log))
+        logs_path.write_text(json.dumps(batch_logs, indent=2))
+        state = {"completed_batches": b + 1, "ema": mesh.ema}
+        state_path.write_text(json.dumps(state, indent=2))
 
-    (run_dir / "batch_logs.json").write_text(json.dumps(
-        [{"batch_idx": log.batch_idx, "per_node": {nid: _jsonable(r) for nid, r in log.per_node.items()}}
-         for log in batch_logs],
-        indent=2,
-    ))
     write_csv(batch_summary_rows(batch_logs, metric, comm_estimator), run_dir / "batch_summary.csv")
-
     checkpoint_dir = output_dir / "checkpoints" / arch
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     for node in nodes:
         torch.save(node.model.state_dict(), checkpoint_dir / f"{node.node_id}.pt")
 
+    # each node's post-distill eval from the latest batch it took part in —
+    # the key src/model_selection.py scores when picking a checkpoint
+    latest_eval = {}
+    for log in batch_logs:
+        for node_id, r in log["per_node"].items():
+            latest_eval[node_id] = r["post_distill_eval"]
     summary = summarise_run(batch_logs, metric)
-    last = batch_logs[-1].per_node
     return {
         "architecture": arch,
         "params": count_parameters(nodes[0].model),
         "model_size_mb": model_size_mb(nodes[0].model),
-        # each node's final post-distill eval on its last batch's test set —
-        # the key src/model_selection.py scores when picking a checkpoint
-        "mesh_eval": {nid: scalar_metrics(r.post_distill_eval) for nid, r in last.items()},
+        "mesh_eval": latest_eval,
         "continual": summary,
         "knowledge_store": mesh.store.entries(),
         "total_bytes_exchanged": summary["total_bytes_exchanged"],
     }
+
+
+def reset_outputs(output_dir: Path) -> None:
+    shutil.rmtree(output_dir / "continual", ignore_errors=True)
+    shutil.rmtree(output_dir / "checkpoints", ignore_errors=True)
+    for name in ("emissions.csv", "run_state.json", "results_summary.json"):
+        (output_dir / name).unlink(missing_ok=True)
+    for f in output_dir.glob("results_*.json"):
+        f.unlink()
 
 
 def main():
@@ -247,27 +313,55 @@ def main():
         "--arch", default=None,
         help="Restrict this run to a single architecture, overriding config.yaml's models.architectures list",
     )
+    trigger = parser.add_mutually_exclusive_group()
+    trigger.add_argument(
+        "--next-batch", action="store_true",
+        help="A new batch of continual.next_batch_size images arrives and is run on top of the saved models",
+    )
+    trigger.add_argument(
+        "--reset", action="store_true",
+        help="Delete the saved stream, models, and knowledge database, and start again from batch 0",
+    )
     args = parser.parse_args()
     cfg = Config.load(args.config)
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     output_dir = Path(cfg.get("output.dir", "outputs"))
     output_dir.mkdir(parents=True, exist_ok=True)
-    # CodeCarbon appends to emissions.csv; start clean so the report's
-    # emissions.csv total covers exactly this run
-    (output_dir / "emissions.csv").unlink(missing_ok=True)
+    stream_path = output_dir / "continual" / "stream.json"
+    seed = cfg.get("data.seed", 42)
+    test_fraction = cfg.get("data.test_fraction", 0.2)
 
     dataset = load_full_dataset(cfg.get("data.root"), cfg.get("data.image_size", 224))
     print(
         f"Loaded {len(dataset)} PlantVillage images, {len(dataset.labels.crop_classes)} crop classes, "
         f"{len(dataset.labels.disease_classes)} disease classes."
     )
-    splits = build_continual_splits(cfg, dataset)
-    probe_loader = build_probe_loader(cfg, dataset, splits.probe_idx)
-    print(f"Global probe set: {len(splits.probe_idx)} images")
-    for i, batches in enumerate(splits.node_batches):
-        sizes = ", ".join(f"{len(s.train_idx)}/{len(s.test_idx)}" for s in batches)
-        print(f"  node_{i} batches (train/test): {sizes}")
+
+    if args.reset:
+        reset_outputs(output_dir)
+    if not stream_path.exists():
+        if args.next_batch:
+            raise SystemExit("No stream yet — run `python -m src.train` first to start it with batch 0.")
+        stream = DataStream.create(cfg, dataset, stream_path)
+        batch = stream.next_batch(dataset, cfg.get("continual.first_batch_size", 20000), test_fraction, seed)
+    else:
+        stream = DataStream.load(cfg, dataset, stream_path)
+        if args.next_batch:
+            batch = stream.next_batch(dataset, cfg.get("continual.next_batch_size", 1000), test_fraction, seed)
+        else:
+            batch = None
+            print(
+                f"Stream already has {stream.num_batches} batch(es); no new batch was triggered "
+                f"(pass --next-batch for one). Bringing any architecture that is behind up to date."
+            )
+
+    print(f"Global probe set: {len(stream.probe_idx)} images (fixed for every batch)")
+    if batch is not None:
+        print(f"New batch {batch['batch_idx']}: {batch['size']} images (stratified), "
+              f"{len(stream.remaining())} images left for future batches")
+        for node_id, split in batch["nodes"].items():
+            print(f"  {node_id}: {len(split['train_idx'])} train / {len(split['test_idx'])} test")
 
     checkpoints_dir = output_dir / "checkpoints"
     checkpoints_dir.mkdir(parents=True, exist_ok=True)
@@ -280,6 +374,7 @@ def main():
         indent=2,
     ))
 
+    probe_loader = build_probe_loader(cfg, dataset, stream.probe_idx)
     tracker = ComputeEnergyTracker(
         enabled=cfg.get("energy.track_with_codecarbon", True),
         output_dir=output_dir,
@@ -291,35 +386,47 @@ def main():
         cfg.get("energy.grid_carbon_intensity_gco2_per_kwh", 125),
     )
 
-    all_results = {}
+    results_path = output_dir / "results_summary.json"
+    all_results = _read_json(results_path, {})
     architectures = [args.arch] if args.arch else cfg.get("models.architectures", [])
     for arch in architectures:
         print(f"\n=== Architecture: {arch} ===")
-        result = run_continual(cfg, arch, dataset, splits, probe_loader, tracker, comm_estimator, device, output_dir)
+        result = run_architecture(cfg, arch, dataset, stream, probe_loader, tracker, comm_estimator, device, output_dir)
         all_results[arch] = result
         (output_dir / f"results_{arch}.json").write_text(json.dumps(result, indent=2))
         s = result["continual"]
         print(
-            f"distillation improved {s['num_improved']}/{s['num_distillations']} node-batches, "
-            f"mean gain {s['mean_distill_gain']:+.4f} {s['metric']}, "
+            f"so far ({s['num_batches']} batches): distillation improved {s['num_improved']}/"
+            f"{s['num_distillations']} node-batches, mean gain {s['mean_distill_gain']:+.4f} {s['metric']}, "
             f"{s['total_bytes_exchanged']} bytes, {s['total_compute_energy_kwh']:.6f} kWh"
         )
+    results_path.write_text(json.dumps(all_results, indent=2))
 
-    (output_dir / "results_summary.json").write_text(json.dumps(all_results, indent=2))
+    # compute energy accumulates across triggers (each is its own process)
+    run_state_path = output_dir / "run_state.json"
+    run_state = _read_json(run_state_path, {"total_compute_energy_kwh": 0.0, "total_duration_s": 0.0, "num_tracked_blocks": 0})
+    this_run = tracker.summary()
+    for key in ("total_compute_energy_kwh", "total_duration_s", "num_tracked_blocks"):
+        run_state[key] += this_run[key]
+    run_state["all_blocks_cpu_measured"] = this_run["all_blocks_cpu_measured"] and run_state.get("all_blocks_cpu_measured", True)
+    run_state_path.write_text(json.dumps(run_state, indent=2))
 
     total_bytes = sum(r["total_bytes_exchanged"] for r in all_results.values())
     write_sustainability_report(
         output_dir / "sustainability_report",
-        tracker.summary(),
+        run_state,
         comm_estimator.estimate_all_radios(total_bytes),
         {
-            arch: {k: r["continual"][k] for k in ("metric", "num_distillations", "num_improved", "mean_distill_gain")}
+            arch: {k: r["continual"][k] for k in ("metric", "num_batches", "num_distillations", "num_improved", "mean_distill_gain")}
             for arch, r in all_results.items()
         },
         cfg.get("energy.grid_carbon_intensity_gco2_per_kwh", 125),
         emissions_csv_totals=sweep_totals_from_emissions_csv(output_dir),
     )
-    print(f"\nDone. Results and sustainability report written to {output_dir}/")
+    print(
+        f"\nDone. {len(stream.remaining())} images left — run `python -m src.train --next-batch` "
+        f"for the next batch of {cfg.get('continual.next_batch_size', 1000)}."
+    )
 
 
 if __name__ == "__main__":

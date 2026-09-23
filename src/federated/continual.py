@@ -104,6 +104,9 @@ class NodeBatchRecord:
 class BatchLog:
     batch_idx: int
     per_node: dict[str, NodeBatchRecord] = field(default_factory=dict)
+    # nodes that received too little of this batch to train + evaluate; they
+    # sit it out, keeping their model, EMA, and database entry unchanged
+    absent: list[str] = field(default_factory=list)
 
     @property
     def total_bytes(self) -> int:
@@ -168,13 +171,16 @@ class ContinualMesh:
         temperature: float,
     ) -> BatchLog:
         """`batch_loaders`: node_id -> (train_loader, test_loader,
-        crop_class_weights, disease_class_weights) for this batch.
+        crop_class_weights, disease_class_weights) for this batch. Nodes
+        missing from it received no usable data this batch and sit it out.
         """
         crop_kd_weight = kd_weight if crop_kd_weight is None else crop_kd_weight
         log = BatchLog(batch_idx=batch_idx)
+        present = [node for node in self.nodes if node.node_id in batch_loaders]
+        log.absent = [node.node_id for node in self.nodes if node.node_id not in batch_loaders]
 
         # 1) + 2) local training on this batch, then pre-distill evaluation
-        for node in self.nodes:
+        for node in present:
             train_loader, test_loader, crop_weights, disease_weights = batch_loaders[node.node_id]
             node.train_loader, node.test_loader = train_loader, test_loader
             node.crop_class_weights = crop_weights.to(node.device) if crop_weights is not None else None
@@ -198,7 +204,7 @@ class ContinualMesh:
             log.per_node[node.node_id] = record
 
         # 4) teachers extract knowledge and upload it, replacing their old entry
-        for node in self.nodes:
+        for node in present:
             record = log.per_node[node.node_id]
             if TEACHER not in record.roles:
                 continue
@@ -209,7 +215,7 @@ class ContinualMesh:
 
         # 5) learners retrieve peers' latest knowledge, aggregate (self
         # excluded), and distil towards it
-        for node in self.nodes:
+        for node in present:
             record = log.per_node[node.node_id]
             if LEARNER not in record.roles:
                 continue
@@ -244,7 +250,7 @@ class ContinualMesh:
             record.distilled = True
 
         # 6) + 7) post-distill evaluation on the same test set, and the comparison
-        for node in self.nodes:
+        for node in present:
             record = log.per_node[node.node_id]
             if record.distilled:
                 with self._track(record, "evaluate"):

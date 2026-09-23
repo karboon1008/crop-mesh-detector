@@ -10,7 +10,7 @@ data:
   probe_set_large_class_threshold: 200
   probe_set_min_samples_small_class: 10
   probe_set_max_fraction_small_class: 0.2
-  test_fraction: 0.2              # private test share of EACH continual batch (per node), stratified per class
+  test_fraction: 0.2              # private test share of each node's arrivals in EACH batch, stratified per class
   non_iid_strategy: "dirichlet"   # "by_crop" | "by_disease" | "dirichlet" | "manual"
   dirichlet_alpha: 0.5
   # Only used when non_iid_strategy == "manual" — one crop species per node
@@ -25,19 +25,16 @@ data:
     node_5: ["Tomato"]
   seed: 42
 
-# Continual testing (src/train.py -> src/federated/continual.py). The 95% of
-# PlantVillage left after the probe carve is partitioned over the nodes, and
-# each node's shard is cut into num_batches disjoint batches that arrive one
-# after another (each with its own private train/test split).
+# Continual testing (src/train.py -> src/data/stream.py + src/federated/continual.py).
+# After the probe carve, every remaining image is assigned to the node that
+# "owns" it (non-IID). Batches then arrive one per trigger, each a STRATIFIED
+# sample (every class in proportion) of the images no earlier batch used:
+#   python -m src.train               -> batch 0: first_batch_size images
+#   python -m src.train --next-batch  -> next_batch_size more images, run on top of the saved models
+# Each node splits what it receives into private train/test (data.test_fraction).
 continual:
-  num_batches: 4                  # 3-5 recommended; batch 0 = everyone teaches + learns
-  # "stratified":  every batch is a random 1/num_batches slice of the node's
-  #                shard with the same class mix (more data of the same kind)
-  # "incremental": initial_class_fraction of the node's classes appear in
-  #                batch 0, the rest are introduced evenly over later batches,
-  #                and old classes keep appearing (new diseases emerge over time)
-  batch_strategy: "incremental"
-  initial_class_fraction: 0.5     # incremental only
+  first_batch_size: 20000         # images in batch 0, all nodes combined
+  next_batch_size: 1000           # images per --next-batch trigger, all nodes combined
   first_batch_local_epochs: 5     # batch 0 starts from ImageNet weights, so it gets more epochs; later batches use training.local_epochs_per_round(+overrides)
   ema_metric: "pair_accuracy"     # pre-distill metric the EMA tracks: pair_accuracy | crop_accuracy | disease_accuracy
   ema_alpha: 0.5                  # EMA_t = alpha * metric_t + (1 - alpha) * EMA_(t-1)
