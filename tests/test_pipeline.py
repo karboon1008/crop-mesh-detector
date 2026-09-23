@@ -55,6 +55,26 @@ def test_partition_manual_assigns_named_crops_to_named_nodes(synthetic_dataset):
     assert crops_per_shard[1] == {"Potato"}
 
 
+def test_partition_dirichlet_by_crop_keeps_each_crop_inside_its_node_group(synthetic_dataset):
+    _, remaining_idx = carve_public_probe_set(synthetic_dataset, 0.1, seed=0)
+    shards = partition_nodes(
+        synthetic_dataset,
+        remaining_idx,
+        num_nodes=4,
+        strategy="dirichlet_by_crop",
+        dirichlet_alpha=0.5,
+        seed=0,
+        manual_node_crops={
+            "node_0": ["Tomato"], "node_1": ["Tomato"], "node_2": ["Potato"], "node_3": ["Potato"],
+        },
+    )
+    assert sorted(i for shard in shards for i in shard) == sorted(remaining_idx)
+    class_to_crop = {c: cd[0] for c, cd in synthetic_dataset.labels.class_to_crop_disease.items()}
+    crop_of = lambda i: synthetic_dataset.labels.crop_classes[class_to_crop[synthetic_dataset.targets[i]]]
+    assert {crop_of(i) for i in shards[0] + shards[1]} == {"Tomato"}
+    assert {crop_of(i) for i in shards[2] + shards[3]} == {"Potato"}
+
+
 def test_partition_manual_rejects_incomplete_crop_assignment(synthetic_dataset):
     _, remaining_idx = carve_public_probe_set(synthetic_dataset, 0.1, seed=0)
     with pytest.raises(ValueError, match="missing an assignment"):

@@ -339,7 +339,7 @@ def main():
     probe_fraction = cfg.get("data.probe_set_fraction", 0.05)
     test_fraction = cfg.get("data.test_fraction", 0.15)
 
-    dataset = load_full_dataset(cfg.get("data.root"), cfg.get("data.image_size", 224))
+    dataset = load_full_dataset(cfg.get("data.root"), cfg.get("data.image_size", 224), cfg.get("data.included_crops", None))
     print(
         f"Loaded {len(dataset)} PlantVillage images, {len(dataset.labels.crop_classes)} crop classes, "
         f"{len(dataset.labels.disease_classes)} disease classes."

@@ -3,7 +3,8 @@
 # file rather than editing code.
 
 data:
-  root: "data/PlantVillage"       # PlantVillage is the only dataset (all class folders are used)
+  root: "data/PlantVillage"       # PlantVillage is the only dataset
+  included_crops: ["Corn", "Apple"]   # only these crops' class folders are loaded; remove (or null) for all crops
   image_size: 224
   num_nodes: 6                    # simulated farms
   probe_set_fraction: 0.05        # share of EACH batch carved (stratified) into that batch's public probe set (not cumulative)
@@ -12,18 +13,19 @@ data:
   probe_set_min_samples_small_class: 10
   probe_set_max_fraction_small_class: 0.2
   test_fraction: 0.15             # private test share of each node's arrivals in EACH batch (train gets 0.85), stratified per class
-  non_iid_strategy: "dirichlet"   # "by_crop" | "by_disease" | "dirichlet" | "manual"
+  non_iid_strategy: "dirichlet_by_crop"   # "by_crop" | "by_disease" | "dirichlet" | "manual" | "dirichlet_by_crop"
   dirichlet_alpha: 0.5
-  # Only used when non_iid_strategy == "manual" — one crop species per node
-  # (all of that crop's disease classes included), so each simulated farm
-  # specializes in a single crop.
+  # Used when non_iid_strategy is "manual" (each crop on exactly one node)
+  # or "dirichlet_by_crop" (nodes may share a crop: each crop's images go
+  # only to its nodes, split among them per class by a Dirichlet draw).
+  # Every crop in the loaded dataset must be assigned.
   manual_node_crops:
-    node_0: ["Apple"]
+    node_0: ["Corn"]
     node_1: ["Corn"]
-    node_2: ["Grape"]
-    node_3: ["Pepper,_bell"]
-    node_4: ["Potato"]
-    node_5: ["Tomato"]
+    node_2: ["Corn"]
+    node_3: ["Apple"]
+    node_4: ["Apple"]
+    node_5: ["Apple"]
   seed: 42
 
 # Continual testing (src/train.py -> src/data/stream.py + src/federated/continual.py).
@@ -121,7 +123,7 @@ scenarios:
     reconnect_round: 4
   class_addition:
     target_node: "node_0"
-    source_crop: "Tomato"       # at least one node OTHER than target_node must hold this crop, so the mesh has a teacher
+    source_crop: "Apple"        # at least one node OTHER than target_node must hold this crop, so the mesh has a teacher
     inject_round: 2
     # "auto" | "target_withheld" | "peer_reserve" -- how the "new" class is
     # produced (see src/scenarios/class_addition.py). "auto" withholds the

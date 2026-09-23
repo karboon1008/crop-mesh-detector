@@ -37,12 +37,17 @@ def stream_manifest(cfg, dataset) -> dict:
     """What has to be unchanged for a saved stream's indices to still point
     at the same images and partition.
     """
+    strategy = cfg.get("data.non_iid_strategy", "dirichlet")
     return {
         "num_images": len(dataset),
         "classes": list(dataset.base.classes),
         "seed": cfg.get("data.seed", 42),
         "num_nodes": cfg.get("data.num_nodes", 6),
-        "non_iid_strategy": cfg.get("data.non_iid_strategy", "dirichlet"),
+        "non_iid_strategy": strategy,
+        # only the crop-assigning strategies read manual_node_crops
+        "node_crops": (
+            cfg.get("data.manual_node_crops", None) if strategy in ("manual", "dirichlet_by_crop") else None
+        ),
         "dirichlet_alpha": cfg.get("data.dirichlet_alpha", 0.5),
         "probe_set_fraction": cfg.get("data.probe_set_fraction", 0.05),
     }

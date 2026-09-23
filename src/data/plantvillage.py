@@ -269,9 +269,12 @@ def filter_dataset_by_crop(
     return dataset
 
 
-def load_full_dataset(root: str | Path, image_size: int = 224) -> PlantVillageDataset:
-    """Loads every PlantVillage class folder under `root` — PlantVillage is
-    the project's only dataset.
+def load_full_dataset(
+    root: str | Path, image_size: int = 224, included_crops: list[str] | None = None
+) -> PlantVillageDataset:
+    """Loads the PlantVillage class folders under `root` — PlantVillage is
+    the project's only dataset. `included_crops` (config.yaml's
+    data.included_crops) restricts it to those crop species; None keeps all.
     """
     root = Path(root)
     if not root.exists():
@@ -280,7 +283,10 @@ def load_full_dataset(root: str | Path, image_size: int = 224) -> PlantVillageDa
             f"'python scripts/download_plantvillage.py' first, or point "
             f"config.yaml's data.root at your existing copy."
         )
-    return PlantVillageDataset(root, image_size=image_size)
+    dataset = PlantVillageDataset(root, image_size=image_size)
+    if included_crops:
+        filter_dataset_by_crop(dataset, included_crops=list(included_crops))
+    return dataset
 
 
 def _stratified_carve(
@@ -362,6 +368,12 @@ def partition_nodes(
                       grows Apple/Cherry/Peach/Blueberry/Raspberry) — same
                       disjoint-by-crop shape as "by_crop", but the farm/crop
                       assignment is explicit instead of round-robin.
+      - "dirichlet_by_crop": `manual_node_crops` names each node's crop(s),
+                      and several nodes may share a crop. Each crop's images
+                      go only to the nodes named for it, and within that
+                      group every class is split by a Dirichlet draw (e.g.
+                      node_0-2 = Corn, node_3-5 = Apple: disjoint crops
+                      across the two groups, label skew inside each).
     """
     rng = np.random.RandomState(seed)
     targets = np.array(dataset.targets)[remaining_indices]
@@ -375,6 +387,10 @@ def partition_nodes(
         return _dirichlet_partition(remaining_indices, targets, num_nodes, dirichlet_alpha, rng)
     elif strategy == "manual":
         return _manual_partition(dataset, remaining_indices, targets, num_nodes, manual_node_crops)
+    elif strategy == "dirichlet_by_crop":
+        return _dirichlet_by_crop_partition(
+            dataset, remaining_indices, targets, num_nodes, dirichlet_alpha, rng, manual_node_crops
+        )
     else:
         raise ValueError(f"Unknown non_iid_strategy: {strategy}")
 
@@ -441,6 +457,50 @@ def _manual_partition(
         crop_idx, _ = dataset.labels.class_to_crop_disease[int(targets[local_pos])]
         crop_name = dataset.labels.crop_classes[crop_idx]
         shards[crop_to_node[crop_name]].append(global_idx)
+    return shards
+
+
+def _dirichlet_by_crop_partition(
+    dataset: PlantVillageDataset,
+    indices: list[int],
+    targets: np.ndarray,
+    num_nodes: int,
+    alpha: float,
+    rng: np.random.RandomState,
+    manual_node_crops: dict[str, list[str]] | None,
+) -> list[list[int]]:
+    if not manual_node_crops:
+        raise ValueError("non_iid_strategy 'dirichlet_by_crop' requires data.manual_node_crops in config.yaml")
+
+    crop_to_nodes: dict[str, list[int]] = {}
+    for node_key, crops in manual_node_crops.items():
+        node_idx = int(str(node_key).rsplit("_", 1)[-1])
+        if not 0 <= node_idx < num_nodes:
+            raise ValueError(f"manual_node_crops names {node_key}, but data.num_nodes is {num_nodes}")
+        for crop in crops:
+            crop_to_nodes.setdefault(crop, []).append(node_idx)
+
+    all_crops = set(dataset.labels.crop_classes)
+    missing = all_crops - set(crop_to_nodes)
+    if missing:
+        raise ValueError(f"manual_node_crops is missing an assignment for: {sorted(missing)}")
+    unknown = set(crop_to_nodes) - all_crops
+    if unknown:
+        raise ValueError(f"manual_node_crops references unknown crop(s): {sorted(unknown)}")
+
+    shards: list[list[int]] = [[] for _ in range(num_nodes)]
+    for cls in sorted(set(targets.tolist())):
+        crop_idx, _ = dataset.labels.class_to_crop_disease[int(cls)]
+        group = sorted(crop_to_nodes[dataset.labels.crop_classes[crop_idx]])
+        cls_indices = [indices[i] for i in range(len(indices)) if targets[i] == cls]
+        rng.shuffle(cls_indices)
+        proportions = rng.dirichlet(alpha=[alpha] * len(group))
+        counts = (proportions * len(cls_indices)).astype(int)
+        counts[-1] = len(cls_indices) - counts[:-1].sum()  # fix rounding drift
+        start = 0
+        for node_id, count in zip(group, counts):
+            shards[node_id].extend(cls_indices[start : start + count])
+            start += count
     return shards
 
 
