@@ -159,7 +159,7 @@ distils with prototype alignment only (no probe-logit KD).
    small nodes).
 2. Pre-distill evaluation on the new batch's private test set.
 3. Update an EMA of the pre-distill metric (`continual.ema_metric`,
-   `ema_alpha`):
+   `ema_alpha`, default 0.3: EMA = 0.3 × this round + 0.7 × previous EMA):
    - **EMA rose vs. the previous batch → teacher**: extract knowledge and
      upload it, replacing the node's previous entry in the database.
    - **EMA < `ema_threshold` (default 0.8) → learner**: retrieve every other

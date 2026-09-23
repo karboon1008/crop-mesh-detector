@@ -214,7 +214,7 @@ def run_architecture(cfg, arch, dataset, stream, tracker, comm_estimator, device
         aggregation_method=cfg.get("federated.aggregation", "trimmed_mean"),
         trim_fraction=cfg.get("federated.trim_fraction", 0.2),
         krum_neighbors=cfg.get("federated.krum_neighbors", 2),
-        ema_alpha=cfg.get("continual.ema_alpha", 0.5),
+        ema_alpha=cfg.get("continual.ema_alpha", 0.3),
         ema_threshold=cfg.get("continual.ema_threshold", 0.8),
         ema_metric=metric,
         label_prefix=f"{arch}_",

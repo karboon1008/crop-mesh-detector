@@ -132,7 +132,7 @@ class ContinualMesh:
         aggregation_method: str = "trimmed_mean",
         trim_fraction: float = 0.2,
         krum_neighbors: int = 2,
-        ema_alpha: float = 0.5,
+        ema_alpha: float = 0.3,
         ema_threshold: float = 0.8,
         ema_metric: str = "pair_accuracy",
         label_prefix: str = "",

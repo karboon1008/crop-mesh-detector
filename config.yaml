@@ -39,7 +39,7 @@ continual:
   next_batch_size: 3000           # images per --next-batch trigger, all nodes combined
   first_batch_local_epochs: 5     # batch 0 starts from ImageNet weights, so it gets more epochs; later batches use training.local_epochs_per_round(+overrides)
   ema_metric: "pair_accuracy"     # pre-distill metric the EMA tracks: pair_accuracy | crop_accuracy | disease_accuracy
-  ema_alpha: 0.5                  # EMA_t = alpha * metric_t + (1 - alpha) * EMA_(t-1)
+  ema_alpha: 0.3                  # EMA_t = alpha * metric_t + (1 - alpha) * EMA_(t-1)
   ema_threshold: 0.8              # later batches: EMA < threshold -> learner (retrieve + distil); EMA rose vs. last batch -> teacher (upload)
 
 models:
