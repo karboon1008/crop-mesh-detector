@@ -4,7 +4,7 @@ one trigger, and data arrives batch by batch, like in the field:
     python -m src.train                 # first run: set up the stream, run batch 0
                                         # (continual.first_batch_size images, default 20,000)
     python -m src.train --next-batch    # a new batch arrives (continual.next_batch_size,
-                                        # default 1,000) and is run on top of the saved models
+                                        # default 3,000) and is run on top of the saved models
     python -m src.train --next-batch    # ...and again, until PlantVillage runs out
     python -m src.train --reset         # throw everything away and start again from batch 0
 
@@ -355,7 +355,7 @@ def main():
     else:
         stream = DataStream.load(cfg, dataset, stream_path)
         if args.next_batch:
-            batch = stream.next_batch(dataset, cfg.get("continual.next_batch_size", 1000), probe_fraction, test_fraction, seed)
+            batch = stream.next_batch(dataset, cfg.get("continual.next_batch_size", 3000), probe_fraction, test_fraction, seed)
         else:
             batch = None
             print(
@@ -432,7 +432,7 @@ def main():
     )
     print(
         f"\nDone. {len(stream.remaining())} images left — run `python -m src.train --next-batch` "
-        f"for the next batch of {cfg.get('continual.next_batch_size', 1000)}."
+        f"for the next batch of {cfg.get('continual.next_batch_size', 3000)}."
     )
 
 

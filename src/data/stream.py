@@ -10,7 +10,7 @@ Then each batch, only when it's triggered:
     any earlier batch (continual.first_batch_size for batch 0, then
     continual.next_batch_size per `python -m src.train --next-batch`)
   - carve a stratified data.probe_set_fraction (5%) of THIS batch into the
-    public probe set (e.g. 50 of a 1,000-image batch)
+    public probe set (e.g. 150 of a 3,000-image batch)
   - hand every other image of the batch to the node that owns it
   - each node splits what it received into its private train/test
 

@@ -89,8 +89,8 @@ per trigger, the way it would in the field:
 
 ```bash
 python -m src.train                 # start: set up the stream and run batch 0 (20,000 images)
-python -m src.train --next-batch    # a new batch of 1,000 images arrives and is run on the saved models
-python -m src.train --next-batch    # ...and another 1,000, until PlantVillage runs out
+python -m src.train --next-batch    # a new batch of 3,000 images arrives and is run on the saved models
+python -m src.train --next-batch    # ...and another 3,000, until PlantVillage runs out
 python -m src.train --reset         # throw everything away and start again from batch 0
 ```
 
@@ -115,9 +115,9 @@ Then every batch, only when it is triggered:
 3. **Draw the batch**: a **stratified** sample (every class in
    proportion) of the images no earlier batch used:
    `continual.first_batch_size` (20,000) for batch 0,
-   `continual.next_batch_size` (1,000) for each `--next-batch`.
+   `continual.next_batch_size` (3,000) for each `--next-batch`.
 4. **Probe slice**: a stratified 5% of this batch (`data.probe_set_fraction`,
-   e.g. 50 of 1,000) is added to the public probe set shared by all nodes.
+   e.g. 150 of 3,000) is added to the public probe set shared by all nodes.
    The probe set is **cumulative**: batch *b*'s probe set is every batch's
    slice from 0 to *b*, in order.
 5. **Deliver** the other 95% of the batch to the nodes that own the images.
