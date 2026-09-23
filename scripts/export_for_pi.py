@@ -15,11 +15,6 @@ using its own best-scoring node) into its own subfolder, so you end up with
 all trained models ready to deploy and can pick between them after comparing
 accuracy/latency on the actual Pi:
     python scripts/export_for_pi.py --all
-
-To export from a stage-1-only run (`python -m src.train_local`, before any
-mesh training) instead, point at its output dir with --stage1-dir — node
-selection then scores by local_eval rather than mesh_eval:
-    python scripts/export_for_pi.py --stage1-dir outputs/stage1_local
 """
 
 from __future__ import annotations
@@ -153,12 +148,6 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoints-dir", default="outputs/checkpoints")
     parser.add_argument("--results", default=None)
-    parser.add_argument(
-        "--stage1-dir", default=None,
-        help="Export from a `python -m src.train_local` (stage 1, local-only) run instead of a stage-2 mesh "
-        "run — e.g. --stage1-dir outputs/stage1_local. Overrides --checkpoints-dir/--results and scores nodes "
-        "by local_eval instead of mesh_eval.",
-    )
     parser.add_argument("--arch", default=None, help="Override: which architecture to export")
     parser.add_argument("--node", default=None, help="Override: which node's checkpoint to export, e.g. node_0")
     parser.add_argument(
@@ -169,17 +158,10 @@ def main():
     parser.add_argument("--output-dir", default="outputs/pi_export")
     args = parser.parse_args()
 
-    if args.stage1_dir:
-        stage1_dir = Path(args.stage1_dir)
-        checkpoints_dir = stage1_dir / "checkpoints"
-        classes_path = stage1_dir / "classes.json"
-        results_path = Path(args.results) if args.results else stage1_dir / "results_summary.json"
-        eval_key = "local_eval"
-    else:
-        checkpoints_dir = Path(args.checkpoints_dir)
-        classes_path = checkpoints_dir / "classes.json"
-        results_path = Path(args.results) if args.results else Path("outputs/results_summary.json")
-        eval_key = "mesh_eval"
+    checkpoints_dir = Path(args.checkpoints_dir)
+    classes_path = checkpoints_dir / "classes.json"
+    results_path = Path(args.results) if args.results else Path("outputs/results_summary.json")
+    eval_key = "mesh_eval"
     output_dir = Path(args.output_dir)
     data_root = Path(args.data_root)
 

@@ -1,12 +1,12 @@
 """Bayesian hyperparameter search over the mesh training config, using Optuna.
 
 Each trial samples a set of `training.*` values, writes them into a scratch
-copy of config.yaml, and runs `python -m src.train --arch <arch> --fresh` as
-a subprocess against a dedicated trial output directory. The trial's score
-comes from that run's own results: global mesh test accuracy (or local mesh
-accuracy, if a run has no global test split) to maximize, and total compute
-energy (outputs/run_state.json, from the existing CodeCarbon tracking) to
-minimize — a two-objective Optuna study whose result is a Pareto front
+copy of config.yaml, and runs `python -m src.train --arch <arch>` as a
+subprocess against a dedicated trial output directory. The trial's score
+comes from that run's own results: each node's final post-distill accuracy
+on its last continual batch's private test set, averaged over nodes, to
+maximize, and the run's total compute energy (from the existing CodeCarbon
+tracking) to minimize — a two-objective Optuna study whose result is a Pareto front
 rather than one "best" config.
 
 Note: the default search space below (lr, distill_lr, proto_weight,
@@ -14,7 +14,7 @@ kd_weight, kd_temperature) doesn't change epoch/round counts, so compute
 energy will vary only by measurement noise across trials — the energy
 objective only becomes meaningful once the search space also covers
 something that changes compute (e.g. local_epochs_per_round, rounds,
-batch_size, or architecture).
+batch_size, continual.num_batches, or architecture).
 
 Usage:
     python -m scripts.tune_hyperparams --n-trials 30 --arch efficientnet_lite0
@@ -51,9 +51,8 @@ SEARCH_SPACE = {
 
 # Artifacts safe to discard once a trial's two objective values are read out;
 # config.yaml and metrics.json are kept so every trial stays reproducible.
-_CLEANUP_DIRS = ("checkpoints", "plots")
-_CLEANUP_GLOBS = ("round_logs_*.json", "trend_*.csv", "trend_*_per_class.csv", "emissions.csv",
-                   "sustainability_report.*")
+_CLEANUP_DIRS = ("checkpoints", "continual")
+_CLEANUP_GLOBS = ("emissions.csv", "sustainability_report.*")
 
 
 def _set_nested(data: dict, dotted_key: str, value) -> None:
@@ -74,9 +73,8 @@ def _suggest(trial: optuna.Trial, name: str, spec: tuple) -> float:
 
 
 def _accuracy_score(arch_result: dict) -> float:
-    gain = arch_result["collaboration_gain"]
-    macro = gain.get("global_mesh_macro") or gain["mesh_macro"]
-    return (macro["crop_accuracy"] + macro["disease_accuracy"]) / 2
+    evals = arch_result["mesh_eval"].values()
+    return sum((e["crop_accuracy"] + e["disease_accuracy"]) / 2 for e in evals) / len(evals)
 
 
 def _cleanup_trial_dir(trial_dir: Path) -> None:
@@ -99,7 +97,7 @@ def run_trial(trial: optuna.Trial, arch: str, base_config: dict, trials_dir: Pat
     trial_config_path.write_text(yaml.safe_dump(trial_config, sort_keys=False))
 
     result = subprocess.run(
-        [sys.executable, "-m", "src.train", "--config", str(trial_config_path), "--arch", arch, "--fresh"],
+        [sys.executable, "-m", "src.train", "--config", str(trial_config_path), "--arch", arch],
         cwd=REPO_ROOT, capture_output=True, text=True,
     )
     if result.returncode != 0:
@@ -108,8 +106,7 @@ def run_trial(trial: optuna.Trial, arch: str, base_config: dict, trials_dir: Pat
         raise optuna.TrialPruned(f"training subprocess failed for trial {trial.number}")
 
     arch_result = json.loads((trial_dir / f"results_{arch}.json").read_text())
-    run_state = json.loads((trial_dir / "run_state.json").read_text())
-    return _accuracy_score(arch_result), run_state["total_compute_energy_kwh"]
+    return _accuracy_score(arch_result), arch_result["continual"]["total_compute_energy_kwh"]
 
 
 def main():

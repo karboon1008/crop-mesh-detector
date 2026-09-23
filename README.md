@@ -2,7 +2,7 @@
 
 A **computer-simulation-only** implementation of **HiveMind**'s decentralised
 knowledge-mesh design (the accompanying research document), adapted to
-**PlantVillage and PlantDoc** (merged 1:1 per class) for joint **crop-type**
+**PlantVillage** for joint **crop-type**
 and **crop-disease** detection across six simulated farm nodes. No hardware,
 radios, or real farms are involved — every "node" is a Python object holding
 its own private data shard, running in a single process on your machine.
@@ -50,67 +50,118 @@ rather than a federated-server setup).
 
 ```
 crop-mesh-detector/
-├── config.yaml                  # every tunable lives here
+├── config.yaml                  # every tunable lives here (see the `continual:` section)
 ├── requirements.txt
 ├── src/
 │   ├── config.py                 # tiny YAML config loader
 │   ├── data/
-│   │   └── plantvillage.py       # dataset loading, crop/disease label parsing,
-│   │                             # non-IID partition into nodes, public probe set
+│   │   ├── plantvillage.py       # dataset loading + preprocessing, crop/disease label
+│   │   │                         # parsing, probe carve, non-IID partition into nodes
+│   │   └── splits.py             # probe / node shard / continual batch / train-test splits
 │   ├── models/
 │   │   └── factory.py            # MobileNetV3-Small / EfficientNet-Lite0 / MobileViT-XXS
 │   │                             # with a shared backbone + two heads (crop, disease)
 │   ├── federated/
 │   │   ├── aggregation.py        # trimmed-mean / Krum robust aggregation
-│   │   ├── node.py                # one simulated farm: train, extract knowledge, distil, eval
-│   │   └── mesh.py                # orchestrates rounds across all nodes (no central server)
+│   │   ├── node.py               # one simulated farm: train, extract knowledge, distil, eval
+│   │   ├── knowledge_store.py    # the ONE shared knowledge database (SQLite)
+│   │   ├── continual.py          # per-batch continual mesh (EMA teacher/learner roles)
+│   │   └── mesh.py               # fixed-round all-to-all mesh (used by the scenarios)
 │   ├── energy/
 │   │   └── tracker.py            # CodeCarbon compute-energy tracking +
 │   │                             # communication-cost estimator + sustainability report
-│   ├── train.py                   # CLI entry point
-│   ├── evaluate.py                # collaboration-gain / worst-node metrics
-│   └── scenarios/                  # mesh simulation scenarios (disconnection,
-│                                   # class addition, distribution shift) sharing
-│                                   # a common round-driver harness
+│   ├── train.py                  # CLI entry point: the whole continual run
+│   ├── evaluate.py               # metric helpers
+│   └── scenarios/                # mesh simulation scenarios (disconnection,
+│                                 # class addition, distribution shift)
 ├── scripts/
 │   ├── download_plantvillage.py   # fetches PlantVillage into data/PlantVillage/
 │   └── check_energy_measurement.py # pre-flight check: is CodeCarbon really
 │                                   # reading hardware counters on this machine?
-├── tests/
-│   └── test_pipeline.py           # end-to-end smoke test on synthetic images
+├── tests/                          # synthetic-image test suite (no download needed)
 └── outputs/                        # results, emissions.csv, sustainability_report.*
-    └── scenarios/                  # per-scenario JSON reports (disconnection.json,
-                                    # class_addition.json, distribution_shift.json)
 ```
 
 ## How it works, end to end
 
-1. **Load PlantVillage** and parse each class folder name (e.g.
-   `Tomato___Bacterial_spot`) into two labels: crop type (`Tomato`) and
-   disease (`Bacterial_spot`).
-2. **Carve out a public probe set** (a small, shared, non-private slice of
-   the data) — used only for logit exchange, never for training.
-3. **Partition the rest into N non-IID node shards** (by crop, by disease,
-   or Dirichlet label-skew — configurable), simulating farms that each see
-   a different regional mix of crops/diseases.
-4. For each architecture, run two experiments so the mesh's benefit can be
-   measured, not assumed:
-   - **Baseline**: every node trains alone, no exchange at all (aligned
-     compute budget — same total epochs as the mesh run).
-   - **Mesh**: for several rounds, each node trains locally, computes its
-     knowledge payload (prototypes + probe logits), broadcasts it, robustly
-     aggregates what it *receives* from peers, and distils towards that
-     consensus.
-5. **Collaboration gain** = mesh accuracy − baseline accuracy, reported as
-   both a macro-average across nodes and a worst-node score (so the mesh
-   can't claim a win by only helping the already-strong nodes).
-6. **Sustainability accounting**: compute energy is measured with
-   CodeCarbon (hardware power counters where available, otherwise a
-   documented wall-clock proxy), communication energy is *estimated* from
-   the exact byte count exchanged using published per-byte radio energy
-   figures, and both are converted to CO2e using one stated, configurable
-   grid-carbon-intensity factor — so the "communication energy should not
-   erase compute savings" claim is checked numerically, not asserted.
+`python -m src.train` runs the whole thing in one go — there is no separate
+local-only stage and no warm-start from an earlier run.
+
+### Data preprocessing and splits
+
+1. **Load PlantVillage** (every class folder) and parse each folder name
+   (e.g. `Tomato___Bacterial_spot`) into two labels: crop type (`Tomato`) and
+   disease (`Bacterial_spot`). Train images get augmentation (random resized
+   crop, flips, rotation, colour jitter); test/probe images only get
+   resize + ImageNet normalisation.
+2. **Global probe set** — a stratified 5% (`data.probe_set_fraction`) of
+   every class. It is public, identical for every node, and **fixed for
+   every continual batch** (a node that stops uploading keeps its last
+   entry in the database, so everyone's probe logits must stay aligned).
+3. **Private pool** — the other 95% is partitioned over the 6 nodes
+   (non-IID, Dirichlet label skew by default).
+4. **Continual batches** — each node's shard is cut into
+   `continual.num_batches` (default 4; 3–5 recommended) disjoint batches
+   that arrive one after another, and each batch is split stratified into
+   private train / private test (`data.test_fraction`, default 20%).
+
+Suggested split (defaults), PlantVillage ≈ 54k images:
+
+| Split | Share | Notes |
+|---|---|---|
+| Global probe | 5% (~2.7k) | fixed across all batches, shared by all nodes |
+| Node shards | 95% (~9k per node on average, skewed) | Dirichlet α=0.5 over 6 nodes |
+| Per batch | 1/4 of a node's shard on average | 80% private train / 20% private test |
+
+Two ways to cut a shard into batches (`continual.batch_strategy`):
+
+- `"incremental"` (default) — half of a node's classes appear in batch 0,
+  the rest are introduced evenly over the later batches, and old classes
+  keep appearing (new diseases emerge on a farm while old ones persist).
+  This is where knowledge from peers who have already seen a class should
+  help most.
+- `"stratified"` — every batch has the same class mix, just new images
+  (more data of the same kind keeps arriving).
+
+### Batch 0 (every node teaches and learns)
+
+1. **Local training** — private train batch → backbone → feature → linear
+   heads → logits → cross-entropy → backward → weights updated.
+2. **Pre-distill evaluation** on the batch's private test set.
+3. **Knowledge extraction** — prototypes (mean feature per class over the
+   private train set) and probe logits (logits per probe image).
+4. **Upload** each node's prototypes + probe logits to the one shared
+   database, labelled with the node id.
+5. Every node is a teacher, so every node's knowledge is available to all others.
+6. **Aggregation** of peers' prototypes and probe logits with trimmed mean
+   or Krum (`federated.aggregation`), **excluding the node's own entry**.
+7. **Distillation** towards that consensus.
+8. **Post-distill evaluation** on the same private test set as step 2.
+9. **Record** whether post beats pre, bytes uploaded/downloaded, and
+   compute energy per phase.
+
+### Later batches (continuing from the models above)
+
+1. Local training on the new batch's private train set.
+2. Pre-distill evaluation on the new batch's private test set.
+3. Update an EMA of the pre-distill metric (`continual.ema_metric`,
+   `ema_alpha`):
+   - **EMA rose vs. the previous batch → teacher**: extract knowledge and
+     upload it, replacing the node's previous entry in the database.
+   - **EMA < `ema_threshold` (default 0.8) → learner**: retrieve every other
+     node's latest entry, aggregate (own knowledge excluded), distil.
+   - A node can be both (improving but still weak) or neither (dipped but
+     still above threshold — it just keeps its locally trained model).
+   All teachers upload before any learner retrieves.
+4. Post-distill evaluation on the same test set as step 2.
+5. Record post vs. pre, bytes exchanged, and energy consumed.
+
+**Sustainability accounting**: compute energy is measured with CodeCarbon
+(hardware power counters where available, otherwise a documented
+wall-clock proxy) for each phase of each node's batch; communication
+energy is *estimated* from the exact bytes uploaded to and downloaded from
+the knowledge database, using published per-byte radio energy figures; both
+are converted to CO2e using one configurable grid-carbon-intensity factor.
 
 ## Setup
 
@@ -166,8 +217,8 @@ python -m src.scenarios.distribution_shift [--config path] [--arch name]
 core training hyperparameters (`lr`, `distill_lr`, `proto_weight`,
 `kd_weight`, `kd_temperature`) for one architecture. Each trial is a full
 `python -m src.train` subprocess against its own scratch output directory
-under `outputs_tuning/trials/`, scored on two objectives — maximize global
-mesh test accuracy, minimize total compute energy (kWh) — so the result is a
+under `outputs_tuning/trials/`, scored on two objectives — maximize the
+nodes' final post-distill test accuracy, minimize total compute energy (kWh) — so the result is a
 Pareto front of trials rather than one "best" config:
 
 ```bash
@@ -208,9 +259,15 @@ Everything — which architectures to run, node count, non-IID strategy,
 epochs/rounds, aggregation rule, radio energy assumptions, grid carbon
 intensity — is controlled from `config.yaml`. Results land in `outputs/`:
 
-- `results_<architecture>.json` — per-architecture accuracy, model size,
-  collaboration gain, bytes exchanged
+- `continual/<architecture>/knowledge.db` — the shared knowledge database
+  (latest entry per node + upload/retrieval logs with byte sizes)
+- `continual/<architecture>/batch_summary.csv` — one row per (batch, node):
+  role, EMA, pre/post-distill accuracy, improved?, bytes up/down, energy
+- `continual/<architecture>/batch_logs.json` — the same, in full detail
+- `results_<architecture>.json` — per-architecture summary (distillations
+  that improved, mean distillation gain, bytes, energy, final per-node eval)
 - `results_summary.json` — all architectures combined
+- `checkpoints/<architecture>/<node>.pt` — each node's model after the last batch
 - `emissions.csv` — CodeCarbon's raw per-block measurement log
 - `sustainability_report.json` / `.md` — the combined compute +
   communication energy/CO2e picture and the "was it worth it" narrative

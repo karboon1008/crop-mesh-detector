@@ -151,6 +151,12 @@ class Node:
                 self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
                     self.optimizer, T_max=self.total_epochs
                 )
+        elif self.scheduler is None:
+            # keep Adam's moment estimates, but honour the caller's LR (e.g.
+            # distill_lr after a local_train at lr) instead of silently
+            # reusing whichever LR the optimizer was first created with
+            for group in self.optimizer.param_groups:
+                group["lr"] = lr
         return self.optimizer
 
     # local supervised training (data never leaves this method)
@@ -165,12 +171,10 @@ class Node:
         epochs pass with no improvement — so a node whose epoch count was
         scaled up for having a small local shard (see
         src.train.scale_epochs_by_node_size) doesn't just overfit through
-        all of them. The mesh's own per-round local_train calls (1-3
-        epochs) don't pass these, so this is opt-in and only used by
-        src.train.run_baseline's stage-1 local-only training. `weight_decay`
-        (Adam's L2 penalty) is a second, complementary guard against the
-        same small-node overfitting risk — also opt-in (default 0, i.e.
-        today's behaviour), also stage-1-only in practice.
+        all of them. The mesh's own per-round/per-batch local_train calls
+        don't pass these, so this is opt-in. `weight_decay` (Adam's L2
+        penalty) is a second, complementary guard against the same
+        small-node overfitting risk — also opt-in (default 0).
 
         Without `val_loader`/`patience` (the mesh's per-round calls), uses
         the Node's persistent optimizer/scheduler (see `_get_optimizer`)
@@ -332,6 +336,8 @@ class Node:
         for epoch in range(epochs):
             # (a) knowledge-distillation using the shared public probe dataset
             for batch_idx, (images, _, _) in enumerate(probe_loader):
+                if images.shape[0] < 2:
+                    continue  # BatchNorm can't train on a single-image batch
                 images = images.to(self.device)
                 start = batch_idx * probe_loader.batch_size
                 end = start + images.shape[0]

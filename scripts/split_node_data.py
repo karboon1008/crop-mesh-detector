@@ -41,12 +41,9 @@ def split(cfg: Config, output_root: Path) -> None:
     # from previous runs undermining the per-node data isolation)
     shutil.rmtree(output_root, ignore_errors=True)
 
-    # Deliberately the raw, unfiltered PlantVillageDataset here (not
-    # src.data.plantvillage.load_full_dataset, which restricts to classes
-    # with PlantDoc real-world coverage for the main crop/disease training
-    # pipeline) -- the Docker mesh demo splits across PlantVillage's full
-    # 14-crop label space unless docker_mesh.included_crops/excluded_diseases
-    # narrows it below.
+    # The Docker mesh demo splits across PlantVillage's full 14-crop label
+    # space unless docker_mesh.included_crops/excluded_diseases narrows it
+    # below.
     root = Path(cfg.get("data.root"))
     if not root.exists():
         raise FileNotFoundError(

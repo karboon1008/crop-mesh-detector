@@ -17,7 +17,8 @@ from torch.utils.data import DataLoader, Dataset
 from torchvision.transforms import functional as TF
 
 from src.config import Config
-from src.data.merged import load_merged_dataset
+from src.data.plantvillage import load_full_dataset
+from src.data.splits import build_dataloaders
 from src.federated.mesh import MeshSimulator
 from src.scenarios.harness import (
     ScenarioEvent,
@@ -28,7 +29,6 @@ from src.scenarios.harness import (
     run_scenario,
     write_scenario_report,
 )
-from src.train import build_dataloaders
 
 ALLOWED_CORRUPTIONS = {"brightness_blur_noise"}
 
@@ -104,10 +104,8 @@ def main():
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     output_dir = Path(cfg.get("output.dir", "outputs"))
-    dataset = load_merged_dataset(
-        cfg.get("data.root"), cfg.get("data.plantdoc_root"), cfg.get("data.image_size", 224), cfg.get("data.seed", 42)
-    )
-    probe_loader, _global_test_loader, node_loaders, _crop_class_weights, _disease_class_weights = build_dataloaders(cfg, dataset)
+    dataset = load_full_dataset(cfg.get("data.root"), cfg.get("data.image_size", 224))
+    probe_loader, node_loaders, _crop_class_weights, _disease_class_weights = build_dataloaders(cfg, dataset)
     arch = args.arch or cfg.get("models.architectures", ["mobilenet_v3_small"])[0]
     batch_size = cfg.get("training.batch_size", 32)
 

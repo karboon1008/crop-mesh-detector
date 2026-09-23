@@ -3,19 +3,14 @@
 # file rather than editing code.
 
 data:
-  root: "data/PlantVillage"
-  plantdoc_root: "data/PlantDoc"
-  # PlantVillage and PlantDoc are combined 1:1 per class into one project
-  # dataset (see src/data/merged.py) — every class is exactly 50% PlantVillage
-  # / 50% PlantDoc by construction, so there's no batch-mix ratio to tune here.
+  root: "data/PlantVillage"       # PlantVillage is the only dataset (all class folders are used)
   image_size: 224
-  num_nodes: 6                    # simulated farms — one per crop species (see manual_node_crops)
-  probe_set_fraction: 0.05
+  num_nodes: 6                    # simulated farms
+  probe_set_fraction: 0.05        # global probe set: public, shared by all nodes, fixed across every continual batch
   probe_set_large_class_threshold: 200
   probe_set_min_samples_small_class: 10
   probe_set_max_fraction_small_class: 0.2
-  global_test_fraction: 0.05      # clean set to evaluate the model knowledge transfer ability
-  test_fraction: 0.15             # per-node held-out test split (used for accuracy + collaboration gain)
+  test_fraction: 0.2              # private test share of EACH continual batch (per node), stratified per class
   non_iid_strategy: "dirichlet"   # "by_crop" | "by_disease" | "dirichlet" | "manual"
   dirichlet_alpha: 0.5
   # Only used when non_iid_strategy == "manual" — one crop species per node
@@ -29,6 +24,24 @@ data:
     node_4: ["Potato"]
     node_5: ["Tomato"]
   seed: 42
+
+# Continual testing (src/train.py -> src/federated/continual.py). The 95% of
+# PlantVillage left after the probe carve is partitioned over the nodes, and
+# each node's shard is cut into num_batches disjoint batches that arrive one
+# after another (each with its own private train/test split).
+continual:
+  num_batches: 4                  # 3-5 recommended; batch 0 = everyone teaches + learns
+  # "stratified":  every batch is a random 1/num_batches slice of the node's
+  #                shard with the same class mix (more data of the same kind)
+  # "incremental": initial_class_fraction of the node's classes appear in
+  #                batch 0, the rest are introduced evenly over later batches,
+  #                and old classes keep appearing (new diseases emerge over time)
+  batch_strategy: "incremental"
+  initial_class_fraction: 0.5     # incremental only
+  first_batch_local_epochs: 5     # batch 0 starts from ImageNet weights, so it gets more epochs; later batches use training.local_epochs_per_round(+overrides)
+  ema_metric: "pair_accuracy"     # pre-distill metric the EMA tracks: pair_accuracy | crop_accuracy | disease_accuracy
+  ema_alpha: 0.5                  # EMA_t = alpha * metric_t + (1 - alpha) * EMA_(t-1)
+  ema_threshold: 0.8              # later batches: EMA < threshold -> learner (retrieve + distil); EMA rose vs. last batch -> teacher (upload)
 
 models:
   # any subset of: mobilenet_v3_small, efficientnet_lite0, mobilevit_xxs
@@ -49,36 +62,26 @@ training:
     mobilenet_v3_small: 3
     mobilevit_xxs: 3
   # Freezes the backbone stem + first two feature stages (generic,
-  # ImageNet-transferable low-level features) during stage-2 mesh
-  # training only — an experiment to reduce the round-to-round swings
+  # ImageNet-transferable low-level features) during mesh training — an experiment to reduce the round-to-round swings
   # above by cutting how much of the backbone a node's short 2-3 epoch
   # local fine-tune can reshape each round. Only affects
   # mobilenet_v3_small/mobilevit_xxs (see FREEZE_LOW_LAYER_PREFIXES in
   # src/models/factory.py); efficientnet_lite0 has no entry there and is
   # always a no-op, matching the reasoning above.
   freeze_low_layers_in_mesh: false
-  # Experiment: folds local supervised training + prototype-alignment +
-  # both KD losses into ONE combined-loss phase per round (local_epochs
-  # passes over train_loader), instead of local_epochs of supervised-only
-  # training followed by a SEPARATE distill_epochs of supervised+proto+KD
-  # training on the same data -- the two-phase design silently trains the
-  # supervised objective twice per round. distill_epochs_per_round and
-  # distill_lr below are accepted but unused when this is true. See
-  # src/federated/node.py, Node.train_round.
+  # Scenarios only (src/scenarios/): folds local supervised training +
+  # prototype-alignment + both KD losses into ONE combined-loss phase per
+  # round. The continual pipeline (src/train.py) always runs local training
+  # and distillation as separate steps, so it ignores this.
   combined_training: true
-  distill_epochs_per_round: 2     # epochs spent distilling towards consensus knowledge
-  rounds: 8                       # number of mesh exchange rounds — raised from 5 to give distillation more exposure to peer knowledge before local retraining reasserts specialism
+  distill_epochs_per_round: 2     # epochs spent distilling towards consensus knowledge (each learner, each batch)
   crop_loss_weight: 1.0
   disease_loss_weight: 1.5        # upweights disease cross-entropy relative to crop
   loss_type: "cross_entropy"      # "cross_entropy" | "focal" — focal down-weights already-confident (majority-class) examples
   focal_gamma: 2.0                # focusing parameter for focal loss (only used when loss_type == "focal")
   crop_class_balanced: true      # inverse-frequency per-class weights within the crop loss (see compute_crop_class_weights)
   disease_class_balanced: true    # inverse-frequency per-class weights within the disease loss (see compute_disease_class_weights)
-  baseline_epochs: 10             # epochs for the local-only baseline (aligned compute budget), for a median-sized node
   max_epochs_per_node: 40         # cap on the size-scaled epoch count (see scale_epochs_by_node_size) for small nodes
-  early_stopping_patience: 5      # stage-1 local-only training only: stop if pair_accuracy hasn't improved for this many epochs
-  weight_decay: 0.0001            # stage-1 local-only training only: Adam L2 penalty, a second overfitting guard alongside early stopping
-  min_local_pair_accuracy: 0.6    # stage-1 sanity floor: src.train_local flags any node below this local pair_accuracy as "needs review"
   batch_size: 32
   lr: 0.001
   distill_lr: 0.0005
@@ -86,7 +89,7 @@ training:
   kd_weight: 0.7                  # weight of disease-logit distillation (KD) loss during distillation — raised from 0.4 so cross-node consensus can outweigh each round's local retraining
   crop_kd_weight: 0.7              # weight of crop-logit distillation loss, tuned separately from kd_weight — enabled now that non_iid_strategy=dirichlet gives peers overlapping (not exclusive) crop coverage, so a per-node known-crop-classes mask can safely aggregate cross-node crop-logit consensus the same way disease logits already do; omit/null to fall back to kd_weight
   kd_temperature: 1.5
-  adaptive_kd_weight: true        # if true, scale kd_weight per node each round by (peer pre-round avg accuracy / this node's pre-round avg accuracy), so nodes already ahead of their peers get pulled less toward consensus and nodes behind get pulled harder, instead of every node absorbing the same flat kd_weight
+  adaptive_kd_weight: true        # scenarios only: if true, scale kd_weight per node each round by (peer pre-round avg accuracy / this node's pre-round avg accuracy), so nodes already ahead of their peers get pulled less toward consensus and nodes behind get pulled harder, instead of every node absorbing the same flat kd_weight
   adaptive_kd_min_scale: 0.3       # floor on the per-node scale factor above (only used when adaptive_kd_weight is true)
   adaptive_kd_max_scale: 1.5       # ceiling on the per-node scale factor above (only used when adaptive_kd_weight is true)
 
@@ -171,16 +174,3 @@ corn_mesh:
   healthy_dedup_threshold: 5
   rounds: 2
   output_dir: "outputs/validation/corn_mesh"
-
-tomato_mesh:
-  crop: "Tomato"
-  plantdoc_root: "data/PlantDoc"
-  plantwild_v1_root: "data/PlantWild/plantwild/plantwild/images"
-  plantwild_v2_root: "data/PlantWild/plantwild_v2/plantwild_v2"
-  num_nodes: 3
-  dirichlet_alpha: 0.3
-  test_fraction: 0.20              # global split fraction, deliberately separate from data.test_fraction (per-node, 0.15)
-  dedup_threshold: 5               # perceptual-hash Hamming distance (same default as node_1/corn)
-  dedup_max_group_size: 25         # starting heuristic (also capped at 5% of a class's pooled count) -- re-tune against real data
-  rounds: 5
-  output_dir: "outputs/validation/tomato_mesh"

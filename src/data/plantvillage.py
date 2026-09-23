@@ -270,9 +270,8 @@ def filter_dataset_by_crop(
 
 
 def load_full_dataset(root: str | Path, image_size: int = 224) -> PlantVillageDataset:
-    """Loads PlantVillage restricted to classes that have PlantDoc
-    real-world coverage (see plantdoc.overlapping_plantvillage_classes) —
-    PlantVillage-only classes carry no domain-shift signal for this project.
+    """Loads every PlantVillage class folder under `root` — PlantVillage is
+    the project's only dataset.
     """
     root = Path(root)
     if not root.exists():
@@ -281,9 +280,7 @@ def load_full_dataset(root: str | Path, image_size: int = 224) -> PlantVillageDa
             f"'python scripts/download_plantvillage.py' first, or point "
             f"config.yaml's data.root at your existing copy."
         )
-    from src.data.plantdoc import overlapping_plantvillage_classes  # local import: avoids a plantdoc<->plantvillage cycle
-
-    return PlantVillageDataset(root, image_size=image_size, allowed_classes=overlapping_plantvillage_classes())
+    return PlantVillageDataset(root, image_size=image_size)
 
 
 def _stratified_carve(
@@ -335,21 +332,6 @@ def carve_public_probe_set(
     all_indices = list(range(len(dataset)))
     return _stratified_carve(
         dataset, all_indices, probe_fraction, seed,
-        large_class_threshold, min_samples_small_class, max_fraction_small_class,
-    )
-
-
-def carve_global_test_set(
-    dataset: PlantVillageDataset,
-    indices: list[int],
-    test_fraction: float,
-    seed: int,
-    large_class_threshold: int = 200,
-    min_samples_small_class: int = 8,
-    max_fraction_small_class: float = 0.2,
-) -> tuple[list[int], list[int]]:
-    return _stratified_carve(
-        dataset, indices, test_fraction, seed,
         large_class_threshold, min_samples_small_class, max_fraction_small_class,
     )
 
@@ -469,7 +451,7 @@ def train_test_split_indices(
     (crop+disease pair) so each class's train/test ratio stays close to
     `test_fraction` instead of drifting under one global shuffle — matters
     most for a node covering several disease classes of very different
-    sizes (see _stratified_carve for the equivalent probe/global-test carve).
+    sizes (see _stratified_carve for the equivalent probe carve).
     """
     rng = random.Random(seed)
     targets = np.asarray(dataset.targets)[indices]
@@ -507,7 +489,7 @@ class TransformedSubset(Dataset):
 def make_subset(dataset: PlantVillageDataset, indices: list[int], train: bool = False) -> Dataset:
     """train=True applies the dataset's augmentation transform (for a node's
     training split); train=False (default) applies the plain eval transform
-    (test/probe/global-test splits, so accuracy stays comparable/deterministic).
+    (test/probe splits, so accuracy stays comparable/deterministic).
     """
     transform = dataset.train_transform if train else dataset.transform
     return TransformedSubset(dataset, indices, transform)

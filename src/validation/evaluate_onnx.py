@@ -20,8 +20,7 @@ from src.data.plantvillage import PlantVillageDataset
 def _win_long_path(path: str) -> str:
     """Applies the `\\\\?\\` extended-length-path prefix on Windows so
     Image.open() can read files whose absolute path exceeds MAX_PATH
-    (260 chars) -- same fix as apple_mesh_dataset.py's helper of the same
-    name, needed here too since run_evaluation() opens test-set images
+    (260 chars) -- needed here since run_evaluation() opens test-set images
     directly by path rather than through a dataset's __getitem__. No-op on
     non-Windows platforms and already-prefixed/UNC paths.
     """

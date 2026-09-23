@@ -28,9 +28,8 @@ def pick_best_node_for_arch(results_summary_path: Path, arch: str, eval_key: str
     """Returns the (node_id, score) with the highest average of
     crop_accuracy/disease_accuracy within one specific architecture.
 
-    `eval_key` selects which per-node eval dict to score: "mesh_eval" for a
-    completed `python -m src.train` (stage 2) run, or "local_eval" for a
-    stage-1-only run (`python -m src.train_local`, see outputs/stage1_local/).
+    `eval_key` selects which per-node eval dict to score ("mesh_eval": each
+    node's final post-distill eval from `python -m src.train`).
     """
     results = json.loads(Path(results_summary_path).read_text())
     if arch not in results:
@@ -50,9 +49,8 @@ def pick_best_arch_node(results_summary_path: Path, eval_key: str = "mesh_eval")
     crop_accuracy/disease_accuracy across every architecture and node in a
     results_summary.json produced by `python -m src.train`.
 
-    `eval_key` selects which per-node eval dict to score: "mesh_eval" for a
-    completed `python -m src.train` (stage 2) run, or "local_eval" for a
-    stage-1-only run (`python -m src.train_local`, see outputs/stage1_local/).
+    `eval_key` selects which per-node eval dict to score ("mesh_eval": each
+    node's final post-distill eval from `python -m src.train`).
     """
     results = json.loads(Path(results_summary_path).read_text())
     best_score, best_arch, best_node = -1.0, None, None

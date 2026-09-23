@@ -38,8 +38,8 @@ import torch
 from torch.utils.data import ConcatDataset, DataLoader
 
 from src.config import Config
-from src.data.merged import load_merged_dataset
-from src.data.plantvillage import make_subset, train_test_split_indices
+from src.data.plantvillage import load_full_dataset, make_subset, train_test_split_indices
+from src.data.splits import build_dataloaders
 from src.federated.mesh import MeshSimulator
 from src.scenarios.harness import (
     ScenarioEvent,
@@ -50,7 +50,6 @@ from src.scenarios.harness import (
     run_scenario,
     write_scenario_report,
 )
-from src.train import build_dataloaders
 
 INJECTION_SOURCES = {"auto", "target_withheld", "peer_reserve"}
 
@@ -189,13 +188,11 @@ def main():
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     output_dir = Path(cfg.get("output.dir", "outputs"))
-    dataset = load_merged_dataset(
-        cfg.get("data.root"), cfg.get("data.plantdoc_root"), cfg.get("data.image_size", 224), cfg.get("data.seed", 42)
-    )
+    dataset = load_full_dataset(cfg.get("data.root"), cfg.get("data.image_size", 224))
     if source_crop not in dataset.labels.crop_classes:
         raise ValueError(f"source_crop '{source_crop}' is not a known crop: {dataset.labels.crop_classes}")
 
-    probe_loader, _global_test_loader, node_loaders, _crop_class_weights, _disease_class_weights = build_dataloaders(cfg, dataset)
+    probe_loader, node_loaders, _crop_class_weights, _disease_class_weights = build_dataloaders(cfg, dataset)
     arch = args.arch or cfg.get("models.architectures", ["mobilenet_v3_small"])[0]
     batch_size = cfg.get("training.batch_size", 32)
 
