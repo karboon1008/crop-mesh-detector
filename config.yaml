@@ -6,7 +6,7 @@ data:
   root: "data/PlantVillage"       # PlantVillage is the only dataset
   included_crops: ["Corn", "Apple"]   # only these crops' class folders are loaded; remove (or null) for all crops
   image_size: 224
-  num_nodes: 6                    # simulated farms
+  num_nodes: 4                    # simulated farms
   probe_set_fraction: 0.05        # share of EACH batch carved (stratified) into that batch's public probe set (not cumulative)
   # the three probe_set_* keys below only apply to the scenarios' static split (src/scenarios/)
   probe_set_large_class_threshold: 200
@@ -22,10 +22,8 @@ data:
   manual_node_crops:
     node_0: ["Corn"]
     node_1: ["Corn"]
-    node_2: ["Corn"]
+    node_2: ["Apple"]
     node_3: ["Apple"]
-    node_4: ["Apple"]
-    node_5: ["Apple"]
   seed: 42
 
 # Continual testing (src/train.py -> src/data/stream.py + src/federated/continual.py).
@@ -37,8 +35,8 @@ data:
 # Of each batch, data.probe_set_fraction (5%) goes to the shared probe set and
 # the rest to the owning nodes, which split it train/test (data.test_fraction).
 continual:
-  first_batch_size: 20000         # images in batch 0, all nodes combined
-  next_batch_size: 3000           # images per --next-batch trigger, all nodes combined
+  first_batch_size: 4000          # images in batch 0, all nodes combined
+  next_batch_size: 1000           # images per --next-batch trigger, all nodes combined
   first_batch_local_epochs: 5     # batch 0 starts from ImageNet weights, so it gets more epochs; later batches use training.local_epochs_per_round(+overrides)
   ema_metric: "pair_accuracy"     # pre-distill metric the EMA tracks: pair_accuracy | crop_accuracy | disease_accuracy
   ema_alpha: 0.3                  # EMA_t = alpha * metric_t + (1 - alpha) * EMA_(t-1)

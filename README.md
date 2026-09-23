@@ -88,9 +88,9 @@ There is no separate local-only stage. Data arrives in batches, one batch
 per trigger, the way it would in the field:
 
 ```bash
-python -m src.train                 # start: set up the stream and run batch 0 (20,000 images)
-python -m src.train --next-batch    # a new batch of 3,000 images arrives and is run on the saved models
-python -m src.train --next-batch    # ...and another 3,000, until PlantVillage runs out
+python -m src.train                 # start: set up the stream and run batch 0 (4,000 images)
+python -m src.train --next-batch    # a new batch of 1,000 images arrives and is run on the saved models
+python -m src.train --next-batch    # ...and another 1,000, until PlantVillage runs out
 python -m src.train --reset         # throw everything away and start again from batch 0
 ```
 
@@ -114,8 +114,8 @@ Then every batch, only when it is triggered:
 
 3. **Draw the batch**: a **stratified** sample (every class in
    proportion) of the images no earlier batch used:
-   `continual.first_batch_size` (20,000) for batch 0,
-   `continual.next_batch_size` (3,000) for each `--next-batch`.
+   `continual.first_batch_size` (4,000) for batch 0,
+   `continual.next_batch_size` (1,000) for each `--next-batch`.
 4. **Probe set**: a stratified 5% of this batch (`data.probe_set_fraction`,
    e.g. 150 of 3,000) becomes this batch's public probe set, shared by all
    nodes. It is **not cumulative**: each batch uses only its own probe images.
