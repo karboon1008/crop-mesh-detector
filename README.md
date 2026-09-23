@@ -106,22 +106,23 @@ Set up once, on the first run:
 1. **Load PlantVillage** (every class folder, ~54k images) and parse each
    folder name (e.g. `Tomato___Bacterial_spot`) into two labels: crop type
    (`Tomato`) and disease (`Bacterial_spot`).
-2. **Global probe set** — a stratified 5% (`data.probe_set_fraction`,
-   ~2.7k images) of every class. Public, identical for every node, and
-   **fixed for every batch** (a node that stops uploading keeps its last
-   entry in the database, so everyone's probe logits must stay aligned).
-3. **Ownership** — every other image is assigned to the node (farm) that
-   would photograph it, non-IID (Dirichlet label skew by default).
+2. **Ownership**: every image is assigned to the node (farm) that would
+   photograph it. The split is non-IID: each node gets a different class mix
+   (Dirichlet label skew by default).
 
 Then every batch, only when it is triggered:
 
-4. **Draw the batch** — a **stratified** sample (every class in
+3. **Draw the batch**: a **stratified** sample (every class in
    proportion) of the images no earlier batch used:
    `continual.first_batch_size` (20,000) for batch 0,
    `continual.next_batch_size` (1,000) for each `--next-batch`.
-5. **Deliver** each image to the node that owns it.
-6. **Each node splits its own arrivals** into private train/test
-   (`data.test_fraction`, 20%, stratified per class).
+4. **Probe slice**: a stratified 5% of this batch (`data.probe_set_fraction`,
+   e.g. 50 of 1,000) is added to the public probe set shared by all nodes.
+   The probe set is **cumulative**: batch *b*'s probe set is every batch's
+   slice from 0 to *b*, in order.
+5. **Deliver** the other 95% of the batch to the nodes that own the images.
+6. **Each node splits its own arrivals** into private train/test,
+   85% / 15% (`data.test_fraction`), stratified per class.
 7. **Preprocessing** happens as images are read: train images get
    augmentation (random resized crop, flips, rotation, colour jitter);
    test/probe images only get resize + ImageNet normalisation.
@@ -129,13 +130,20 @@ Then every batch, only when it is triggered:
 A node that receives fewer than 2 train images or no test image in a batch
 sits that batch out, keeping its model, EMA, and database entry.
 
+**Probe logits across batches**: a teacher uploads logits for the probe
+set as it stands when it uploads. An entry left over from an earlier batch
+therefore covers only the probe images up to that batch. Because the probe
+set only grows by appending, those images are the first part of today's
+probe set, in the same order. A learner distils on the probe images that
+*every* entry it retrieved covers: the probe set as of the oldest entry.
+
 ### Batch 0 (every node teaches and learns)
 
 1. **Local training** — private train batch → backbone → feature → linear
    heads → logits → cross-entropy → backward → weights updated.
 2. **Pre-distill evaluation** on the batch's private test set.
-3. **Knowledge extraction** — prototypes (mean feature per class over the
-   private train set) and probe logits (logits per probe image).
+3. **Knowledge extraction**: prototypes (mean feature per class over the
+   private train set) and probe logits (logits per image of the probe set so far).
 4. **Upload** each node's prototypes + probe logits to the one shared
    database, labelled with the node id.
 5. Every node is a teacher, so every node's knowledge is available to all others.

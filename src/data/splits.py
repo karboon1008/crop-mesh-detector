@@ -1,14 +1,10 @@
-"""Splitting helpers for the PlantVillage pool:
+"""Splitting helpers for PlantVillage.
 
-    PlantVillage (all classes)
-    ├── global probe set  (data.probe_set_fraction, default 5%, stratified)
-    │     public, identical for every node, FIXED for every continual batch
-    └── private pool      (the other 95%)
-          └── partition_nodes -> which node each image belongs to (non-IID)
-
-The continual stream (src/data/stream.py) then draws each batch as a
-stratified sample of the images not used yet, and each node splits its own
-arrivals into private train/test only when the batch arrives.
+The continual stream (src/data/stream.py) uses stratified_sample to draw
+each batch and its 5% probe slice, and split_node_arrival for each node's
+own train/test split of what it received. carve_probe_and_partition and
+build_dataloaders are the static (one global probe set, one split per
+node) version used by the mesh disruption scenarios (src/scenarios/).
 """
 
 from __future__ import annotations

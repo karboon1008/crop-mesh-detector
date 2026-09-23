@@ -87,18 +87,23 @@ def test_stream_draws_new_images_each_batch_and_survives_reload(pv_root, tmp_pat
     path = tmp_path / "stream.json"
     stream = DataStream.create(cfg, dataset, path)
     pool_size = len(stream.remaining())
-    first = stream.next_batch(dataset, 60, 0.25, seed=0)
+    first = stream.next_batch(dataset, 60, 0.05, 0.25, seed=0)
 
     reloaded = DataStream.load(cfg, dataset, path)  # a later trigger is a new process
-    second = reloaded.next_batch(dataset, 24, 0.25, seed=0)
+    second = reloaded.next_batch(dataset, 40, 0.05, 0.25, seed=0)
 
-    def images(batch):
+    def node_images(batch):
         return {i for s in batch["nodes"].values() for i in s["train_idx"] + s["test_idx"]}
 
-    assert first["size"] == len(images(first)) == 60 and second["size"] == len(images(second)) == 24
-    assert not images(first) & images(second)          # never the same image twice
-    assert not images(first) & set(stream.probe_idx)    # probe images never arrive
-    assert len(reloaded.remaining()) == pool_size - 84
+    for batch, size, probe_size in ((first, 60, 3), (second, 40, 2)):
+        assert batch["size"] == size
+        assert len(batch["probe_idx"]) == probe_size          # 5% of THIS batch
+        assert not set(batch["probe_idx"]) & node_images(batch)  # probe images never reach a node
+        assert len(node_images(batch)) == size - probe_size
+    assert not (node_images(first) | set(first["probe_idx"])) & (node_images(second) | set(second["probe_idx"]))
+    assert reloaded.probe_upto(0) == first["probe_idx"]
+    assert reloaded.probe_upto(1) == first["probe_idx"] + second["probe_idx"]  # cumulative, in batch order
+    assert len(reloaded.remaining()) == pool_size - 100
     for node_i, shard in enumerate(stream.node_shards):  # each image goes to its owner
         split = first["nodes"][f"node_{node_i}"]
         assert set(split["train_idx"] + split["test_idx"]) <= set(shard)
@@ -157,7 +162,8 @@ def test_cli_runs_batch_zero_then_one_batch_per_trigger(pv_root, tmp_path, monke
     import yaml
 
     cfg_path = tmp_path / "cfg.yaml"
-    cfg_path.write_text(yaml.safe_dump(_cfg(pv_root, tmp_path, ema_threshold=1.1).as_dict()))
+    cfg = _cfg(pv_root, tmp_path, ema_threshold=1.1, next_batch_size=40)
+    cfg_path.write_text(yaml.safe_dump(cfg.as_dict()))
     out = tmp_path / "out"
     run_dir = out / "continual" / "mobilenet_v3_small"
 
@@ -171,6 +177,7 @@ def test_cli_runs_batch_zero_then_one_batch_per_trigger(pv_root, tmp_path, monke
     assert first["roles"] == ["teacher", "learner"]
     assert sorted(first["peers_used"]) == ["node_1", "node_2"]  # own knowledge excluded
     assert first["bytes_uploaded"] > 0 and first["bytes_downloaded"] > 0
+    assert first["probe_images_used"] == 3  # 5% of the 60-image batch
     assert {"local_train", "evaluate", "knowledge_extraction", "distill"} <= set(first["energy_kwh"])
     weights_after_0 = torch.load(run_dir / "nodes" / "node_0.pt")["model"]
 
@@ -182,7 +189,14 @@ def test_cli_runs_batch_zero_then_one_batch_per_trigger(pv_root, tmp_path, monke
     logs = json.loads((run_dir / "batch_logs.json").read_text())
     assert [log["batch_idx"] for log in logs] == [0, 1, 2]
     stream = json.loads((out / "continual" / "stream.json").read_text())
-    assert [b["size"] for b in stream["batches"]] == [60, 24, 24]
+    assert [b["size"] for b in stream["batches"]] == [60, 40, 40]
+    # a learner distils on the probe prefix every retrieved entry covers:
+    # the probe as of the oldest entry it used (3, 3+2, or 3+2+2 images)
+    for log in logs[1:]:
+        for r in log["per_node"].values():
+            if r["distilled"]:
+                oldest = min(r["peers_used"].values())
+                assert r["probe_images_used"] == [3, 5, 7][oldest]
     assert json.loads((run_dir / "state.json").read_text())["completed_batches"] == 3
     later = [r for log in logs[1:] for r in log["per_node"].values()]
     assert later and all(r["prev_ema"] is not None for r in later)  # EMA carried across processes

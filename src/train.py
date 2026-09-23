@@ -12,8 +12,10 @@ Add --arch <name> to any of these to run only one architecture.
 
 A trigger:
   1. draws the new batch — a stratified sample of the images no earlier
-     batch used — hands each image to the node that owns it, and lets each
-     node split what it got into private train/test (src/data/stream.py)
+     batch used — carves a stratified 5% of it into the (cumulative) public
+     probe set, hands every other image to the node that owns it, and lets
+     each node split what it got into private train/test 85/15
+     (src/data/stream.py)
   2. for every architecture, reloads each node's model/optimizer, EMA, and
      the shared knowledge database, and runs the batch: local training,
      pre-distill eval, EMA roles, upload/retrieve + distil, post-distill
@@ -25,7 +27,7 @@ trigger) is brought up to date before the new batch, so every
 architecture always ends up having seen the same stream.
 
 Outputs (under output.dir, default outputs/):
-  continual/stream.json                 which images arrived in which batch, at which node
+  continual/stream.json                 which images arrived in which batch: probe slice + per-node train/test
   continual/<arch>/knowledge.db         the shared knowledge database
   continual/<arch>/nodes/<node>.pt      each node's model + optimizer (for the next trigger)
   continual/<arch>/state.json           batches completed + each node's EMA
@@ -128,6 +130,7 @@ def batch_summary_rows(batch_logs: list[dict], metric: str, comm_estimator: Comm
                 "uploaded": r["uploaded"],
                 "distilled": r["distilled"],
                 "peers_used": len(r["peers_used"]),
+                "probe_images_used": r["probe_images_used"],
                 f"pre_{metric}": round(pre[metric], 4),
                 f"post_{metric}": round(post[metric], 4),
                 f"gain_{metric}": round(post[metric] - pre[metric], 4),
@@ -187,7 +190,7 @@ def _read_json(path: Path, default):
     return json.loads(path.read_text()) if path.exists() else default
 
 
-def run_architecture(cfg, arch, dataset, stream, probe_loader, tracker, comm_estimator, device, output_dir: Path) -> dict:
+def run_architecture(cfg, arch, dataset, stream, tracker, comm_estimator, device, output_dir: Path) -> dict:
     """Runs every stream batch this architecture hasn't run yet, saving its
     state after each one, then rewrites its reports.
     """
@@ -205,7 +208,7 @@ def run_architecture(cfg, arch, dataset, stream, probe_loader, tracker, comm_est
         for node in nodes:
             node.load_state(torch.load(node_dir / f"{node.node_id}.pt", map_location=device), lr)
     mesh = ContinualMesh(
-        nodes, probe_loader,
+        nodes,
         KnowledgeStore(run_dir / "knowledge.db", reset=state["completed_batches"] == 0), tracker,
         aggregation_method=cfg.get("federated.aggregation", "trimmed_mean"),
         trim_fraction=cfg.get("federated.trim_fraction", 0.2),
@@ -241,9 +244,12 @@ def run_architecture(cfg, arch, dataset, stream, probe_loader, tracker, comm_est
             # handful of new images up to dozens of epochs would just overfit them
             epochs = [base_local_epochs] * len(present)
 
-        print(f"  batch {b}: {stream.batches[b]['size']} images")
+        probe_idx = stream.probe_upto(b)
+        print(f"  batch {b}: {stream.batches[b]['size']} images, probe set now {len(probe_idx)} images")
         log = mesh.run_batch(
             b, batch_loaders,
+            probe_size=len(probe_idx),
+            probe_loader_for=lambda n: build_probe_loader(cfg, dataset, probe_idx[:n]),
             local_epochs={node.node_id: e for node, e in zip(present, epochs)},
             lr=lr,
             distill_epochs=cfg.get("training.distill_epochs_per_round", 1),
@@ -330,7 +336,8 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
     stream_path = output_dir / "continual" / "stream.json"
     seed = cfg.get("data.seed", 42)
-    test_fraction = cfg.get("data.test_fraction", 0.2)
+    probe_fraction = cfg.get("data.probe_set_fraction", 0.05)
+    test_fraction = cfg.get("data.test_fraction", 0.15)
 
     dataset = load_full_dataset(cfg.get("data.root"), cfg.get("data.image_size", 224))
     print(
@@ -344,11 +351,11 @@ def main():
         if args.next_batch:
             raise SystemExit("No stream yet — run `python -m src.train` first to start it with batch 0.")
         stream = DataStream.create(cfg, dataset, stream_path)
-        batch = stream.next_batch(dataset, cfg.get("continual.first_batch_size", 20000), test_fraction, seed)
+        batch = stream.next_batch(dataset, cfg.get("continual.first_batch_size", 20000), probe_fraction, test_fraction, seed)
     else:
         stream = DataStream.load(cfg, dataset, stream_path)
         if args.next_batch:
-            batch = stream.next_batch(dataset, cfg.get("continual.next_batch_size", 1000), test_fraction, seed)
+            batch = stream.next_batch(dataset, cfg.get("continual.next_batch_size", 1000), probe_fraction, test_fraction, seed)
         else:
             batch = None
             print(
@@ -356,10 +363,11 @@ def main():
                 f"(pass --next-batch for one). Bringing any architecture that is behind up to date."
             )
 
-    print(f"Global probe set: {len(stream.probe_idx)} images (fixed for every batch)")
     if batch is not None:
         print(f"New batch {batch['batch_idx']}: {batch['size']} images (stratified), "
               f"{len(stream.remaining())} images left for future batches")
+        print(f"  probe: {len(batch['probe_idx'])} images carved from this batch "
+              f"(cumulative probe set now {len(stream.probe_upto(batch['batch_idx']))})")
         for node_id, split in batch["nodes"].items():
             print(f"  {node_id}: {len(split['train_idx'])} train / {len(split['test_idx'])} test")
 
@@ -374,7 +382,6 @@ def main():
         indent=2,
     ))
 
-    probe_loader = build_probe_loader(cfg, dataset, stream.probe_idx)
     tracker = ComputeEnergyTracker(
         enabled=cfg.get("energy.track_with_codecarbon", True),
         output_dir=output_dir,
@@ -391,7 +398,7 @@ def main():
     architectures = [args.arch] if args.arch else cfg.get("models.architectures", [])
     for arch in architectures:
         print(f"\n=== Architecture: {arch} ===")
-        result = run_architecture(cfg, arch, dataset, stream, probe_loader, tracker, comm_estimator, device, output_dir)
+        result = run_architecture(cfg, arch, dataset, stream, tracker, comm_estimator, device, output_dir)
         all_results[arch] = result
         (output_dir / f"results_{arch}.json").write_text(json.dumps(result, indent=2))
         s = result["continual"]

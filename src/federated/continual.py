@@ -16,13 +16,14 @@ Per batch, every node:
                           (a node can be both, or neither — then it just
                           keeps its locally trained model)
   4. teachers             extract prototypes (private train set: mean
-                          feature per class) + probe logits (global probe
-                          set: logits per image) and upload them, replacing
-                          their previous entry in the database
+                          feature per class) + probe logits (the probe set
+                          as it stands this batch: logits per image) and
+                          upload them, replacing their previous entry
   5. learners             retrieve every OTHER node's latest entry,
                           aggregate prototypes and probe logits with
                           trimmed mean / Krum (own knowledge excluded), and
-                          distil towards that consensus
+                          distil towards that consensus — on the probe
+                          images every retrieved entry covers
   6. post-distill eval    same private test set as step 2
   7. record               post vs. pre (did distillation help?), bytes
                           uploaded/downloaded, compute energy per phase
@@ -35,7 +36,8 @@ didn't upload this time. Models carry over from batch to batch.
 from __future__ import annotations
 
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from typing import Callable
 
 from torch.utils.data import DataLoader
 
@@ -43,7 +45,7 @@ from src.energy.tracker import ComputeEnergyTracker
 from src.evaluate import scalar_metrics
 from src.federated.aggregation import aggregate_masked_logits, aggregate_prototypes
 from src.federated.knowledge_store import KnowledgeStore
-from src.federated.node import Node
+from src.federated.node import KnowledgePayload, Node
 
 TEACHER = "teacher"
 LEARNER = "learner"
@@ -54,6 +56,10 @@ def update_ema(prev_ema: float | None, value: float, alpha: float) -> float:
     if prev_ema is None:
         return value
     return alpha * value + (1 - alpha) * prev_ema
+
+
+def _truncate_probe(payload: KnowledgePayload, n: int) -> KnowledgePayload:
+    return replace(payload, crop_logits=payload.crop_logits[:n], disease_logits=payload.disease_logits[:n])
 
 
 def decide_roles(batch_idx: int, ema: float, prev_ema: float | None, threshold: float) -> list[str]:
@@ -82,6 +88,7 @@ class NodeBatchRecord:
     uploaded: bool = False
     distilled: bool = False
     peers_used: dict[str, int] = field(default_factory=dict)  # peer -> batch its entry was uploaded in
+    probe_images_used: int = 0  # probe images the distillation ran on (shared by every peer's entry)
     distill_loss: dict[str, float] = field(default_factory=dict)
     post_distill_eval: dict = field(default_factory=dict)
     distill_gain: dict[str, float] = field(default_factory=dict)  # post - pre, per scalar metric
@@ -121,7 +128,6 @@ class ContinualMesh:
     def __init__(
         self,
         nodes: list[Node],
-        probe_loader: DataLoader,
         store: KnowledgeStore,
         tracker: ComputeEnergyTracker,
         aggregation_method: str = "trimmed_mean",
@@ -133,7 +139,6 @@ class ContinualMesh:
         label_prefix: str = "",
     ):
         self.nodes = nodes
-        self.probe_loader = probe_loader
         self.store = store
         self.tracker = tracker
         self.aggregation_method = aggregation_method
@@ -161,6 +166,8 @@ class ContinualMesh:
         self,
         batch_idx: int,
         batch_loaders: dict[str, tuple],
+        probe_size: int,
+        probe_loader_for: Callable[[int], DataLoader],
         local_epochs: dict[str, int],
         lr: float,
         distill_epochs: int,
@@ -173,6 +180,9 @@ class ContinualMesh:
         """`batch_loaders`: node_id -> (train_loader, test_loader,
         crop_class_weights, disease_class_weights) for this batch. Nodes
         missing from it received no usable data this batch and sit it out.
+
+        `probe_size`: images in the cumulative probe set as of this batch;
+        `probe_loader_for(n)`: an unshuffled loader over its first n images.
         """
         crop_kd_weight = kd_weight if crop_kd_weight is None else crop_kd_weight
         log = BatchLog(batch_idx=batch_idx)
@@ -203,13 +213,15 @@ class ContinualMesh:
             record.roles = decide_roles(batch_idx, record.ema, record.prev_ema, self.ema_threshold)
             log.per_node[node.node_id] = record
 
-        # 4) teachers extract knowledge and upload it, replacing their old entry
+        # 4) teachers extract knowledge (probe logits over the whole probe set
+        # as it stands now) and upload it, replacing their old entry
+        full_probe_loader = probe_loader_for(probe_size)
         for node in present:
             record = log.per_node[node.node_id]
             if TEACHER not in record.roles:
                 continue
             with self._track(record, "knowledge_extraction"):
-                payload = node.compute_knowledge(self.probe_loader)
+                payload = node.compute_knowledge(full_probe_loader)
             record.bytes_uploaded = self.store.upload(node.node_id, batch_idx, payload)
             record.uploaded = True
 
@@ -225,6 +237,11 @@ class ContinualMesh:
             record.peers_used = {peer: peer_batch for peer, (peer_batch, _) in peers.items()}
             record.bytes_downloaded = sum(payload.size_bytes() for _, payload in peers.values())
             peer_payloads = [payload for _, payload in peers.values()]
+            # an entry uploaded in an earlier batch only covers the probe as it
+            # was then (a prefix of today's) — distil on what every peer covers
+            record.probe_images_used = min(p.crop_logits.shape[0] for p in peer_payloads)
+            peer_payloads = [_truncate_probe(p, record.probe_images_used) for p in peer_payloads]
+            probe_loader = probe_loader_for(record.probe_images_used)
 
             with self._track(record, "distill"):
                 consensus_prototypes = aggregate_prototypes(
@@ -243,7 +260,7 @@ class ContinualMesh:
                 )
                 record.distill_loss = node.distill(
                     consensus_prototypes, consensus_crop_logits, crop_known_mask,
-                    consensus_disease_logits, disease_known_mask, self.probe_loader,
+                    consensus_disease_logits, disease_known_mask, probe_loader,
                     epochs=distill_epochs, lr=distill_lr, proto_weight=proto_weight,
                     kd_weight=kd_weight, crop_kd_weight=crop_kd_weight, temperature=temperature,
                 )
