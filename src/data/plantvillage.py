@@ -269,12 +269,10 @@ def filter_dataset_by_crop(
     return dataset
 
 
-def load_full_dataset(
-    root: str | Path, image_size: int = 224, included_crops: list[str] | None = None
-) -> PlantVillageDataset:
-    """Loads the PlantVillage class folders under `root` — PlantVillage is
-    the project's only dataset. `included_crops` (config.yaml's
-    data.included_crops) restricts it to those crop species; None keeps all.
+def load_full_dataset(root: str | Path, image_size: int = 224) -> PlantVillageDataset:
+    """Loads every PlantVillage class folder under `root`. The project
+    dataset (PlantVillage + PlantDoc + PlantWild, crop selection) is built
+    on top of this by src/data/multi_source.load_dataset.
     """
     root = Path(root)
     if not root.exists():
@@ -283,10 +281,7 @@ def load_full_dataset(
             f"'python scripts/download_plantvillage.py' first, or point "
             f"config.yaml's data.root at your existing copy."
         )
-    dataset = PlantVillageDataset(root, image_size=image_size)
-    if included_crops:
-        filter_dataset_by_crop(dataset, included_crops=list(included_crops))
-    return dataset
+    return PlantVillageDataset(root, image_size=image_size)
 
 
 def _stratified_carve(

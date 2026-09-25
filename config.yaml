@@ -3,8 +3,22 @@
 # file rather than editing code.
 
 data:
-  root: "data/PlantVillage"       # PlantVillage is the only dataset
-  included_crops: ["Corn", "Apple"]   # only these crops' class folders are loaded; remove (or null) for all crops
+  root: "data/PlantVillage"
+  # Merged into PlantVillage (src/data/multi_source.py): every folder of
+  # images under these roots whose name maps to a PlantVillage class is
+  # added to that class; the rest (crops PlantVillage doesn't have) are dropped.
+  extra_sources:
+    plantdoc: ["data/PlantDoc"]       # python scripts/download_plantdoc.py (or the raw train/, test/ layout)
+    plantwild: ["data/PlantWild"]     # python scripts/download_plantwild.py (v1 and/or v2 class folders anywhere below)
+  # "auto": keep the auto_crop_count crops with the most merged images
+  # (among crops with >= auto_crop_min_diseases disease classes, healthy
+  # included), and give them to auto_crop_node_groups in order (largest
+  # crop -> first group). This overwrites manual_node_crops below. Or a
+  # list of crop names, e.g. ["Corn", "Apple"]; null keeps every crop.
+  included_crops: "auto"
+  auto_crop_count: 2
+  auto_crop_min_diseases: 2
+  auto_crop_node_groups: [["node_0", "node_1"], ["node_2", "node_3"]]
   image_size: 224
   num_nodes: 4                    # simulated farms
   probe_set_fraction: 0.05        # share of EACH batch carved (stratified) into that batch's public probe set (not cumulative)
@@ -18,7 +32,8 @@ data:
   # Used when non_iid_strategy is "manual" (each crop on exactly one node)
   # or "dirichlet_by_crop" (nodes may share a crop: each crop's images go
   # only to its nodes, split among them per class by a Dirichlet draw).
-  # Every crop in the loaded dataset must be assigned.
+  # Every crop in the loaded dataset must be assigned. Replaced at load
+  # time when included_crops is "auto".
   manual_node_crops:
     node_0: ["Corn"]
     node_1: ["Corn"]

@@ -40,6 +40,15 @@ class Config:
             node = node[part]
         return node
 
+    def set(self, dotted_key: str, value: Any) -> None:
+        """In-memory override (e.g. values derived from the data at load
+        time); config.yaml on disk is not touched."""
+        *parents, last = dotted_key.split(".")
+        node = self._data
+        for part in parents:
+            node = node.setdefault(part, {})
+        node[last] = value
+
     def as_dict(self) -> dict:
         return copy.deepcopy(self._data)
 

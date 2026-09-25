@@ -41,6 +41,7 @@ def stream_manifest(cfg, dataset) -> dict:
     return {
         "num_images": len(dataset),
         "classes": list(dataset.base.classes),
+        "extra_sources": cfg.get("data.extra_sources", None),
         "seed": cfg.get("data.seed", 42),
         "num_nodes": cfg.get("data.num_nodes", 6),
         "non_iid_strategy": strategy,
