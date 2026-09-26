@@ -18,8 +18,8 @@ Then each batch, only when it's triggered:
 
 The probe set is NOT cumulative: each batch uses only its own probe slice.
 Probe logits therefore only line up with the batch they were computed on,
-so a learner only takes logits from entries uploaded in the same batch
-(see src/federated/continual.py).
+so every node refreshes its logits each batch and a learner only takes
+logits computed in the same batch (see src/federated/continual.py).
 
 Everything is saved to stream.json after every change, so the next trigger
 (a separate process, possibly days later) continues from exactly where the

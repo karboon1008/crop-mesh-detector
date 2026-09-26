@@ -152,11 +152,40 @@ def test_knowledge_store_replaces_entries_and_excludes_self(tmp_path):
     assert stale.crop_logits.shape[0] == 0 and stale.prototypes  # prototypes still come through
     assert stale.size_bytes() < _payload(1.0).size_bytes()
 
+    # a logits-only refresh replaces node_1's logits but keeps its batch-0 prototypes
+    refresh = _payload(5.0)
+    refresh.prototypes = {}
+    size = store.upload("node_1", 1, refresh, logits_only=True)
+    assert size == refresh.size_bytes() < _payload(5.0).size_bytes()  # only logits + counts sent
+    entry = {e["node_id"]: e for e in store.entries()}["node_1"]
+    assert (entry["batch_idx"], entry["logits_batch_idx"]) == (0, 1)
+    peer_batch, fresh = store.fetch_peers("node_0", batch_idx=1, logits_batch=1)["node_1"]
+    assert peer_batch == 0 and torch.equal(fresh.crop_logits, torch.full((5, 2), 5.0))
+    assert torch.equal(fresh.prototypes[("crop", 0)], torch.full((4,), 1.0))
+
     with sqlite3.connect(tmp_path / "k.db") as conn:
-        assert conn.execute("SELECT COUNT(*) FROM uploads").fetchone()[0] == 3
+        assert [k for (k,) in conn.execute("SELECT kind FROM uploads ORDER BY id")] == ["full"] * 3 + ["logits"]
         assert conn.execute("SELECT from_node, to_node FROM retrievals").fetchall() == [
-            ("node_0", "node_1"), ("node_1", "node_0"),
+            ("node_0", "node_1"), ("node_1", "node_0"), ("node_1", "node_0"),
         ]
+
+
+def test_knowledge_store_migrates_a_database_from_before_logits_only_uploads(tmp_path):
+    path = tmp_path / "old.db"
+    with sqlite3.connect(path) as conn:  # the schema a resumed older run has on disk
+        conn.executescript(
+            "CREATE TABLE knowledge (node_id TEXT PRIMARY KEY, batch_idx INTEGER NOT NULL, "
+            "size_bytes INTEGER NOT NULL, payload BLOB NOT NULL, uploaded_at TEXT NOT NULL);"
+            "CREATE TABLE uploads (id INTEGER PRIMARY KEY AUTOINCREMENT, node_id TEXT NOT NULL, "
+            "batch_idx INTEGER NOT NULL, size_bytes INTEGER NOT NULL, uploaded_at TEXT NOT NULL);"
+        )
+        from src.federated.knowledge_store import encode_payload
+        conn.execute("INSERT INTO knowledge VALUES ('node_0', 2, 10, ?, 'now')", (encode_payload(_payload(1.0)),))
+
+    store = KnowledgeStore(path, reset=False)
+    assert store.entries()[0]["logits_batch_idx"] == 2  # old entries count as full uploads
+    store.upload("node_0", 3, _payload(2.0), logits_only=True)
+    assert store.entries()[0]["logits_batch_idx"] == 3
 
 
 def _run_cli(monkeypatch, cfg_path, *flags):
@@ -198,14 +227,19 @@ def test_cli_runs_batch_zero_then_one_batch_per_trigger(pv_root, tmp_path, monke
     assert [log["batch_idx"] for log in logs] == [0, 1, 2]
     stream = json.loads((out / "continual" / "stream.json").read_text())
     assert [b["size"] for b in stream["batches"]] == [60, 40, 40]
-    # probe logits only come from entries uploaded THIS batch (each batch has
-    # its own 2-image probe); older entries contribute prototypes only
+    # every node that took part refreshes its probe logits each batch (each
+    # batch has its own 2-image probe), so a learner gets logits from all of
+    # them; prototypes are only replaced by teachers
     for log in logs[1:]:
+        present = set(log["per_node"])
         for r in log["per_node"].values():
+            assert r["logits_uploaded"]
             if r["distilled"]:
-                fresh = sorted(p for p, b in r["peers_used"].items() if b == log["batch_idx"])
-                assert r["logit_peers"] == fresh
-                assert r["probe_images_used"] == (2 if fresh else 0)
+                assert set(r["logit_peers"]) == present - {r["node_id"]}
+                assert r["probe_images_used"] == (2 if r["logit_peers"] else 0)
+                teachers = {n for n, p in log["per_node"].items() if p["uploaded"]}
+                for peer, proto_batch in r["peers_used"].items():
+                    assert (proto_batch == log["batch_idx"]) == (peer in teachers)
     assert json.loads((run_dir / "state.json").read_text())["completed_batches"] == 3
     later = [r for log in logs[1:] for r in log["per_node"].values()]
     assert later and all(r["prev_ema"] is not None for r in later)  # EMA carried across processes

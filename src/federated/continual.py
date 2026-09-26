@@ -17,24 +17,24 @@ Per batch, every node:
                             learner  if EMA < ema_threshold (default 0.8)
                           (a node can be both, or neither — then it just
                           keeps its locally trained model)
-  4. teachers             extract prototypes (this batch's private train
-                          set: mean feature per class) + probe logits (this
-                          batch's probe set: logits per image) and upload
-                          them, replacing their previous entry
+  4. every node           refreshes its probe logits (this batch's probe
+                          set: logits per image) in the database
+     teachers             also extract prototypes (this batch's private
+                          train set: mean feature per class), replacing
+                          their previous ones; others keep their old ones
   5. learners             retrieve every OTHER node's latest entry,
                           aggregate prototypes and probe logits with
                           trimmed mean / Krum (own knowledge excluded), and
-                          distil towards that consensus. Probe logits only
-                          count from entries uploaded THIS batch (older
-                          entries' logits are for an older batch's probe
-                          images); prototypes count from every entry
+                          distil towards that consensus. Probe logits count
+                          from every peer that refreshed them THIS batch;
+                          prototypes from every peer's latest ones
   6. post-distill eval    same private test set as step 2
   7. record               post vs. pre (did distillation help?), bytes
                           uploaded/downloaded, compute energy per phase
 
-All teachers upload before any learner retrieves, so a learner always sees
-this batch's freshest knowledge plus the latest entry of every node that
-didn't upload this time. Models carry over from batch to batch.
+All uploads happen before any learner retrieves, so a learner always sees
+every node's probe logits for this batch, plus each node's latest
+prototypes (fresh from teachers, older from everyone else). Models carry over from batch to batch.
 """
 
 from __future__ import annotations
@@ -85,9 +85,10 @@ class NodeBatchRecord:
     ema: float
     prev_ema: float | None
     roles: list[str]
-    uploaded: bool = False
+    uploaded: bool = False  # full upload: prototypes + probe logits (teachers)
+    logits_uploaded: bool = False  # probe logits refreshed (every node that took part)
     distilled: bool = False
-    peers_used: dict[str, int] = field(default_factory=dict)  # peer -> batch its entry was uploaded in
+    peers_used: dict[str, int] = field(default_factory=dict)  # peer -> batch its prototypes come from
     logit_peers: list[str] = field(default_factory=list)  # peers whose probe logits were fresh (uploaded this batch)
     probe_images_used: int = 0  # probe images KD ran on (0 = no fresh peer logits, prototypes only)
     distill_loss: dict[str, float] = field(default_factory=dict)
@@ -224,16 +225,17 @@ class ContinualMesh:
             record.roles = decide_roles(batch_idx, record.ema, record.prev_ema, self.ema_threshold)
             log.per_node[node.node_id] = record
 
-        # 4) teachers extract knowledge (probe logits on this batch's probe
-        # set) and upload it, replacing their old entry
+        # 4) every node refreshes its probe logits on this batch's probe set;
+        # teachers also replace their prototypes (a full upload), everyone
+        # else keeps their previously stored prototypes
         for node in present:
             record = log.per_node[node.node_id]
-            if TEACHER not in record.roles:
-                continue
+            is_teacher = TEACHER in record.roles
             with self._track(record, "knowledge_extraction"):
-                payload = node.compute_knowledge(probe_loader)
-            record.bytes_uploaded = self.store.upload(node.node_id, batch_idx, payload)
-            record.uploaded = True
+                payload = node.compute_knowledge(probe_loader) if is_teacher else node.compute_logits_only(probe_loader)
+            record.bytes_uploaded = self.store.upload(node.node_id, batch_idx, payload, logits_only=not is_teacher)
+            record.uploaded = is_teacher
+            record.logits_uploaded = True
 
         # 5) learners retrieve peers' latest knowledge, aggregate (self
         # excluded), and distil towards it
@@ -247,7 +249,8 @@ class ContinualMesh:
             record.peers_used = {peer: peer_batch for peer, (peer_batch, _) in peers.items()}
             record.bytes_downloaded = sum(payload.size_bytes() for _, payload in peers.values())
             peer_payloads = [payload for _, payload in peers.values()]
-            # only entries uploaded this batch carry logits for this batch's probe
+            # only logits refreshed this batch line up with this batch's probe
+            # (every node that took part this batch refreshed them)
             logit_payloads = [p for p in peer_payloads if p.crop_logits.shape[0] > 0]
             record.logit_peers = sorted(peer for peer, (_, p) in peers.items() if p.crop_logits.shape[0] > 0)
             record.probe_images_used = len(probe_loader.dataset) if logit_payloads else 0
@@ -269,7 +272,7 @@ class ContinualMesh:
                         krum_neighbors=self.krum_neighbors,
                     )
                 else:
-                    # no teacher uploaded this batch: prototype alignment only, no KD
+                    # no peer took part this batch: prototype alignment only, no KD
                     ref = peer_payloads[0]
                     consensus_crop_logits = consensus_disease_logits = None
                     crop_known_mask = torch.zeros(ref.crop_logits.shape[1], dtype=torch.bool)

@@ -130,10 +130,13 @@ A node that receives fewer than 2 train images or no test image in a batch
 sits that batch out, keeping its model, EMA, and database entry.
 
 **Probe logits across batches**: probe logits are predictions on one
-batch's probe images, so they only line up with that batch. A learner takes
-prototypes from every node's latest entry, but probe logits only from
-entries uploaded in the *current* batch. If no node uploaded this batch, it
-distils with prototype alignment only (no probe-logit KD).
+batch's probe images, so they only line up with that batch. That's why
+**every node refreshes its probe logits every batch** (a cheap forward pass
+over the probe set), whether or not it's a teacher; only prototypes follow
+the teacher rule. A learner therefore gets this batch's probe logits from
+every other node that took part, and prototypes from every node's latest
+upload. A node that sat a batch out has no logits for it and contributes
+prototypes only.
 
 ### Batch 0 (every node teaches and learns)
 
@@ -160,8 +163,10 @@ distils with prototype alignment only (no probe-logit KD).
 2. Pre-distill evaluation on the new batch's private test set.
 3. Update an EMA of the pre-distill metric (`continual.ema_metric`,
    `ema_alpha`, default 0.3: EMA = 0.3 × this round + 0.7 × previous EMA):
-   - **EMA rose vs. the previous batch → teacher**: extract knowledge and
-     upload it, replacing the node's previous entry in the database.
+   - **Every node**: compute probe logits on this batch's probe set and
+     replace its logits in the database.
+   - **EMA rose vs. the previous batch → teacher**: also extract prototypes
+     and replace its previous prototypes (everyone else keeps their old ones).
    - **EMA < `ema_threshold` (default 0.8) → learner**: retrieve every other
      node's latest entry, aggregate (own knowledge excluded), distil.
    - A node can be both (improving but still weak) or neither (dipped but

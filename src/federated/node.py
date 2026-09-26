@@ -333,6 +333,33 @@ class Node:
             disease_logits_all.append(disease_logits.cpu())
         return torch.cat(crop_logits_all, dim=0), torch.cat(disease_logits_all, dim=0)
 
+    def local_class_counts(self) -> tuple[dict[int, int], dict[int, int]]:
+        """(crop counts, disease counts) of this node's labelled train images,
+        read straight from the dataset's labels when the loader wraps a
+        TransformedSubset (no forward pass), else by iterating the loader.
+        """
+        crop_counts: dict[int, int] = {}
+        disease_counts: dict[int, int] = {}
+        subset = self.train_loader.dataset
+        if hasattr(subset, "indices") and hasattr(subset, "dataset"):
+            targets, pairs = subset.dataset.targets, subset.dataset.labels.class_to_crop_disease
+            labels = (pairs[targets[idx]] for idx in subset.indices)
+        else:
+            labels = ((int(c), int(d)) for _, cs, ds in self.train_loader for c, d in zip(cs, ds))
+        for c, d in labels:
+            crop_counts[c] = crop_counts.get(c, 0) + 1
+            disease_counts[d] = disease_counts.get(d, 0) + 1
+        return crop_counts, disease_counts
+
+    def compute_logits_only(self, probe_loader: DataLoader) -> KnowledgePayload:
+        """Probe logits (+ the class counts that mark which classes they can be
+        trusted for) without prototypes — the per-round refresh every node
+        uploads when it isn't a teacher.
+        """
+        crop_logits, disease_logits = self.compute_probe_logits(probe_loader)
+        known_crop_classes, known_disease_classes = self.local_class_counts()
+        return KnowledgePayload({}, crop_logits, disease_logits, known_crop_classes, known_disease_classes)
+
     # pack knowledge
     def compute_knowledge(self, probe_loader: DataLoader) -> KnowledgePayload:
         prototypes, known_crop_classes, known_disease_classes = self.compute_prototypes()
