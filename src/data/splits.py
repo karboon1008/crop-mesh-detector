@@ -10,12 +10,13 @@ node) version used by the mesh disruption scenarios (src/scenarios/).
 from __future__ import annotations
 
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 from torch.utils.data import DataLoader
 
 from src.data.plantvillage import (
+    TwoViewSubset,
     carve_public_probe_set,
     compute_crop_class_weights,
     compute_disease_class_weights,
@@ -27,8 +28,19 @@ from src.data.plantvillage import (
 
 @dataclass
 class BatchSplit:
-    train_idx: list[int]
+    train_idx: list[int]  # labelled training images
     test_idx: list[int]
+    # training images whose labels the node never sees (pseudo-labelled)
+    unlabeled_idx: list[int] = field(default_factory=list)
+
+
+@dataclass
+class NodeBatchLoaders:
+    train: DataLoader
+    test: DataLoader
+    unlabeled: DataLoader | None
+    crop_class_weights: object
+    disease_class_weights: object
 
 
 def carve_probe_and_partition(cfg, dataset) -> tuple[list[int], list[list[int]]]:
@@ -79,17 +91,27 @@ def stratified_sample(dataset, pool: list[int], n: int, seed: int) -> list[int]:
     return sample
 
 
-def split_node_arrival(dataset, indices: list[int], test_fraction: float, seed: int) -> BatchSplit:
+def split_node_arrival(
+    dataset, indices: list[int], test_fraction: float, seed: int, labeled_fraction: float = 1.0,
+) -> BatchSplit:
     """A node's own train/test split of the images it just received —
     stratified per class, and with at least one test image whenever it got
     two or more (a small arrival where every class has a single image would
     otherwise put everything in train and leave nothing to evaluate on).
+
+    `labeled_fraction` < 1 then keeps labels for only that share of the
+    train images (stratified; every class keeps at least one labelled
+    image) — the rest become unlabelled, as field photos usually are. The
+    test images always keep their labels: evaluation needs ground truth.
     """
     train_idx, test_idx = train_test_split_indices(dataset, indices, test_fraction, seed)
     if not test_idx and len(train_idx) >= 2:
         rng = random.Random(seed)
         test_idx = [train_idx.pop(rng.randrange(len(train_idx)))]
-    return BatchSplit(train_idx, test_idx)
+    unlabeled_idx: list[int] = []
+    if labeled_fraction < 1.0 and train_idx:
+        train_idx, unlabeled_idx = train_test_split_indices(dataset, train_idx, 1.0 - labeled_fraction, seed + 1)
+    return BatchSplit(train_idx, test_idx, unlabeled_idx)
 
 
 def build_probe_loader(cfg, dataset, probe_idx: list[int]) -> DataLoader:
@@ -98,9 +120,11 @@ def build_probe_loader(cfg, dataset, probe_idx: list[int]) -> DataLoader:
     return DataLoader(make_subset(dataset, probe_idx), batch_size=cfg.get("training.batch_size", 32), shuffle=False)
 
 
-def build_batch_loaders(cfg, dataset, split: BatchSplit):
-    """(train_loader, test_loader, crop_class_weights, disease_class_weights)
-    for one node's one batch.
+def build_batch_loaders(cfg, dataset, split: BatchSplit) -> NodeBatchLoaders:
+    """Loaders and class weights for one node's one batch. Class weights
+    come from the labelled images only. The unlabelled loader's batches are
+    `continual.unlabeled_batch_ratio` times larger, so one pass over the
+    (small) labelled set also covers most of the unlabelled images.
     """
     batch_size = cfg.get("training.batch_size", 32)
     # a trailing batch of exactly one image crashes BatchNorm in train mode
@@ -117,7 +141,14 @@ def build_batch_loaders(cfg, dataset, split: BatchSplit):
         compute_disease_class_weights(dataset, split.train_idx)
         if cfg.get("training.disease_class_balanced", True) else None
     )
-    return train_loader, test_loader, crop_weights, disease_weights
+    unlabeled_loader = None
+    if split.unlabeled_idx:
+        unlabeled_bs = batch_size * cfg.get("continual.unlabeled_batch_ratio", 7)
+        unlabeled_loader = DataLoader(
+            TwoViewSubset(dataset, split.unlabeled_idx), batch_size=unlabeled_bs, shuffle=True,
+            drop_last=len(split.unlabeled_idx) % unlabeled_bs == 1,
+        )
+    return NodeBatchLoaders(train_loader, test_loader, unlabeled_loader, crop_weights, disease_weights)
 
 
 def build_dataloaders(cfg, dataset):
@@ -133,8 +164,8 @@ def build_dataloaders(cfg, dataset):
         split = BatchSplit(*train_test_split_indices(
             dataset, shard, cfg.get("data.test_fraction", 0.2), cfg.get("data.seed", 42)
         ))
-        train_loader, test_loader, crop_weights, disease_weights = build_batch_loaders(cfg, dataset, split)
-        node_loaders.append((train_loader, test_loader))
-        crop_class_weights.append(crop_weights)
-        disease_class_weights.append(disease_weights)
+        loaders = build_batch_loaders(cfg, dataset, split)
+        node_loaders.append((loaders.train, loaders.test))
+        crop_class_weights.append(loaders.crop_class_weights)
+        disease_class_weights.append(loaders.disease_class_weights)
     return build_probe_loader(cfg, dataset, probe_idx), node_loaders, crop_class_weights, disease_class_weights

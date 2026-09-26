@@ -52,7 +52,10 @@ def _cfg(root, tmp_path, **continual) -> Config:
             "probe_set_max_fraction_small_class": 0.2, "test_fraction": 0.25,
             "non_iid_strategy": "dirichlet", "dirichlet_alpha": 1.0,
         },
-        "continual": {"first_batch_size": 60, "next_batch_size": 24, "first_batch_local_epochs": 1, **continual},
+        "continual": {
+            "first_batch_size": 60, "next_batch_size": 24, "first_batch_local_epochs": 1,
+            "labeled_fraction": 1.0, **continual,
+        },
         "models": {"architectures": ["mobilenet_v3_small"], "pretrained": False},
         "training": {
             "local_epochs_per_round": 1, "distill_epochs_per_round": 1, "batch_size": 8,
@@ -239,3 +242,92 @@ def test_distill_without_fresh_peer_logits_uses_prototypes_only(pv_root):
     )
     assert losses["kd_loss"] == 0.0 and losses["crop_kd_loss"] == 0.0
     assert losses["sup_loss"] > 0
+
+
+# ---------------------------------------------------------------- self-learning
+
+
+def test_split_node_arrival_hides_labels_for_most_train_images(pv_root):
+    dataset = PlantVillageDataset(pv_root, image_size=32)
+    indices = list(range(len(dataset)))
+    split = split_node_arrival(dataset, indices, test_fraction=0.15, seed=0, labeled_fraction=0.25)
+    full = split_node_arrival(dataset, indices, test_fraction=0.15, seed=0)
+
+    assert split.test_idx == full.test_idx  # test images always keep their labels
+    assert sorted(split.train_idx + split.unlabeled_idx) == sorted(full.train_idx)
+    assert not set(split.train_idx) & set(split.unlabeled_idx)
+    assert len(split.unlabeled_idx) > 2 * len(split.train_idx)
+    targets = np.asarray(dataset.targets)
+    assert set(targets[split.train_idx].tolist()) == set(range(len(CLASSES)))  # every class keeps a label
+
+
+def test_prototype_check_rejects_pseudo_labels_the_peers_disagree_with():
+    from src.federated.node import _agrees_with_prototypes
+
+    prototypes = {("disease", 0): torch.tensor([1.0, 0.0]), ("disease", 1): torch.tensor([0.0, 1.0])}
+    feats = torch.tensor([[0.9, 0.1], [0.9, 0.1], [0.1, 0.9]])
+    labels = torch.tensor([0, 1, 2])  # agrees / nearest is class 0 / class 2 has no prototype
+    assert _agrees_with_prototypes(feats, labels, prototypes, "disease").tolist() == [True, False, True]
+    assert _agrees_with_prototypes(feats, labels, prototypes, "crop").all()  # nothing to check against
+
+
+def _node_with_unlabeled(pv_root, threshold):
+    from torch.utils.data import DataLoader
+
+    from src.data.plantvillage import TwoViewSubset, make_subset
+    from src.federated.node import Node
+    from src.models.factory import build_model
+
+    dataset = PlantVillageDataset(pv_root, image_size=32)
+    num_crop, num_disease = len(dataset.labels.crop_classes), len(dataset.labels.disease_classes)
+    labelled = DataLoader(make_subset(dataset, list(range(0, 144, 9)), train=True), batch_size=8)
+    unlabelled = DataLoader(TwoViewSubset(dataset, list(range(1, 144, 3))), batch_size=16, shuffle=True)
+    node = Node(
+        "node_0", build_model("mobilenet_v3_small", num_crop, num_disease, pretrained=False), labelled, labelled,
+        pseudo_threshold=threshold,
+    )
+    return node, unlabelled
+
+
+def test_local_train_learns_from_confident_pseudo_labels_only(pv_root):
+    node, unlabelled = _node_with_unlabeled(pv_root, threshold=0.0)  # everything is "confident"
+    node.local_train(1, 1e-3, unlabeled_loader=unlabelled)
+    stats = node.reset_pseudo_stats()
+    assert stats["seen"] == 32 and stats["disease_accepted"] == 32  # 2 labelled steps x 16 unlabelled
+    assert node.pseudo_stats["seen"] == 0  # reset
+
+    node.pseudo_threshold = 1.1  # nothing can be that confident
+    node.local_train(1, 1e-3, unlabeled_loader=unlabelled)
+    stats = node.reset_pseudo_stats()
+    assert stats["seen"] == 32 and stats["crop_accepted"] == stats["disease_accepted"] == 0
+
+
+def test_cli_later_batches_are_mostly_unlabelled_and_pseudo_labelled(pv_root, tmp_path, monkeypatch):
+    import yaml
+
+    cfg = _cfg(pv_root, tmp_path, ema_threshold=1.1, next_batch_size=60,
+               labeled_fraction=0.3, pseudo_label_threshold=0.0, unlabeled_batch_ratio=2)
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(yaml.safe_dump(cfg.as_dict()))
+    out = tmp_path / "out"
+
+    _run_cli(monkeypatch, cfg_path)                  # batch 0: fully labelled
+    _run_cli(monkeypatch, cfg_path, "--next-batch")  # batch 1: 30% labelled
+
+    stream = json.loads((out / "continual" / "stream.json").read_text())
+    assert [b["labeled_fraction"] for b in stream["batches"]] == [1.0, 0.3]
+    assert all(not n["unlabeled_idx"] for n in stream["batches"][0]["nodes"].values())
+    assert any(n["unlabeled_idx"] for n in stream["batches"][1]["nodes"].values())
+
+    logs = json.loads((out / "continual" / "mobilenet_v3_small" / "batch_logs.json").read_text())
+    assert all(not r["pseudo_labels"] for r in logs[0]["per_node"].values())
+    later = [r for r in logs[1]["per_node"].values() if r["num_unlabeled"]]
+    assert later
+    for r in later:
+        local, distill = r["pseudo_labels"]["local_train"], r["pseudo_labels"]["distill"]  # all learners
+        assert local["seen"] > 0 and local["disease_accepted"] == local["seen"]  # confidence threshold 0
+        # during distillation the peer-prototype check can only reject more
+        assert distill["seen"] > 0 and distill["disease_accepted"] <= distill["seen"]
+
+    summary = json.loads((out / "results_summary.json").read_text())["mobilenet_v3_small"]["continual"]
+    assert 0.0 < summary["pseudo_labels"]["pseudo_disease_accept_rate"] <= 1.0

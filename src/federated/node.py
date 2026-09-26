@@ -76,6 +76,9 @@ class Node:
         focal_gamma: float = 2.0,
         pair_class_names: list[str] | None = None,
         class_to_crop_disease: dict[int, tuple[int, int]] | None = None,
+        pseudo_threshold: float = 0.95,
+        unlabeled_weight: float = 1.0,
+        pseudo_prototype_check: bool = True,
     ):
         self.node_id = node_id
         self.model = model.to(device)
@@ -141,6 +144,18 @@ class Node:
         self.pair_to_class_idx = (
             {pair: idx for idx, pair in class_to_crop_disease.items()} if class_to_crop_disease else None
         )
+        # Pseudo-labelling of unlabelled images (only used when a caller
+        # passes an unlabeled_loader): an image's own prediction on a plain
+        # view becomes its training label if the softmax confidence is at
+        # least `pseudo_threshold`, and — during distillation, when peer
+        # prototypes are available and `pseudo_prototype_check` is on — if
+        # its feature is also nearest to the consensus prototype of that
+        # same class. The model then learns that label on a strongly
+        # augmented view (see _pseudo_step), weighted by `unlabeled_weight`.
+        self.pseudo_threshold = pseudo_threshold
+        self.unlabeled_weight = unlabeled_weight
+        self.pseudo_prototype_check = pseudo_prototype_check
+        self.pseudo_stats = _empty_pseudo_stats()
 
     def _get_optimizer(self, lr: float, weight_decay: float = 0.0) -> torch.optim.Optimizer:
         if self.optimizer is None:
@@ -175,6 +190,7 @@ class Node:
     def local_train(
         self, epochs: int, lr: float, val_loader: DataLoader | None = None, patience: int | None = None,
         weight_decay: float = 0.0, progress_cb: ProgressCallback | None = None,
+        unlabeled_loader: DataLoader | None = None,
     ) -> float:
         """If `val_loader` and `patience` are both given, evaluates this
         node's pair_accuracy (crop AND disease both correct — see
@@ -192,6 +208,10 @@ class Node:
         the Node's persistent optimizer/scheduler (see `_get_optimizer`)
         instead of a fresh one, so momentum and LR annealing carry over
         across rounds.
+
+        `unlabeled_loader` (a TwoViewSubset loader), when given, adds a
+        pseudo-label loss on one unlabelled batch per labelled batch (see
+        _pseudo_step).
         """
         early_stopping = val_loader is not None and patience is not None
         if early_stopping and self.pair_to_class_idx is None:
@@ -211,6 +231,7 @@ class Node:
         best_score, best_state, epochs_without_improvement = -1.0, None, 0
         total_loss, total_batches = 0.0, 0
         num_batches = len(self.train_loader)
+        unlabeled_iter = _cycle(unlabeled_loader) if unlabeled_loader is not None else None
         for epoch in range(epochs):
             self.model.train()
             for batch_idx, (images, crop_labels, disease_labels) in enumerate(self.train_loader):
@@ -225,6 +246,9 @@ class Node:
                 ) + self.disease_loss_weight * _classification_loss(
                     disease_logits, disease_labels, self.loss_type, self.disease_class_weights, self.focal_gamma
                 )
+                if unlabeled_iter is not None:
+                    pseudo_loss = self._pseudo_step(next(unlabeled_iter))[0]
+                    loss = loss + self.unlabeled_weight * pseudo_loss
                 loss.backward()
                 optimizer.step()
                 if scheduler is not None:
@@ -333,9 +357,12 @@ class Node:
         crop_kd_weight: float,
         temperature: float,
         progress_cb: ProgressCallback | None = None,
+        unlabeled_loader: DataLoader | None = None,
     ) -> dict[str, float]:
         self.model.train()
         optimizer = self._get_optimizer(lr)
+        unlabeled_iter = _cycle(unlabeled_loader) if unlabeled_loader is not None else None
+        pseudo_loss_sum = 0.0
         if probe_loader is not None:
             consensus_crop_logits = consensus_crop_logits.to(self.device)
             consensus_disease_logits = consensus_disease_logits.to(self.device)
@@ -402,6 +429,20 @@ class Node:
                 )
 
                 loss = sup_loss + proto_weight * proto_loss
+                if unlabeled_iter is not None:
+                    # pseudo-labels here are double-checked against the peers'
+                    # consensus prototypes; accepted images are also pulled
+                    # towards the prototype of their pseudo class
+                    pseudo_loss, u_feats, c_pl, c_mask, d_pl, d_mask = self._pseudo_step(
+                        next(unlabeled_iter), consensus_prototypes
+                    )
+                    both = c_mask & d_mask
+                    loss = loss + self.unlabeled_weight * pseudo_loss
+                    if bool(both.any()):
+                        loss = loss + proto_weight * _prototype_alignment_loss(
+                            u_feats[both], c_pl[both], d_pl[both], consensus_prototypes, self.device
+                        )
+                    pseudo_loss_sum += pseudo_loss.item()
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
@@ -422,12 +463,64 @@ class Node:
             if self.scheduler is not None:
                 self.scheduler.step()
 
-        return {
+        losses = {
             "kd_loss": kd_loss_sum / max(1, kd_batches),
             "crop_kd_loss": crop_kd_loss_sum / max(1, kd_batches),
             "sup_loss": sup_loss_sum / max(1, sup_batches),
             "proto_loss": proto_loss_sum / max(1, sup_batches),
         }
+        if unlabeled_iter is not None:
+            losses["pseudo_loss"] = pseudo_loss_sum / max(1, sup_batches)
+        return losses
+
+    # pseudo-labelling of unlabelled images
+    def reset_pseudo_stats(self) -> dict[str, int]:
+        """Returns the pseudo-label counts gathered since the last reset, and resets them."""
+        stats, self.pseudo_stats = self.pseudo_stats, _empty_pseudo_stats()
+        return stats
+
+    @torch.no_grad()
+    def pseudo_label(self, weak_images: torch.Tensor, prototypes: Prototypes | None = None):
+        """(crop_labels, crop_mask, disease_labels, disease_mask) for a batch
+        of plain-view unlabelled images: each head's arg-max prediction, and
+        whether it is trusted enough to train on (see __init__).
+        """
+        was_training = self.model.training
+        self.model.eval()
+        crop_logits, disease_logits, feats = self.model(weak_images, return_features=True)
+        if was_training:
+            self.model.train()
+        crop_conf, crop_labels = F.softmax(crop_logits, dim=1).max(dim=1)
+        disease_conf, disease_labels = F.softmax(disease_logits, dim=1).max(dim=1)
+        crop_mask = crop_conf >= self.pseudo_threshold
+        disease_mask = disease_conf >= self.pseudo_threshold
+        if prototypes and self.pseudo_prototype_check:
+            crop_mask &= _agrees_with_prototypes(feats, crop_labels, prototypes, "crop")
+            disease_mask &= _agrees_with_prototypes(feats, disease_labels, prototypes, "disease")
+        return crop_labels, crop_mask, disease_labels, disease_mask
+
+    def _pseudo_step(self, unlabeled_batch, prototypes: Prototypes | None = None):
+        """Pseudo-labels the weak view, then scores the strong view against
+        those labels (masked cross-entropy, averaged over the whole batch so
+        few accepted images means a small loss). Returns (loss, strong-view
+        features, crop_labels, crop_mask, disease_labels, disease_mask).
+        """
+        weak, strong, true_crop, true_disease = unlabeled_batch
+        weak, strong = weak.to(self.device), strong.to(self.device)
+        crop_labels, crop_mask, disease_labels, disease_mask = self.pseudo_label(weak, prototypes)
+        crop_logits, disease_logits, feats = self.model(strong, return_features=True)
+        loss = self.crop_loss_weight * _masked_cross_entropy(
+            crop_logits, crop_labels, crop_mask
+        ) + self.disease_loss_weight * _masked_cross_entropy(disease_logits, disease_labels, disease_mask)
+
+        # true labels are only read here, to measure pseudo-label quality
+        true_crop, true_disease = true_crop.to(self.device), true_disease.to(self.device)
+        self.pseudo_stats["seen"] += len(weak)
+        self.pseudo_stats["crop_accepted"] += int(crop_mask.sum())
+        self.pseudo_stats["crop_correct"] += int((crop_mask & (crop_labels == true_crop)).sum())
+        self.pseudo_stats["disease_accepted"] += int(disease_mask.sum())
+        self.pseudo_stats["disease_correct"] += int((disease_mask & (disease_labels == true_disease)).sum())
+        return loss, feats, crop_labels, crop_mask, disease_labels, disease_mask
 
     # combined local + distillation training: replaces a separate
     # local_train() call followed by distill() with ONE training phase
@@ -603,6 +696,38 @@ class Node:
             }
 
         return result
+
+def _empty_pseudo_stats() -> dict[str, int]:
+    return {"seen": 0, "crop_accepted": 0, "crop_correct": 0, "disease_accepted": 0, "disease_correct": 0}
+
+
+def _cycle(loader: DataLoader):
+    """Endless iterator over a loader, reshuffling each pass."""
+    while True:
+        yield from loader
+
+
+def _masked_cross_entropy(logits: torch.Tensor, labels: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    return (F.cross_entropy(logits, labels, reduction="none") * mask.float()).mean()
+
+
+def _agrees_with_prototypes(
+    feats: torch.Tensor, labels: torch.Tensor, prototypes: Prototypes, head: str
+) -> torch.Tensor:
+    """True where the feature's nearest (cosine) consensus prototype for
+    `head` is the class in `labels`. A label with no consensus prototype
+    can't be checked and passes.
+    """
+    classes = sorted(c for h, c in prototypes if h == head)
+    if not classes:
+        return torch.ones_like(labels, dtype=torch.bool)
+    protos = torch.stack([prototypes[(head, c)] for c in classes]).to(feats.device)
+    sims = F.normalize(feats, dim=1) @ F.normalize(protos, dim=1).T
+    class_ids = torch.tensor(classes, device=feats.device)
+    nearest = class_ids[sims.argmax(dim=1)]
+    checkable = torch.isin(labels, class_ids)
+    return ~checkable | (nearest == labels)
+
 
 def _classification_loss(
     logits: torch.Tensor,
