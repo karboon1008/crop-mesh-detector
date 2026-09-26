@@ -61,6 +61,23 @@ def build_train_transform(image_size: int):
     )
 
 
+def build_strong_transform(image_size: int):
+    """The training augmentation plus RandAugment — the "strong" view an
+    unlabelled image is learned from under pseudo-labelling (FixMatch-style
+    consistency): the model must reproduce, on a heavily distorted copy,
+    the label it confidently gave the plain copy.
+    """
+    return transforms.Compose(
+        [
+            transforms.RandomResizedCrop(image_size, scale=(0.80, 1.0), ratio=(0.9, 1.10)),
+            transforms.RandomHorizontalFlip(p=0.5),
+            transforms.RandAugment(num_ops=2, magnitude=9),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
+        ]
+    )
+
+
 def _parse_crop_disease(class_name: str) -> tuple[str, str]:
     """'Tomato___Bacterial_spot' -> ('Tomato', 'Bacterial_spot').
 
@@ -163,6 +180,7 @@ class PlantVillageDataset(Dataset):
         allowed_classes: set[str] | None = None,
         global_label_map: "GlobalLabelMap | None" = None,
     ):
+        self.image_size = image_size
         self.transform = build_eval_transform(image_size)
         self.train_transform = build_train_transform(image_size)
         self.base = _FilteredImageFolder(str(root), allowed_classes=allowed_classes)
@@ -493,6 +511,28 @@ def make_subset(dataset: PlantVillageDataset, indices: list[int], train: bool = 
     """
     transform = dataset.train_transform if train else dataset.transform
     return TransformedSubset(dataset, indices, transform)
+
+
+class TwoViewSubset(Dataset):
+    """Unlabelled images for pseudo-labelling: each item is (weak view,
+    strong view, crop_idx, disease_idx). The labels are carried along only
+    so the simulation can measure pseudo-label accuracy — training never
+    reads them.
+    """
+
+    def __init__(self, dataset: PlantVillageDataset, indices: list[int]):
+        self.dataset = dataset
+        self.indices = indices
+        self.weak = dataset.transform
+        self.strong = build_strong_transform(dataset.image_size)
+
+    def __len__(self) -> int:
+        return len(self.indices)
+
+    def __getitem__(self, i: int):
+        image, class_idx = self.dataset.base[self.indices[i]]
+        crop_idx, disease_idx = self.dataset.labels.class_to_crop_disease[class_idx]
+        return self.weak(image), self.strong(image), crop_idx, disease_idx
 
 
 def _count_labels(dataset: PlantVillageDataset, indices: list[int], pair_index: int, num_classes: int) -> torch.Tensor:

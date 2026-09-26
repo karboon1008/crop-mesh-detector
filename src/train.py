@@ -14,7 +14,9 @@ A trigger:
   1. draws the new batch — a stratified sample of the images no earlier
      batch used — carves a stratified 5% of it into this batch's public
      probe set, hands every other image to the node that owns it, and lets
-     each node split what it got into private train/test 85/15
+     each node split what it got into private train/test 85/15 — with only
+     continual.labeled_fraction of the train images keeping their labels in
+     later batches (the rest are pseudo-labelled)
      (src/data/stream.py)
   2. for every architecture, reloads each node's model/optimizer, EMA, and
      the shared knowledge database, and runs the batch: local training,
@@ -93,8 +95,25 @@ def build_nodes(cfg, arch: str, dataset, num_nodes: int, device: str) -> list[No
             loss_type=cfg.get("training.loss_type", "cross_entropy"),
             focal_gamma=cfg.get("training.focal_gamma", 2.0),
             pair_class_names=dataset.base.classes, class_to_crop_disease=dataset.labels.class_to_crop_disease,
+            pseudo_threshold=cfg.get("continual.pseudo_label_threshold", 0.95),
+            unlabeled_weight=cfg.get("continual.unlabeled_weight", 1.0),
+            pseudo_prototype_check=cfg.get("continual.pseudo_label_prototype_check", True),
         ))
     return nodes
+
+
+def pseudo_label_rates(stats_by_phase: dict[str, dict[str, int]]) -> dict[str, float | None]:
+    """Acceptance rate (accepted / seen) and accuracy of the accepted
+    pseudo-labels, per head, over every phase of one node's batch.
+    """
+    total = {k: sum(p.get(k, 0) for p in stats_by_phase.values())
+             for k in ("seen", "crop_accepted", "crop_correct", "disease_accepted", "disease_correct")}
+    rates: dict[str, float | None] = {}
+    for head in ("crop", "disease"):
+        accepted = total[f"{head}_accepted"]
+        rates[f"pseudo_{head}_accept_rate"] = round(accepted / total["seen"], 4) if total["seen"] else None
+        rates[f"pseudo_{head}_accuracy"] = round(total[f"{head}_correct"] / accepted, 4) if accepted else None
+    return rates
 
 
 def batch_log_to_json(log: BatchLog) -> dict:
@@ -124,6 +143,7 @@ def batch_summary_rows(batch_logs: list[dict], metric: str, comm_estimator: Comm
                 "node": r["node_id"],
                 "num_train": r["num_train"],
                 "num_test": r["num_test"],
+                "num_unlabeled": r.get("num_unlabeled", 0),
                 "roles": "+".join(r["roles"]) or "idle",
                 "ema": round(r["ema"], 4),
                 "prev_ema": None if r["prev_ema"] is None else round(r["prev_ema"], 4),
@@ -147,6 +167,7 @@ def batch_summary_rows(batch_logs: list[dict], metric: str, comm_estimator: Comm
                     comm_estimator.estimate(r["total_bytes"], "wifi")["energy_kwh"] if has_wifi else 0.0
                 ),
                 "duration_s": round(sum(r["duration_s"].values()), 2),
+                **pseudo_label_rates(r.get("pseudo_labels", {})),
             })
     return rows
 
@@ -179,6 +200,11 @@ def summarise_run(batch_logs: list[dict], metric: str) -> dict:
         "num_distillations": len(distilled),
         "num_improved": sum(r["improved"] for r in distilled),
         "mean_distill_gain": statistics.mean(r["distill_gain"][metric] for r in distilled) if distilled else 0.0,
+        "pseudo_labels": pseudo_label_rates(
+            {f"{log['batch_idx']}/{r['node_id']}/{phase}": stats
+             for log in batch_logs for r in log["per_node"].values()
+             for phase, stats in r.get("pseudo_labels", {}).items()}
+        ),
         "total_bytes_uploaded": sum(b["bytes_uploaded"] for b in per_batch),
         "total_bytes_downloaded": sum(b["bytes_downloaded"] for b in per_batch),
         "total_bytes_exchanged": sum(b["bytes_uploaded"] + b["bytes_downloaded"] for b in per_batch),
@@ -225,7 +251,7 @@ def run_architecture(cfg, arch, dataset, stream, tracker, comm_estimator, device
         f"training.local_epochs_per_round_overrides.{arch}", cfg.get("training.local_epochs_per_round", 2)
     )
     for b in range(state["completed_batches"], stream.num_batches):
-        # a node needs >= 2 train images (BatchNorm) and >= 1 test image to take part
+        # a node needs >= 2 labelled train images (BatchNorm) and >= 1 test image to take part
         batch_loaders = {}
         for node in nodes:
             split = stream.node_split(b, node.node_id)
@@ -237,7 +263,7 @@ def run_architecture(cfg, arch, dataset, stream, tracker, comm_estimator, device
             # node gets a comparable number of gradient steps from ImageNet init
             epochs = scale_epochs_by_node_size(
                 cfg.get("continual.first_batch_local_epochs", base_local_epochs),
-                [len(batch_loaders[n.node_id][0].dataset) for n in present],
+                [len(batch_loaders[n.node_id].train.dataset) for n in present],
                 cfg.get("training.max_epochs_per_node", 40),
             ) if present else []
         else:
@@ -262,11 +288,19 @@ def run_architecture(cfg, arch, dataset, stream, tracker, comm_estimator, device
         for record in log.per_node.values():
             pre, post = record.pre_distill_eval[metric], record.post_distill_eval[metric]
             print(
-                f"    {record.node_id}: {record.num_train:>5} train / {record.num_test:>4} test  "
+                f"    {record.node_id}: {record.num_train:>5} train / {record.num_unlabeled:>5} unlabelled / "
+                f"{record.num_test:>4} test  "
                 f"roles={'+'.join(record.roles) or 'idle':<15} EMA={record.ema:.3f} "
                 f"{metric} pre={pre:.3f} post={post:.3f} "
                 f"({'improved' if record.improved else 'distilled, no gain' if record.distilled else 'no distill'})"
             )
+            if record.pseudo_labels:
+                rates = pseudo_label_rates(record.pseudo_labels)
+                print(
+                    f"        pseudo-labels: disease accepted {rates['pseudo_disease_accept_rate']}, "
+                    f"accuracy {rates['pseudo_disease_accuracy']}; crop accepted {rates['pseudo_crop_accept_rate']}, "
+                    f"accuracy {rates['pseudo_crop_accuracy']}"
+                )
         for node_id in log.absent:
             print(f"    {node_id}: too few images this batch — sat it out")
         print(f"    {log.total_bytes} bytes exchanged, {log.total_energy_kwh:.6f} kWh compute")
@@ -351,11 +385,17 @@ def main():
         if args.next_batch:
             raise SystemExit("No stream yet — run `python -m src.train` first to start it with batch 0.")
         stream = DataStream.create(cfg, dataset, stream_path)
-        batch = stream.next_batch(dataset, cfg.get("continual.first_batch_size", 20000), probe_fraction, test_fraction, seed)
+        batch = stream.next_batch(
+            dataset, cfg.get("continual.first_batch_size", 20000), probe_fraction, test_fraction, seed,
+            labeled_fraction=cfg.get("continual.first_batch_labeled_fraction", 1.0),
+        )
     else:
         stream = DataStream.load(cfg, dataset, stream_path)
         if args.next_batch:
-            batch = stream.next_batch(dataset, cfg.get("continual.next_batch_size", 3000), probe_fraction, test_fraction, seed)
+            batch = stream.next_batch(
+                dataset, cfg.get("continual.next_batch_size", 3000), probe_fraction, test_fraction, seed,
+                labeled_fraction=cfg.get("continual.labeled_fraction", 0.1),
+            )
         else:
             batch = None
             print(
@@ -365,10 +405,14 @@ def main():
 
     if batch is not None:
         print(f"New batch {batch['batch_idx']}: {batch['size']} images (stratified), "
+              f"{batch['labeled_fraction']:.0%} of train images labelled, "
               f"{len(stream.remaining())} images left for future batches")
         print(f"  probe: {len(batch['probe_idx'])} images carved from this batch")
         for node_id, split in batch["nodes"].items():
-            print(f"  {node_id}: {len(split['train_idx'])} train / {len(split['test_idx'])} test")
+            print(
+                f"  {node_id}: {len(split['train_idx'])} labelled train / "
+                f"{len(split['unlabeled_idx'])} unlabelled train / {len(split['test_idx'])} test"
+            )
 
     checkpoints_dir = output_dir / "checkpoints"
     checkpoints_dir.mkdir(parents=True, exist_ok=True)

@@ -37,6 +37,16 @@ data:
 continual:
   first_batch_size: 20000         # images in batch 0, all nodes combined
   next_batch_size: 3000           # images per --next-batch trigger, all nodes combined
+  # Semi-supervised ("self-learning") later batches: field photos mostly
+  # arrive without labels. Of each node's train images, only this share keep
+  # their labels (stratified, every class keeps >= 1); the rest are
+  # pseudo-labelled by the node itself. Test images always keep labels.
+  first_batch_labeled_fraction: 1.0   # batch 0: the initial, fully labelled deployment set
+  labeled_fraction: 0.1               # every --next-batch
+  pseudo_label_threshold: 0.95        # softmax confidence needed to trust a pseudo-label (per head)
+  pseudo_label_prototype_check: true  # during distillation, also require the nearest peer consensus prototype to agree
+  unlabeled_weight: 1.0               # weight of the pseudo-label loss next to the labelled sup_loss
+  unlabeled_batch_ratio: 7            # unlabelled images per labelled image in each training step
   first_batch_local_epochs: 5     # batch 0 starts from ImageNet weights, so it gets more epochs; later batches use training.local_epochs_per_round(+overrides)
   ema_metric: "pair_accuracy"     # pre-distill metric the EMA tracks: pair_accuracy | crop_accuracy | disease_accuracy
   ema_alpha: 0.3                  # EMA_t = alpha * metric_t + (1 - alpha) * EMA_(t-1)

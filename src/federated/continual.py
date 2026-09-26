@@ -7,6 +7,8 @@ Per batch, every node:
 
   1. local training       private train batch -> backbone -> feature ->
                           linear heads -> logits -> cross-entropy -> backward
+                          (+ pseudo-label loss on the batch's unlabelled
+                          images, when continual.labeled_fraction < 1)
   2. pre-distill eval     on this batch's private test set
   3. decide its role      batch 0: every node is a teacher AND a learner.
                           later batches, from an EMA of the pre-distill
@@ -95,6 +97,11 @@ class NodeBatchRecord:
     bytes_uploaded: int = 0
     bytes_downloaded: int = 0
     energy_kwh: dict[str, float] = field(default_factory=dict)  # phase -> kWh
+    num_unlabeled: int = 0  # train images without labels this batch (pseudo-labelled)
+    # phase ("local_train" / "distill") -> pseudo-label counts: seen, and
+    # accepted / correct per head (correctness uses the hidden true labels,
+    # for measurement only)
+    pseudo_labels: dict[str, dict[str, int]] = field(default_factory=dict)
     duration_s: dict[str, float] = field(default_factory=dict)  # phase -> seconds
 
     @property
@@ -175,8 +182,8 @@ class ContinualMesh:
         crop_kd_weight: float | None,
         temperature: float,
     ) -> BatchLog:
-        """`batch_loaders`: node_id -> (train_loader, test_loader,
-        crop_class_weights, disease_class_weights) for this batch. Nodes
+        """`batch_loaders`: node_id -> NodeBatchLoaders (labelled train,
+        test, optional unlabelled, class weights) for this batch. Nodes
         missing from it received no usable data this batch and sit it out.
 
         `probe_loader`: an unshuffled loader over THIS batch's probe set.
@@ -188,19 +195,26 @@ class ContinualMesh:
 
         # 1) + 2) local training on this batch, then pre-distill evaluation
         for node in present:
-            train_loader, test_loader, crop_weights, disease_weights = batch_loaders[node.node_id]
-            node.train_loader, node.test_loader = train_loader, test_loader
+            loaders = batch_loaders[node.node_id]
+            node.train_loader, node.test_loader = loaders.train, loaders.test
+            crop_weights, disease_weights = loaders.crop_class_weights, loaders.disease_class_weights
             node.crop_class_weights = crop_weights.to(node.device) if crop_weights is not None else None
             node.disease_class_weights = disease_weights.to(node.device) if disease_weights is not None else None
 
             record = NodeBatchRecord(
                 node_id=node.node_id, batch_idx=batch_idx,
-                num_train=len(train_loader.dataset), num_test=len(test_loader.dataset),
+                num_train=len(loaders.train.dataset), num_test=len(loaders.test.dataset),
                 local_epochs=local_epochs[node.node_id], train_loss=0.0,
                 pre_distill_eval={}, ema=0.0, prev_ema=self.ema[node.node_id], roles=[],
+                num_unlabeled=len(loaders.unlabeled.dataset) if loaders.unlabeled is not None else 0,
             )
+            node.reset_pseudo_stats()
             with self._track(record, "local_train"):
-                record.train_loss = node.local_train(local_epochs[node.node_id], lr)
+                record.train_loss = node.local_train(
+                    local_epochs[node.node_id], lr, unlabeled_loader=loaders.unlabeled
+                )
+            if loaders.unlabeled is not None:
+                record.pseudo_labels["local_train"] = node.reset_pseudo_stats()
             with self._track(record, "evaluate"):
                 record.pre_distill_eval = node.evaluate()
 
@@ -265,7 +279,10 @@ class ContinualMesh:
                     consensus_disease_logits, disease_known_mask, probe_loader if logit_payloads else None,
                     epochs=distill_epochs, lr=distill_lr, proto_weight=proto_weight,
                     kd_weight=kd_weight, crop_kd_weight=crop_kd_weight, temperature=temperature,
+                    unlabeled_loader=batch_loaders[node.node_id].unlabeled,
                 )
+            if batch_loaders[node.node_id].unlabeled is not None:
+                record.pseudo_labels["distill"] = node.reset_pseudo_stats()
             record.distilled = True
 
         # 6) + 7) post-distill evaluation on the same test set, and the comparison

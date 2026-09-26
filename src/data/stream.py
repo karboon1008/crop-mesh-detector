@@ -12,7 +12,9 @@ Then each batch, only when it's triggered:
   - carve a stratified data.probe_set_fraction (5%) of THIS batch into the
     public probe set (e.g. 150 of a 3,000-image batch)
   - hand every other image of the batch to the node that owns it
-  - each node splits what it received into its private train/test
+  - each node splits what it received into its private train/test, and
+    (continual.labeled_fraction < 1) only a share of its train images keep
+    their labels — the rest arrive unlabelled and are pseudo-labelled
 
 The probe set is NOT cumulative: each batch uses only its own probe slice.
 Probe logits therefore only line up with the batch they were computed on,
@@ -103,10 +105,13 @@ class DataStream:
     def remaining(self) -> list[int]:
         used = {idx for batch in self.batches for idx in batch["probe_idx"]}
         used |= {idx for batch in self.batches for split in batch["nodes"].values()
-                 for idx in split["train_idx"] + split["test_idx"]}
+                 for idx in split["train_idx"] + split["test_idx"] + split.get("unlabeled_idx", [])}
         return sorted(idx for shard in self.node_shards for idx in shard if idx not in used)
 
-    def next_batch(self, dataset, size: int, probe_fraction: float, test_fraction: float, seed: int) -> dict:
+    def next_batch(
+        self, dataset, size: int, probe_fraction: float, test_fraction: float, seed: int,
+        labeled_fraction: float = 1.0,
+    ) -> dict:
         """Draws the next batch, carves its probe slice, routes the rest to
         the owning nodes, lets each node split it, appends it, and saves.
         """
@@ -122,11 +127,16 @@ class DataStream:
             arrivals.setdefault(self._owner[idx], []).append(idx)
         nodes = {}
         for node_i in range(self.num_nodes):
-            split = split_node_arrival(dataset, arrivals.get(node_i, []), test_fraction, seed=seed + batch_idx)
-            nodes[f"node_{node_i}"] = {"train_idx": split.train_idx, "test_idx": split.test_idx}
+            split = split_node_arrival(
+                dataset, arrivals.get(node_i, []), test_fraction, seed=seed + batch_idx,
+                labeled_fraction=labeled_fraction,
+            )
+            nodes[f"node_{node_i}"] = {
+                "train_idx": split.train_idx, "test_idx": split.test_idx, "unlabeled_idx": split.unlabeled_idx,
+            }
         batch = {
             "batch_idx": batch_idx, "requested_size": size, "size": len(sample),
-            "probe_idx": probe_idx, "nodes": nodes,
+            "labeled_fraction": labeled_fraction, "probe_idx": probe_idx, "nodes": nodes,
         }
         self.batches.append(batch)
         self.save()
@@ -134,4 +144,4 @@ class DataStream:
 
     def node_split(self, batch_idx: int, node_id: str) -> BatchSplit:
         split = self.batches[batch_idx]["nodes"][node_id]
-        return BatchSplit(split["train_idx"], split["test_idx"])
+        return BatchSplit(split["train_idx"], split["test_idx"], split.get("unlabeled_idx", []))

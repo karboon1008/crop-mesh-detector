@@ -170,6 +170,36 @@ distils with prototype alignment only (no probe-logit KD).
 4. Post-distill evaluation on the same test set as step 2.
 5. Record post vs. pre, bytes exchanged, and energy consumed.
 
+### Self-learning on unlabelled field photos
+
+Photos taken on a farm usually arrive **without** labels. After the first,
+fully labelled batch, only `continual.labeled_fraction` (default 10%) of each
+node's train images keep their labels (stratified; every class keeps at least
+one). The rest are **pseudo-labelled by the node itself**; test images always
+keep their labels, because evaluation needs ground truth.
+
+For every unlabelled image, in each training step:
+
+1. The model predicts on a plain view of the image (no gradient).
+2. A head's prediction becomes the image's **pseudo-label** only if its
+   softmax confidence is at least `pseudo_label_threshold` (0.95). During
+   distillation, where the peers' consensus prototypes are available, the
+   image's feature must also be nearest to the consensus prototype of that
+   same class (`pseudo_label_prototype_check`): a second opinion from the
+   other farms.
+3. The model learns that label on a **strongly augmented** view of the same
+   image (RandAugment), as a cross-entropy term weighted by `unlabeled_weight`.
+   Accepted images are also pulled towards their class prototype during
+   distillation.
+
+The labelled `sup_loss` stays, and keeps anchoring the model to real labels,
+so the tug of war becomes: real labels + confident self-labels vs. the
+peers' consensus. Each unlabelled batch holds `unlabeled_batch_ratio` (7)
+images per labelled image. Because the simulation knows the true labels, it
+records how many pseudo-labels were accepted and how many were right
+(`pseudo_*_accept_rate`, `pseudo_*_accuracy` in `batch_summary.csv`) without
+the model ever seeing them.
+
 **Sustainability accounting**: compute energy is measured with CodeCarbon
 (hardware power counters where available, otherwise a documented
 wall-clock proxy) for each phase of each node's batch; communication
