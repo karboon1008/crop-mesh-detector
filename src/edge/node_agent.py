@@ -196,7 +196,7 @@ class NodeAgent:
             crop_kd_weight=self.cfg.get("training.crop_kd_weight", None),
             temperature=self.cfg.get("training.kd_temperature", 2.0),
         )
-        self.mesh.finish_phase(self.node, record)
+        self.mesh.finish_phase(self.node, record, ctx.loaders)
         return record
 
     def save_round(self, batch_idx: int, record: NodeBatchRecord | None) -> None:
@@ -245,6 +245,12 @@ class NodeAgent:
             f"post={record.post_distill_eval[metric]:.3f}, peers={sorted(record.peers_used)}, "
             f"{record.total_bytes} bytes, {record.total_energy_kwh:.6f} kWh"
         )
+        if record.num_early_warning:
+            print(
+                f"[{self.node_id}] round {batch_idx}: early warning ({record.num_early_warning} photos): "
+                f"disease_accuracy pre={record.pre_early_warning_eval['disease_accuracy']:.3f} "
+                f"post={record.post_early_warning_eval['disease_accuracy']:.3f}"
+            )
         self.save_round(batch_idx, record)
         return record
 

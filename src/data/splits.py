@@ -41,6 +41,9 @@ class NodeBatchLoaders:
     unlabeled: DataLoader | None
     crop_class_weights: object
     disease_class_weights: object
+    # simulation-only early-warning test: held-out images of diseases on this
+    # node's crops that only other nodes have (src/data/stream.py)
+    early_warning: DataLoader | None = None
 
 
 def carve_probe_and_partition(cfg, dataset) -> tuple[list[int], list[list[int]]]:
@@ -63,6 +66,7 @@ def carve_probe_and_partition(cfg, dataset) -> tuple[list[int], list[list[int]]]
         cfg.get("data.dirichlet_alpha", 0.5),
         cfg.get("data.seed", 42),
         manual_node_crops=cfg.get("data.manual_node_crops", None),
+        farm_crops=cfg.get("data.farm_crops", None),
     )
     return probe_idx, shards
 
@@ -120,7 +124,7 @@ def build_probe_loader(cfg, dataset, probe_idx: list[int]) -> DataLoader:
     return DataLoader(make_subset(dataset, probe_idx), batch_size=cfg.get("training.batch_size", 32), shuffle=False)
 
 
-def build_batch_loaders(cfg, dataset, split: BatchSplit) -> NodeBatchLoaders:
+def build_batch_loaders(cfg, dataset, split: BatchSplit, early_warning_idx: list[int] | None = None) -> NodeBatchLoaders:
     """Loaders and class weights for one node's one batch. Class weights
     come from the labelled images only. The unlabelled loader's batches are
     `continual.unlabeled_batch_ratio` times larger, so one pass over the
@@ -149,7 +153,11 @@ def build_batch_loaders(cfg, dataset, split: BatchSplit) -> NodeBatchLoaders:
             TwoViewSubset(dataset, split.unlabeled_idx), batch_size=unlabeled_bs, shuffle=True,
             drop_last=len(split.unlabeled_idx) % unlabeled_bs == 1,
         )
-    return NodeBatchLoaders(train_loader, test_loader, unlabeled_loader, crop_weights, disease_weights)
+    early_warning_loader = (
+        DataLoader(make_subset(dataset, early_warning_idx), batch_size=batch_size, shuffle=False)
+        if early_warning_idx else None
+    )
+    return NodeBatchLoaders(train_loader, test_loader, unlabeled_loader, crop_weights, disease_weights, early_warning_loader)
 
 
 def build_dataloaders(cfg, dataset):

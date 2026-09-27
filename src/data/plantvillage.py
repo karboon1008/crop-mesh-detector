@@ -362,6 +362,7 @@ def partition_nodes(
     dirichlet_alpha: float,
     seed: int,
     manual_node_crops: dict[str, list[str]] | None = None,
+    farm_crops: dict | None = None,
 ) -> list[list[int]]:
     """Split `remaining_indices` into `num_nodes` non-IID shards.
 
@@ -380,6 +381,13 @@ def partition_nodes(
                       grows Apple/Cherry/Peach/Blueberry/Raspberry) — same
                       disjoint-by-crop shape as "by_crop", but the farm/crop
                       assignment is explicit instead of round-robin.
+      - "farm_crops": each crop is grown by `farm_crops.growers_per_crop`
+                      farms; every grower sees that crop's healthy leaves,
+                      but each disease has only reached a share
+                      (`farm_crops.disease_spread`) of its growers so far —
+                      so a farm can learn a disease on its own crop from a
+                      peer before it arrives (see farm_crop_assignment and
+                      src/data/stream.py's early-warning test).
     """
     rng = np.random.RandomState(seed)
     targets = np.array(dataset.targets)[remaining_indices]
@@ -393,6 +401,12 @@ def partition_nodes(
         return _dirichlet_partition(remaining_indices, targets, num_nodes, dirichlet_alpha, rng)
     elif strategy == "manual":
         return _manual_partition(dataset, remaining_indices, targets, num_nodes, manual_node_crops)
+    elif strategy == "farm_crops":
+        farm_crops = farm_crops or {}
+        return _farm_crops_partition(
+            dataset, remaining_indices, targets, num_nodes, seed,
+            farm_crops.get("growers_per_crop", 2), farm_crops.get("disease_spread", 0.5),
+        )
     else:
         raise ValueError(f"Unknown non_iid_strategy: {strategy}")
 
@@ -425,6 +439,67 @@ def _dirichlet_partition(
         for node_id, count in enumerate(counts):
             shards[node_id].extend(cls_indices[start : start + count])
             start += count
+    return shards
+
+
+def farm_crop_assignment(crop_classes: list[str], num_nodes: int, growers_per_crop: int, seed: int) -> list[list[str]]:
+    """Which crops each farm grows. Crops are taken in a shuffled order and
+    each goes to the `growers_per_crop` farms growing the fewest crops so
+    far (ties broken at random, preferring farms that share no crop yet), so
+    every farm grows a similar number of crops and farms overlap with
+    different neighbours on different crops rather than forming fixed pairs.
+    """
+    if not 1 <= growers_per_crop <= num_nodes:
+        raise ValueError(f"farm_crops.growers_per_crop must be between 1 and data.num_nodes ({num_nodes})")
+    rng = random.Random(seed)
+    crops = list(crop_classes)
+    rng.shuffle(crops)
+    node_crops: list[list[str]] = [[] for _ in range(num_nodes)]
+    shared = [[0] * num_nodes for _ in range(num_nodes)]  # crops two farms both grow
+    for crop in crops:
+        chosen: list[int] = []
+        for _ in range(growers_per_crop):
+            candidates = [n for n in range(num_nodes) if n not in chosen]
+            chosen.append(min(candidates, key=lambda n: (
+                len(node_crops[n]), sum(shared[n][m] for m in chosen), rng.random(),
+            )))
+        for n in chosen:
+            node_crops[n].append(crop)
+            for m in chosen:
+                if m != n:
+                    shared[n][m] += 1
+    return [sorted(c) for c in node_crops]
+
+
+def _farm_crops_partition(
+    dataset: PlantVillageDataset,
+    indices: list[int],
+    targets: np.ndarray,
+    num_nodes: int,
+    seed: int,
+    growers_per_crop: int,
+    disease_spread: float,
+) -> list[list[int]]:
+    labels = dataset.labels
+    node_crops = farm_crop_assignment(labels.crop_classes, num_nodes, growers_per_crop, seed)
+    growers = {crop: [n for n in range(num_nodes) if crop in node_crops[n]] for crop in labels.crop_classes}
+    rng = np.random.RandomState(seed)
+    shards: list[list[int]] = [[] for _ in range(num_nodes)]
+    for cls in sorted(set(targets.tolist())):
+        crop_idx, disease_idx = labels.class_to_crop_disease[cls]
+        crop_growers = growers[labels.crop_classes[crop_idx]]
+        if labels.disease_classes[disease_idx] == "healthy":
+            owners = crop_growers
+        else:
+            # a disease has reached some growers but (with >1 grower) not all yet
+            k = max(1, round(disease_spread * len(crop_growers)))
+            if len(crop_growers) > 1:
+                k = min(k, len(crop_growers) - 1)
+            owners = sorted(rng.choice(crop_growers, size=k, replace=False).tolist())
+        cls_indices = [indices[i] for i in range(len(indices)) if targets[i] == cls]
+        rng.shuffle(cls_indices)
+        for owner, part in zip(owners, np.array_split(np.array(cls_indices, dtype=int), len(owners))):
+            shards[owner].extend(part.tolist())
     return shards
 
 

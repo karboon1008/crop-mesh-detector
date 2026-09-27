@@ -55,6 +55,9 @@ TEACHER = "teacher"
 LEARNER = "learner"
 
 
+MEASUREMENT_PHASES = ("early_warning_eval",)
+
+
 def update_ema(prev_ema: float | None, value: float, alpha: float) -> float:
     """EMA_t = alpha * value + (1 - alpha) * EMA_{t-1}; the first value seeds it."""
     if prev_ema is None:
@@ -104,10 +107,22 @@ class NodeBatchRecord:
     # for measurement only)
     pseudo_labels: dict[str, dict[str, int]] = field(default_factory=dict)
     duration_s: dict[str, float] = field(default_factory=dict)  # phase -> seconds
+    # early-warning test (simulation only): diseases on this node's crops
+    # that only other nodes have — never trained on, not used for the EMA
+    num_early_warning: int = 0
+    pre_early_warning_eval: dict = field(default_factory=dict)
+    post_early_warning_eval: dict = field(default_factory=dict)
 
     @property
     def total_energy_kwh(self) -> float:
-        return sum(self.energy_kwh.values())
+        """The system's own cost; the early-warning test is measurement a
+        real farm wouldn't run, so it is left out (see measurement_energy_kwh).
+        """
+        return sum(v for phase, v in self.energy_kwh.items() if phase not in MEASUREMENT_PHASES)
+
+    @property
+    def measurement_energy_kwh(self) -> float:
+        return sum(v for phase, v in self.energy_kwh.items() if phase in MEASUREMENT_PHASES)
 
     @property
     def total_bytes(self) -> int:
@@ -210,7 +225,7 @@ class ContinualMesh:
                 kd_weight=kd_weight, crop_kd_weight=crop_kd_weight, temperature=temperature,
             )
         for node in present:
-            self.finish_phase(node, log.per_node[node.node_id])
+            self.finish_phase(node, log.per_node[node.node_id], batch_loaders[node.node_id])
         return log
 
     def local_phase(self, node: Node, batch_idx: int, loaders, local_epochs: int, lr: float) -> NodeBatchRecord:
@@ -236,6 +251,11 @@ class ContinualMesh:
             record.pseudo_labels["local_train"] = node.reset_pseudo_stats()
         with self._track(record, "evaluate"):
             record.pre_distill_eval = node.evaluate()
+        early_warning = getattr(loaders, "early_warning", None)
+        if early_warning is not None:
+            record.num_early_warning = len(early_warning.dataset)
+            with self._track(record, "early_warning_eval"):
+                record.pre_early_warning_eval = node.evaluate(early_warning)
 
         record.ema = update_ema(record.prev_ema, self._metric(record.pre_distill_eval), self.ema_alpha)
         self.ema[node.node_id] = record.ema
@@ -311,16 +331,21 @@ class ContinualMesh:
             record.pseudo_labels["distill"] = node.reset_pseudo_stats()
         record.distilled = True
 
-    def finish_phase(self, node: Node, record: NodeBatchRecord) -> None:
+    def finish_phase(self, node: Node, record: NodeBatchRecord, loaders=None) -> None:
         """Steps 6-7: post-distill evaluation on the same test set (reusing
         the pre-distill result when the node didn't distil, since its weights
-        haven't changed), and the comparison.
+        haven't changed), and the comparison. `loaders`: this batch's
+        NodeBatchLoaders, for the early-warning test when there is one.
         """
         if record.distilled:
             with self._track(record, "evaluate"):
                 record.post_distill_eval = node.evaluate()
+            if record.num_early_warning and loaders is not None:
+                with self._track(record, "early_warning_eval"):
+                    record.post_early_warning_eval = node.evaluate(loaders.early_warning)
         else:
             record.post_distill_eval = record.pre_distill_eval
+            record.post_early_warning_eval = record.pre_early_warning_eval
         pre, post = scalar_metrics(record.pre_distill_eval), scalar_metrics(record.post_distill_eval)
         record.distill_gain = {m: post[m] - pre[m] for m in pre}
         record.improved = record.distilled and self._metric(record.post_distill_eval) > self._metric(

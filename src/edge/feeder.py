@@ -5,6 +5,9 @@ next stratified batch from PlantVillage with the same stream as
   - writes every farm's inbox manifest (its train / unlabelled / test photo
     paths, see src/edge/data.py), filling in `hidden_class` for unlabelled
     photos so pseudo-label accuracy can be measured
+  - adds each farm's early-warning test photos (data.early_warning: held-out
+    photos of diseases on its crops that only other farms have) — a
+    measurement a real farm doesn't have
   - publishes the co-op's label space to the knowledge server (first time)
   - announces the round: its probe image paths and the farms with enough
     photos to take part (>= 2 labelled train, >= 1 test)
@@ -28,6 +31,7 @@ from src.data.plantvillage import load_full_dataset
 from src.data.stream import DataStream
 from src.edge.client import KnowledgeClient
 from src.edge.data import LabelSpace, inbox_path
+from src.train import print_farms
 
 
 def label_space(dataset) -> LabelSpace:
@@ -49,7 +53,10 @@ def _entries(dataset, indices: list[int], key: str) -> list[dict]:
     return out
 
 
-def publish_batch(dataset, batch: dict, edge_dir: str | Path, client: KnowledgeClient) -> list[str]:
+def publish_batch(
+    dataset, batch: dict, edge_dir: str | Path, client: KnowledgeClient,
+    stream: DataStream | None = None, max_early_warning_per_class: int | None = None,
+) -> list[str]:
     """Writes the batch's inbox manifests and announces it; returns the farms
     expected to take part.
     """
@@ -63,6 +70,10 @@ def publish_batch(dataset, batch: dict, edge_dir: str | Path, client: KnowledgeC
             "unlabeled": _entries(dataset, split.get("unlabeled_idx", []), "hidden_class"),
             "test": _entries(dataset, split["test_idx"], "class"),
         }
+        if stream is not None and stream.early_warning:
+            manifest["early_warning"] = _entries(
+                dataset, stream.early_warning_idx(dataset, node_id, max_early_warning_per_class), "class",
+            )
         path = inbox_path(edge_dir, node_id, b)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(manifest))
@@ -91,6 +102,7 @@ def trigger(cfg, client: KnowledgeClient, edge_dir: str | Path, next_batch: bool
                 "The knowledge server already has rounds from another run — restart it with --reset."
             )
         stream = DataStream.create(cfg, dataset, stream_path)
+        print_farms(stream, dataset)
         size, labeled = cfg.get("continual.first_batch_size", 20000), cfg.get("continual.first_batch_labeled_fraction", 1.0)
     else:
         if not next_batch:
@@ -98,7 +110,9 @@ def trigger(cfg, client: KnowledgeClient, edge_dir: str | Path, next_batch: bool
         stream = DataStream.load(cfg, dataset, stream_path)
         size, labeled = cfg.get("continual.next_batch_size", 3000), cfg.get("continual.labeled_fraction", 0.1)
     batch = stream.next_batch(dataset, size, probe_fraction, test_fraction, seed, labeled_fraction=labeled)
-    expected = publish_batch(dataset, batch, edge_dir, client)
+    expected = publish_batch(
+        dataset, batch, edge_dir, client, stream, cfg.get("data.early_warning.max_images_per_class", 50),
+    )
     print(
         f"Round {batch['batch_idx']}: {batch['size']} images, probe {len(batch['probe_idx'])}, "
         f"{batch['labeled_fraction']:.0%} of train labelled, farms expected: {expected}; "

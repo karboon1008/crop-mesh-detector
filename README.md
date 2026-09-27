@@ -113,27 +113,52 @@ Set up once, on the first run:
    folder name (e.g. `Tomato___Bacterial_spot`) into two labels: crop type
    (`Tomato`) and disease (`Bacterial_spot`).
 2. **Ownership**: every image is assigned to the node (farm) that would
-   photograph it. The split is non-IID: each node gets a different class mix
-   (Dirichlet label skew by default).
+   photograph it. The default split (`data.non_iid_strategy: farm_crops`)
+   follows how farms actually differ: each crop is grown by two farms
+   (`data.farm_crops.growers_per_crop`), so each farm grows 4-5 crops. Both
+   growers see the crop's healthy leaves, but each disease has so far
+   reached only one of them (`disease_spread`). The other grower is still
+   waiting for it, and can only learn it from a peer.
+3. **Early-warning photos** (`data.early_warning`): 10% of every such
+   "waiting for" disease is held out of all farms' data. They're never
+   trained on and never in a probe; they are only used for the early-warning
+   test below.
 
 Then every batch, only when it is triggered:
 
-3. **Draw the batch**: a **stratified** sample (every class in
+4. **Draw the batch**: a **stratified** sample (every class in
    proportion) of the images no earlier batch used:
    `continual.first_batch_size` (20,000) for batch 0,
    `continual.next_batch_size` (3,000) for each `--next-batch`.
-4. **Probe set**: a stratified 5% of this batch (`data.probe_set_fraction`,
+5. **Probe set**: a stratified 5% of this batch (`data.probe_set_fraction`,
    e.g. 150 of 3,000) becomes this batch's public probe set, shared by all
    nodes. It is **not cumulative**: each batch uses only its own probe images.
-5. **Deliver** the other 95% of the batch to the nodes that own the images.
-6. **Each node splits its own arrivals** into private train/test,
+6. **Deliver** the other 95% of the batch to the nodes that own the images.
+7. **Each node splits its own arrivals** into private train/test,
    85% / 15% (`data.test_fraction`), stratified per class.
-7. **Preprocessing** happens as images are read: train images get
+8. **Preprocessing** happens as images are read: train images get
    augmentation (random resized crop, flips, rotation, colour jitter);
    test/probe images only get resize + ImageNet normalisation.
 
 A node that receives fewer than 2 train images or no test image in a batch
 sits that batch out, keeping its model, EMA, and database entry.
+
+**Two tests per node, before and after distillation:**
+
+| | Own-crop test | Early-warning test |
+|---|---|---|
+| Photos | the node's private 15% test split | held-out photos of diseases on the node's crops that only other farms have (up to `max_images_per_class` = 50 each) |
+| Answers | "am I still good at what I know?" | "did the other farms teach me this disease before it reached me?" |
+| Drives the EMA / roles | yes | no, it only measures |
+
+Before distillation the early-warning score is usually near zero, because
+the node has never seen those diseases. The rise after distillation is what
+learning from peers adds, and the own-crop score shows whether it cost
+anything. With the default seed on PlantVillage, every farm has 3-6 such
+diseases (150-287 test photos). The early-warning test's energy is reported
+separately as `measurement_energy_kwh` and left out of the system's
+energy, since a real farm has no such test. Results: the `*_ew_*` columns of
+`batch_summary.csv` and `continual.early_warning` in `results_<arch>.json`.
 
 **Probe logits across batches**: probe logits are predictions on one
 batch's probe images, so they only line up with that batch. That's why

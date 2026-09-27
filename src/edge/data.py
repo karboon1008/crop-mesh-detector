@@ -8,13 +8,17 @@ Each round, a farm's new photos arrive as an inbox manifest,
       "node_id": "node_0",
       "train":     [{"path": ".../leaf_001.jpg", "class": "Tomato___Early_blight"}, ...],
       "unlabeled": [{"path": ".../leaf_002.jpg", "hidden_class": null}, ...],
-      "test":      [{"path": ".../leaf_003.jpg", "class": "Tomato___healthy"}, ...]
+      "test":      [{"path": ".../leaf_003.jpg", "class": "Tomato___healthy"}, ...],
+      "early_warning": [{"path": ".../leaf_004.jpg", "class": "Tomato___Late_blight"}, ...]
     }
 
 `train` and `test` carry the labels the farmer gave. `unlabeled` photos are
 pseudo-labelled by the node; `hidden_class` is only filled in by the
 simulation feeder, to measure pseudo-label accuracy, and is null on a real
-farm. The round's probe images (public, the same for every farm) are listed
+farm. `early_warning` (simulation only, optional) lists photos of diseases
+on this farm's crops that only other farms have seen, to test before and
+after distillation whether the co-op taught the farm a disease before it
+arrived. The round's probe images (public, the same for every farm) are listed
 by the knowledge server. Class names map to crop/disease indices through the
 co-op's shared label space (classes.json), so every farm's model heads line
 up.
@@ -181,7 +185,14 @@ def build_node_loaders(cfg, manifest: dict, labels: LabelSpace) -> NodeBatchLoad
         _class_weights(disease_counts, len(labels.disease_classes))
         if cfg.get("training.disease_class_balanced", True) else None
     )
-    return NodeBatchLoaders(train_loader, test_loader, unlabeled_loader, crop_weights, disease_weights)
+    early_warning = [(e["path"], e["class"]) for e in manifest.get("early_warning", [])]
+    early_warning_loader = DataLoader(
+        FileListDataset(early_warning, labels, build_eval_transform(labels.image_size)), batch_size=batch_size,
+        shuffle=False,
+    ) if early_warning else None
+    return NodeBatchLoaders(
+        train_loader, test_loader, unlabeled_loader, crop_weights, disease_weights, early_warning_loader,
+    )
 
 
 def build_probe_loader(cfg, probe_paths: list[str], labels: LabelSpace) -> DataLoader:

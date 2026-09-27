@@ -12,8 +12,24 @@ data:
   probe_set_min_samples_small_class: 10
   probe_set_max_fraction_small_class: 0.2
   test_fraction: 0.15             # private test share of each node's arrivals in EACH batch (train gets 0.85), stratified per class
-  non_iid_strategy: "dirichlet"   # "by_crop" | "by_disease" | "dirichlet" | "manual"
-  dirichlet_alpha: 0.5
+  non_iid_strategy: "farm_crops"  # "farm_crops" | "by_crop" | "by_disease" | "dirichlet" | "manual"
+  dirichlet_alpha: 0.5            # only used by "dirichlet"
+  # Only used when non_iid_strategy == "farm_crops": each crop is grown by
+  # growers_per_crop farms. Every grower sees that crop's healthy leaves; each
+  # disease has so far reached only disease_spread of its growers (at least
+  # one grower is always still waiting for it) — the diseases a farm could
+  # learn from a peer before they arrive.
+  farm_crops:
+    growers_per_crop: 2           # 14 crops x 2 / 6 farms ~ 4-5 crops per farm
+    disease_spread: 0.5
+  # Early-warning test (simulation only): for each farm, held-out photos of
+  # diseases on ITS crops that only other farms have. Tested before and after
+  # distillation, never trained on, never used for the EMA/roles, and its
+  # energy is reported separately (a real farm wouldn't run it).
+  early_warning:
+    enabled: true
+    holdout_fraction: 0.1         # share of each such disease's photos held out of every farm's data
+    max_images_per_class: 50      # cap per disease per farm, to keep the extra test cheap
   # Only used when non_iid_strategy == "manual" — one crop species per node
   # (all of that crop's disease classes included), so each simulated farm
   # specializes in a single crop.

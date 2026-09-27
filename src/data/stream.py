@@ -16,6 +16,15 @@ Then each batch, only when it's triggered:
     (continual.labeled_fraction < 1) only a share of its train images keep
     their labels — the rest arrive unlabelled and are pseudo-labelled
 
+Early-warning test (data.early_warning.enabled): when the stream is set up,
+a "threat" class for a node is a disease on a crop that node grows which it
+never receives but some other node does (data.non_iid_strategy
+"farm_crops" makes these on purpose). A share of every threat class's images
+is held out of every shard — never trained on, never in a probe — and each
+node is tested on the held-out images of its own threat classes before and
+after distillation: did the other farms teach it a disease on its own crop
+before that disease reached it?
+
 The probe set is NOT cumulative: each batch uses only its own probe slice.
 Probe logits therefore only line up with the batch they were computed on,
 so every node refreshes its logits each batch and a learner only takes
@@ -31,7 +40,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from src.data.plantvillage import partition_nodes
+import random
+
+from src.data.plantvillage import farm_crop_assignment, partition_nodes
 from src.data.splits import BatchSplit, split_node_arrival, stratified_sample
 
 
@@ -39,7 +50,7 @@ def stream_manifest(cfg, dataset) -> dict:
     """What has to be unchanged for a saved stream's indices to still point
     at the same images and partition.
     """
-    return {
+    manifest = {
         "num_images": len(dataset),
         "classes": list(dataset.base.classes),
         "seed": cfg.get("data.seed", 42),
@@ -48,14 +59,66 @@ def stream_manifest(cfg, dataset) -> dict:
         "dirichlet_alpha": cfg.get("data.dirichlet_alpha", 0.5),
         "probe_set_fraction": cfg.get("data.probe_set_fraction", 0.05),
     }
+    # only recorded when used, so streams saved before these existed still load
+    if manifest["non_iid_strategy"] == "farm_crops":
+        manifest["farm_crops"] = {
+            "growers_per_crop": cfg.get("data.farm_crops.growers_per_crop", 2),
+            "disease_spread": cfg.get("data.farm_crops.disease_spread", 0.5),
+        }
+    if cfg.get("data.early_warning.enabled", False):
+        manifest["early_warning_holdout_fraction"] = cfg.get("data.early_warning.holdout_fraction", 0.1)
+    return manifest
+
+
+def _crop_of(dataset, cls: int) -> str:
+    return dataset.labels.crop_classes[dataset.labels.class_to_crop_disease[cls][0]]
+
+
+def threat_classes(dataset, node_shards: list[list[int]], node_crops: list[list[str]]) -> list[list[int]]:
+    """Per node: classes on a crop it grows that it never receives but some
+    other node does (so a peer could teach it).
+    """
+    targets = dataset.targets
+    owned = [{targets[i] for i in shard} for shard in node_shards]
+    all_classes = set().union(*owned) if owned else set()
+    return [
+        sorted(c for c in all_classes
+               if _crop_of(dataset, c) in node_crops[n] and c not in owned[n]
+               and any(c in owned[m] for m in range(len(node_shards)) if m != n))
+        for n in range(len(node_shards))
+    ]
+
+
+def carve_early_warning(
+    dataset, node_shards: list[list[int]], node_crops: list[list[str]], fraction: float, seed: int,
+) -> tuple[list[list[int]], dict[int, list[int]]]:
+    """Holds `fraction` (at least 1 image) of every threat class out of the
+    shards; returns (shards without them, {class: held-out indices}).
+    """
+    targets = dataset.targets
+    threats = sorted(set().union(*map(set, threat_classes(dataset, node_shards, node_crops))))
+    rng = random.Random(seed + 7)
+    holdout: dict[int, list[int]] = {}
+    for cls in threats:
+        cls_indices = sorted(i for shard in node_shards for i in shard if targets[i] == cls)
+        rng.shuffle(cls_indices)
+        holdout[cls] = cls_indices[:max(1, round(len(cls_indices) * fraction))]
+    held = {i for indices in holdout.values() for i in indices}
+    return [[i for i in shard if i not in held] for shard in node_shards], holdout
 
 
 class DataStream:
-    def __init__(self, path: Path, manifest: dict, node_shards: list[list[int]], batches: list[dict]):
+    def __init__(
+        self, path: Path, manifest: dict, node_shards: list[list[int]], batches: list[dict],
+        node_crops: list[list[str]] | None = None, early_warning: dict[int, list[int]] | None = None,
+    ):
         self.path = Path(path)
         self.manifest = manifest
         self.node_shards = node_shards
         self.batches = batches
+        self.node_crops = node_crops or [[] for _ in node_shards]
+        # class -> held-out image indices, for the early-warning test only
+        self.early_warning = early_warning or {}
         self._owner = {idx: node_i for node_i, shard in enumerate(node_shards) for idx in shard}
 
     @classmethod
@@ -68,8 +131,21 @@ class DataStream:
             cfg.get("data.dirichlet_alpha", 0.5),
             cfg.get("data.seed", 42),
             manual_node_crops=cfg.get("data.manual_node_crops", None),
+            farm_crops=cfg.get("data.farm_crops", None),
         )
-        stream = cls(path, stream_manifest(cfg, dataset), node_shards, [])
+        num_nodes, seed = cfg.get("data.num_nodes", 6), cfg.get("data.seed", 42)
+        if cfg.get("data.non_iid_strategy", "dirichlet") == "farm_crops":
+            node_crops = farm_crop_assignment(
+                dataset.labels.crop_classes, num_nodes, cfg.get("data.farm_crops.growers_per_crop", 2), seed,
+            )
+        else:  # a node grows whatever crops its shard contains
+            node_crops = [sorted({_crop_of(dataset, dataset.targets[i]) for i in shard}) for shard in node_shards]
+        early_warning = {}
+        if cfg.get("data.early_warning.enabled", False):
+            node_shards, early_warning = carve_early_warning(
+                dataset, node_shards, node_crops, cfg.get("data.early_warning.holdout_fraction", 0.1), seed,
+            )
+        stream = cls(path, stream_manifest(cfg, dataset), node_shards, [], node_crops, early_warning)
         stream.save()
         return stream
 
@@ -84,7 +160,10 @@ class DataStream:
                 f"(changed: {mismatches}) — its image indices would point at the wrong images. "
                 f"Restore the original setup, or start over with `python -m src.train --reset`."
             )
-        return cls(path, data["manifest"], data["node_shards"], data["batches"])
+        return cls(
+            path, data["manifest"], data["node_shards"], data["batches"], data.get("node_crops"),
+            {int(c): idx for c, idx in data.get("early_warning", {}).items()},
+        )
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -92,6 +171,8 @@ class DataStream:
             "manifest": self.manifest,
             "node_shards": self.node_shards,
             "batches": self.batches,
+            "node_crops": self.node_crops,
+            "early_warning": {str(c): idx for c, idx in self.early_warning.items()},
         }))
 
     @property
@@ -141,6 +222,17 @@ class DataStream:
         self.batches.append(batch)
         self.save()
         return batch
+
+    def early_warning_classes(self, dataset, node_id: str) -> list[int]:
+        """The node's threat classes that have held-out images."""
+        node_i = int(node_id.rsplit("_", 1)[-1])
+        return [c for c in threat_classes(dataset, self.node_shards, self.node_crops)[node_i] if c in self.early_warning]
+
+    def early_warning_idx(self, dataset, node_id: str, max_per_class: int | None = None) -> list[int]:
+        """The node's early-warning test images: up to `max_per_class`
+        held-out images of each of its threat classes (the same every batch).
+        """
+        return [i for c in self.early_warning_classes(dataset, node_id) for i in self.early_warning[c][:max_per_class]]
 
     def node_split(self, batch_idx: int, node_id: str) -> BatchSplit:
         split = self.batches[batch_idx]["nodes"][node_id]

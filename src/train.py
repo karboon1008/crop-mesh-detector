@@ -121,11 +121,57 @@ def pseudo_label_rates(stats_by_phase: dict[str, dict[str, int]]) -> dict[str, f
     return rates
 
 
+EARLY_WARNING_METRICS = ("disease_accuracy", "pair_accuracy")
+
+
+def early_warning_columns(r: dict) -> dict:
+    """Early-warning test (diseases on this node's crops that only peers
+    have) before/after distillation; blank when the node has none.
+    """
+    pre, post = r.get("pre_early_warning_eval") or {}, r.get("post_early_warning_eval") or {}
+    cols: dict = {"num_early_warning": r.get("num_early_warning", 0)}
+    for m in EARLY_WARNING_METRICS:
+        cols[f"pre_ew_{m}"] = round(pre[m], 4) if m in pre else None
+        cols[f"post_ew_{m}"] = round(post[m], 4) if m in post else None
+        cols[f"gain_ew_{m}"] = round(post[m] - pre[m], 4) if m in pre and m in post else None
+    return cols
+
+
+def summarise_early_warning(batch_logs: list[dict]) -> dict:
+    """Did learning from peers teach nodes the diseases heading their way,
+    and did it cost them what they already knew?
+    """
+    records = [r for log in batch_logs for r in log["per_node"].values() if r.get("num_early_warning")]
+    distilled = [r for r in records if r["distilled"]]
+
+    def mean(values):
+        values = list(values)
+        return round(statistics.mean(values), 4) if values else None
+
+    return {
+        "node_batches_tested": len(records),
+        "node_batches_distilled": len(distilled),
+        **{f"mean_pre_ew_{m}": mean(r["pre_early_warning_eval"][m] for r in records) for m in EARLY_WARNING_METRICS},
+        **{f"mean_post_ew_{m}": mean(r["post_early_warning_eval"][m] for r in records) for m in EARLY_WARNING_METRICS},
+        # gains where it matters: the node-batches that actually distilled
+        **{f"mean_distill_gain_ew_{m}": mean(
+            r["post_early_warning_eval"][m] - r["pre_early_warning_eval"][m] for r in distilled
+        ) for m in EARLY_WARNING_METRICS},
+        "mean_distill_gain_own_pair_accuracy": mean(
+            r["post_distill_eval"]["pair_accuracy"] - r["pre_distill_eval"]["pair_accuracy"] for r in distilled
+        ),
+        "measurement_energy_kwh": sum(r.get("measurement_energy_kwh", 0.0) for r in records),
+    }
+
+
 def batch_log_to_json(log: BatchLog) -> dict:
     def record_json(record):
         d = dataclasses.asdict(record)
         d["pre_distill_eval"] = scalar_metrics(record.pre_distill_eval)
         d["post_distill_eval"] = scalar_metrics(record.post_distill_eval)
+        d["pre_early_warning_eval"] = scalar_metrics(record.pre_early_warning_eval)
+        d["post_early_warning_eval"] = scalar_metrics(record.post_early_warning_eval)
+        d["measurement_energy_kwh"] = record.measurement_energy_kwh
         d["total_bytes"] = record.total_bytes
         d["total_energy_kwh"] = record.total_energy_kwh
         return d
@@ -174,6 +220,7 @@ def batch_summary_rows(batch_logs: list[dict], metric: str, comm_estimator: Comm
                 ),
                 "duration_s": round(sum(r["duration_s"].values()), 2),
                 **pseudo_label_rates(r.get("pseudo_labels", {})),
+                **early_warning_columns(r),
             })
     return rows
 
@@ -215,6 +262,7 @@ def summarise_run(batch_logs: list[dict], metric: str) -> dict:
         "total_bytes_downloaded": sum(b["bytes_downloaded"] for b in per_batch),
         "total_bytes_exchanged": sum(b["bytes_uploaded"] + b["bytes_downloaded"] for b in per_batch),
         "total_compute_energy_kwh": sum(b["compute_energy_kwh"] for b in per_batch),
+        "early_warning": summarise_early_warning(batch_logs),
         "per_batch": per_batch,
     }
 
@@ -256,13 +304,16 @@ def run_architecture(cfg, arch, dataset, stream, tracker, comm_estimator, device
     base_local_epochs = cfg.get(
         f"training.local_epochs_per_round_overrides.{arch}", cfg.get("training.local_epochs_per_round", 2)
     )
+    max_ew = cfg.get("data.early_warning.max_images_per_class", 50)
     for b in range(state["completed_batches"], stream.num_batches):
         # a node needs >= 2 labelled train images (BatchNorm) and >= 1 test image to take part
         batch_loaders = {}
         for node in nodes:
             split = stream.node_split(b, node.node_id)
             if len(split.train_idx) >= 2 and split.test_idx:
-                batch_loaders[node.node_id] = build_batch_loaders(cfg, dataset, split)
+                batch_loaders[node.node_id] = build_batch_loaders(
+                    cfg, dataset, split, early_warning_idx=stream.early_warning_idx(dataset, node.node_id, max_ew),
+                )
         present = [n for n in nodes if n.node_id in batch_loaders]
         if b == 0:
             # the big first batch: scale epochs up for small nodes so every
@@ -300,6 +351,12 @@ def run_architecture(cfg, arch, dataset, stream, tracker, comm_estimator, device
                 f"{metric} pre={pre:.3f} post={post:.3f} "
                 f"({'improved' if record.improved else 'distilled, no gain' if record.distilled else 'no distill'})"
             )
+            if record.num_early_warning:
+                pre_ew, post_ew = record.pre_early_warning_eval, record.post_early_warning_eval
+                print(
+                    f"        early warning ({record.num_early_warning} images of peers-only diseases on its crops): "
+                    f"disease_accuracy pre={pre_ew['disease_accuracy']:.3f} post={post_ew['disease_accuracy']:.3f}"
+                )
             if record.pseudo_labels:
                 rates = pseudo_label_rates(record.pseudo_labels)
                 print(
@@ -341,6 +398,20 @@ def run_architecture(cfg, arch, dataset, stream, tracker, comm_estimator, device
         "knowledge_store": mesh.store.entries(),
         "total_bytes_exchanged": summary["total_bytes_exchanged"],
     }
+
+
+def print_farms(stream: DataStream, dataset) -> None:
+    """Each node's crops and its early-warning diseases, once, at stream creation."""
+    names = dataset.base.classes
+    for n, crops in enumerate(stream.node_crops):
+        node_id = f"node_{n}"
+        threats = [names[c] for c in stream.early_warning_classes(dataset, node_id)]
+        print(f"  {node_id} grows {', '.join(crops) or 'nothing'}")
+        if stream.early_warning:
+            print(f"    early-warning test: {', '.join(threats) or 'none (it has every disease of its crops)'}")
+    if stream.early_warning:
+        held = sum(len(v) for v in stream.early_warning.values())
+        print(f"  {held} images of {len(stream.early_warning)} classes held out for early-warning tests (never trained on)")
 
 
 def reset_outputs(output_dir: Path) -> None:
@@ -391,6 +462,7 @@ def main():
         if args.next_batch:
             raise SystemExit("No stream yet — run `python -m src.train` first to start it with batch 0.")
         stream = DataStream.create(cfg, dataset, stream_path)
+        print_farms(stream, dataset)
         batch = stream.next_batch(
             dataset, cfg.get("continual.first_batch_size", 20000), probe_fraction, test_fraction, seed,
             labeled_fraction=cfg.get("continual.first_batch_labeled_fraction", 1.0),
@@ -456,6 +528,13 @@ def main():
             f"{s['num_distillations']} node-batches, mean gain {s['mean_distill_gain']:+.4f} {s['metric']}, "
             f"{s['total_bytes_exchanged']} bytes, {s['total_compute_energy_kwh']:.6f} kWh"
         )
+        ew = s["early_warning"]
+        if ew["node_batches_distilled"]:
+            print(
+                f"early warning: distilling raised disease accuracy on peers-only diseases by "
+                f"{ew['mean_distill_gain_ew_disease_accuracy']:+.4f} on average "
+                f"(own-test pair accuracy {ew['mean_distill_gain_own_pair_accuracy']:+.4f})"
+            )
     results_path.write_text(json.dumps(all_results, indent=2))
 
     # compute energy accumulates across triggers (each is its own process)
