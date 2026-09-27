@@ -232,6 +232,11 @@ def run_architecture(cfg, arch, dataset, stream, tracker, comm_estimator, device
     lr = cfg.get("training.lr", 0.001)
 
     nodes = build_nodes(cfg, arch, dataset, stream.num_nodes, device)
+    if state["completed_batches"] > 0 and cfg.get("training.round_optimizer", None):
+        # deployment rounds (batch >= 1) may use another optimizer than the in-house batch 0
+        for node in nodes:
+            node.optimizer_name = cfg.get("training.round_optimizer")
+            node.sgd_momentum = cfg.get("training.sgd_momentum", 0.9)
     if state["completed_batches"] > 0:
         for node in nodes:
             node.load_state(torch.load(node_dir / f"{node.node_id}.pt", map_location=device), lr)
@@ -314,7 +319,8 @@ def run_architecture(cfg, arch, dataset, stream, tracker, comm_estimator, device
                 # training.round_lr: local-training LR for deployment rounds (batch >= 1); batch 0 keeps training.lr
                 lr=cfg.get("training.round_lr", lr) if b > 0 else lr,
                 distill_epochs=cfg.get("training.distill_epochs_per_round", 1),
-                distill_lr=cfg.get("training.distill_lr", 0.0005),
+                distill_lr=cfg.get("training.round_distill_lr" if b > 0 else "training.distill_lr",
+                                   cfg.get("training.distill_lr", 0.0005)),
                 proto_weight=cfg.get("training.proto_weight", 0.5),
                 kd_weight=cfg.get("training.kd_weight", 0.5),
                 crop_kd_weight=cfg.get("training.crop_kd_weight", None),

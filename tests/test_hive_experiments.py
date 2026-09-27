@@ -118,3 +118,21 @@ def test_by_source_run_scores_every_node_on_every_source(two_sources, tmp_path, 
         (n, s) for n in ("node_0", "node_1") for s in ("plantdoc", "plantvillage")
     }
     assert all(0.0 <= e["post"]["pair_accuracy"] <= 1.0 for e in last)
+
+
+def test_deployment_rounds_can_switch_to_sgd(pv_root, tmp_path, monkeypatch):
+    import torch
+
+    cfg = _cfg(pv_root, tmp_path, ema_threshold=1.1, next_batch_size=40)
+    cfg._data["training"].update({"round_optimizer": "sgd", "round_lr": 0.01, "round_distill_lr": 0.005})
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(yaml.safe_dump(cfg.as_dict()))
+    node_pt = tmp_path / "out" / "continual" / "mobilenet_v3_small" / "nodes" / "node_0.pt"
+
+    _run_cli(monkeypatch, cfg_path)  # batch 0: in-house training stays on Adam
+    assert torch.load(node_pt)["optimizer_name"] == "adam"
+    _run_cli(monkeypatch, cfg_path, "--next-batch")  # batch 1: SGD, Adam's saved moments not loaded into it
+    after = torch.load(node_pt)
+    assert after["optimizer_name"] == "sgd"
+    assert "momentum" in after["optimizer"]["param_groups"][0]
+    assert after["optimizer"]["param_groups"][0]["lr"] == 0.005  # last phase was distillation at round_distill_lr

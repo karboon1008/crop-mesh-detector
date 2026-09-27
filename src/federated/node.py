@@ -97,6 +97,9 @@ class Node:
         # local-only-control arm should behave and is a reasonable,
         # simpler first step for the collective arm too.
         self.optimizer: torch.optim.Optimizer | None = None
+        # "adam" (default) or "sgd" (with momentum); train.py can switch deployment rounds to SGD
+        self.optimizer_name = "adam"
+        self.sgd_momentum = 0.9
         # Stage-1 (run_training) anneals its LR to ~0 over its full epoch
         # budget via CosineAnnealingLR, then Stage-2 previously restarted
         # every round at a flat, un-annealed `distill_lr` -- a large
@@ -144,9 +147,11 @@ class Node:
 
     def _get_optimizer(self, lr: float, weight_decay: float = 0.0) -> torch.optim.Optimizer:
         if self.optimizer is None:
-            self.optimizer = torch.optim.Adam(
-                (p for p in self.model.parameters() if p.requires_grad), lr=lr, weight_decay=weight_decay
-            )
+            params = (p for p in self.model.parameters() if p.requires_grad)
+            if self.optimizer_name == "sgd":
+                self.optimizer = torch.optim.SGD(params, lr=lr, momentum=self.sgd_momentum, weight_decay=weight_decay)
+            else:
+                self.optimizer = torch.optim.Adam(params, lr=lr, weight_decay=weight_decay)
             if self.total_epochs is not None:
                 self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
                     self.optimizer, T_max=self.total_epochs
@@ -164,11 +169,13 @@ class Node:
         return {
             "model": self.model.state_dict(),
             "optimizer": self.optimizer.state_dict() if self.optimizer is not None else None,
+            "optimizer_name": self.optimizer_name,
         }
 
     def load_state(self, state: dict, lr: float) -> None:
         self.model.load_state_dict(state["model"])
-        if state.get("optimizer") is not None:
+        # an optimizer's state only loads into the same kind of optimizer (e.g. not Adam's moments into SGD)
+        if state.get("optimizer") is not None and state.get("optimizer_name", "adam") == self.optimizer_name:
             self._get_optimizer(lr).load_state_dict(state["optimizer"])
 
     # local supervised training (data never leaves this method)
