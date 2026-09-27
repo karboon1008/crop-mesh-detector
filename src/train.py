@@ -52,7 +52,7 @@ from pathlib import Path
 import torch
 
 from src.config import Config
-from src.data.plantvillage import load_full_dataset
+from src.data.plantvillage import load_configured_dataset
 from src.data.splits import build_batch_loaders, build_probe_loader
 from src.data.stream import DataStream
 from src.energy.tracker import (
@@ -450,7 +450,7 @@ def main():
     probe_fraction = cfg.get("data.probe_set_fraction", 0.05)
     test_fraction = cfg.get("data.test_fraction", 0.15)
 
-    dataset = load_full_dataset(cfg.get("data.root"), cfg.get("data.image_size", 224))
+    dataset = load_configured_dataset(cfg)
     print(
         f"Loaded {len(dataset)} PlantVillage images, {len(dataset.labels.crop_classes)} crop classes, "
         f"{len(dataset.labels.disease_classes)} disease classes."

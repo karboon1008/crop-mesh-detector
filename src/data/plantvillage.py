@@ -287,9 +287,10 @@ def filter_dataset_by_crop(
     return dataset
 
 
-def load_full_dataset(root: str | Path, image_size: int = 224) -> PlantVillageDataset:
-    """Loads every PlantVillage class folder under `root` — PlantVillage is
-    the project's only dataset.
+def load_full_dataset(root: str | Path, image_size: int = 224, classes: list[str] | None = None) -> PlantVillageDataset:
+    """Loads PlantVillage from `root` — the project's only dataset. Every
+    class folder by default; `classes` restricts it to those folders (e.g.
+    tomato only), and the crop/disease label space then covers just them.
     """
     root = Path(root)
     if not root.exists():
@@ -298,7 +299,17 @@ def load_full_dataset(root: str | Path, image_size: int = 224) -> PlantVillageDa
             f"'python scripts/download_plantvillage.py' first, or point "
             f"config.yaml's data.root at your existing copy."
         )
+    if classes:
+        missing = sorted(set(classes) - {p.name for p in root.iterdir() if p.is_dir()})
+        if missing:
+            raise ValueError(f"data.classes names folders that aren't under {root}: {missing}")
+        return PlantVillageDataset(root, image_size=image_size, allowed_classes=set(classes))
     return PlantVillageDataset(root, image_size=image_size)
+
+
+def load_configured_dataset(cfg) -> PlantVillageDataset:
+    """PlantVillage restricted to config.yaml's data.classes (all classes when unset)."""
+    return load_full_dataset(cfg.get("data.root"), cfg.get("data.image_size", 224), cfg.get("data.classes", None))
 
 
 def _stratified_carve(
@@ -363,6 +374,7 @@ def partition_nodes(
     seed: int,
     manual_node_crops: dict[str, list[str]] | None = None,
     farm_crops: dict | None = None,
+    manual_node_classes: dict[str, list[str]] | None = None,
 ) -> list[list[int]]:
     """Split `remaining_indices` into `num_nodes` non-IID shards.
 
@@ -381,6 +393,10 @@ def partition_nodes(
                       grows Apple/Cherry/Peach/Blueberry/Raspberry) — same
                       disjoint-by-crop shape as "by_crop", but the farm/crop
                       assignment is explicit instead of round-robin.
+      - "manual_classes": each node gets exactly the class folders named
+                      for it in `manual_node_classes`; a class named for
+                      several nodes is split evenly between them (e.g.
+                      Tomato___healthy on every node, each disease on one).
       - "farm_crops": each crop is grown by `farm_crops.growers_per_crop`
                       farms; every grower sees that crop's healthy leaves,
                       but each disease has only reached a share
@@ -401,6 +417,8 @@ def partition_nodes(
         return _dirichlet_partition(remaining_indices, targets, num_nodes, dirichlet_alpha, rng)
     elif strategy == "manual":
         return _manual_partition(dataset, remaining_indices, targets, num_nodes, manual_node_crops)
+    elif strategy == "manual_classes":
+        return _manual_classes_partition(dataset, remaining_indices, targets, num_nodes, manual_node_classes, rng)
     elif strategy == "farm_crops":
         farm_crops = farm_crops or {}
         return _farm_crops_partition(
@@ -500,6 +518,41 @@ def _farm_crops_partition(
         rng.shuffle(cls_indices)
         for owner, part in zip(owners, np.array_split(np.array(cls_indices, dtype=int), len(owners))):
             shards[owner].extend(part.tolist())
+    return shards
+
+
+def _manual_classes_partition(
+    dataset: PlantVillageDataset,
+    indices: list[int],
+    targets: np.ndarray,
+    num_nodes: int,
+    manual_node_classes: dict[str, list[str]] | None,
+    rng: np.random.RandomState,
+) -> list[list[int]]:
+    if not manual_node_classes:
+        raise ValueError("non_iid_strategy 'manual_classes' requires data.manual_node_classes in config.yaml")
+    class_names = list(dataset.base.classes)
+    owners: dict[str, list[int]] = {}
+    for node_key, names in manual_node_classes.items():
+        node_idx = int(str(node_key).rsplit("_", 1)[-1])
+        if not 0 <= node_idx < num_nodes:
+            raise ValueError(f"manual_node_classes names {node_key}, but data.num_nodes is {num_nodes}")
+        for name in names:
+            owners.setdefault(name, []).append(node_idx)
+    unknown = sorted(set(owners) - set(class_names))
+    if unknown:
+        raise ValueError(f"manual_node_classes references classes not in the dataset: {unknown}")
+    unassigned = sorted(set(class_names) - set(owners))
+    if unassigned:
+        raise ValueError(f"manual_node_classes is missing an assignment for: {unassigned}")
+
+    shards: list[list[int]] = [[] for _ in range(num_nodes)]
+    for cls in sorted(set(targets.tolist())):
+        cls_indices = [indices[i] for i in range(len(indices)) if targets[i] == cls]
+        rng.shuffle(cls_indices)
+        nodes = sorted(owners[class_names[cls]])
+        for node, part in zip(nodes, np.array_split(np.array(cls_indices, dtype=int), len(nodes))):
+            shards[node].extend(part.tolist())
     return shards
 
 

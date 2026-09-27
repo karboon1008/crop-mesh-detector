@@ -197,3 +197,86 @@ def test_edge_agents_run_the_early_warning_test_from_their_manifest(pv_root, tmp
         record = agent.learn_and_finish(ctx)
         assert record.num_early_warning == len(json.loads(inbox_path(edge_dir, agent.node_id, 0).read_text())["early_warning"])
         assert "disease_accuracy" in record.post_early_warning_eval
+
+
+TOMATO = {
+    "node_0": ["Tomato___healthy", "Tomato___Bacterial_spot", "Tomato___Early_blight"],
+    "node_1": ["Tomato___healthy", "Tomato___Late_blight", "Tomato___Septoria_leaf_spot"],
+}
+
+
+@pytest.fixture
+def tomato_root(tmp_path):
+    """Five tomato classes plus a potato class that data.classes leaves out."""
+    root = tmp_path / "PlantVillageTomato"
+    rng = np.random.RandomState(1)
+    for cls in sorted(set(TOMATO["node_0"] + TOMATO["node_1"])) + ["Potato___healthy"]:
+        (root / cls).mkdir(parents=True)
+        for i in range(30):
+            Image.fromarray(rng.randint(0, 255, size=(32, 32, 3), dtype=np.uint8)).save(root / cls / f"img_{i}.jpg")
+    return root
+
+
+def _tomato_cfg(root, tmp_path) -> Config:
+    cfg = _cfg(root, tmp_path).as_dict()
+    cfg["data"].update(
+        classes=sorted(set(TOMATO["node_0"] + TOMATO["node_1"])), num_nodes=2,
+        non_iid_strategy="manual_classes", manual_node_classes=TOMATO,
+    )
+    return Config(cfg)
+
+
+def test_data_classes_restricts_plantvillage_to_tomato(tomato_root, tmp_path):
+    from src.data.plantvillage import load_configured_dataset, load_full_dataset
+
+    dataset = load_configured_dataset(_tomato_cfg(tomato_root, tmp_path))
+    assert len(dataset.base.classes) == 5 and len(dataset) == 150
+    assert dataset.labels.crop_classes == ["Tomato"]
+    assert sorted(dataset.labels.disease_classes) == [
+        "Bacterial_spot", "Early_blight", "Late_blight", "Septoria_leaf_spot", "healthy",
+    ]
+    with pytest.raises(ValueError, match="Tomato___Leaf_Mold"):
+        load_full_dataset(tomato_root, 32, classes=["Tomato___Leaf_Mold"])
+
+
+def test_healthy_on_both_farms_each_disease_on_one_and_early_warning_is_the_other_farms(tomato_root, tmp_path):
+    from src.data.plantvillage import load_configured_dataset
+
+    cfg = _tomato_cfg(tomato_root, tmp_path)
+    dataset = load_configured_dataset(cfg)
+    stream = DataStream.create(cfg, dataset, tmp_path / "stream.json")
+    names = dataset.base.classes
+    owned = [{names[dataset.targets[i]] for i in shard} for shard in stream.node_shards]
+    assert owned[0] == set(TOMATO["node_0"]) and owned[1] == set(TOMATO["node_1"])
+    healthy = [sum(names[dataset.targets[i]] == "Tomato___healthy" for i in s) for s in stream.node_shards]
+    assert abs(healthy[0] - healthy[1]) <= 1  # healthy split evenly
+
+    assert [names[c] for c in stream.early_warning_classes(dataset, "node_0")] == [
+        "Tomato___Late_blight", "Tomato___Septoria_leaf_spot",
+    ]
+    assert [names[c] for c in stream.early_warning_classes(dataset, "node_1")] == [
+        "Tomato___Bacterial_spot", "Tomato___Early_blight",
+    ]
+    held = {i for idx in stream.early_warning.values() for i in idx}
+    assert {names[dataset.targets[i]] for i in held} == {
+        "Tomato___Bacterial_spot", "Tomato___Early_blight", "Tomato___Late_blight", "Tomato___Septoria_leaf_spot",
+    }
+
+    bad = _tomato_cfg(tomato_root, tmp_path).as_dict()
+    bad["data"]["manual_node_classes"] = {"node_0": ["Tomato___healthy"]}
+    with pytest.raises(ValueError, match="missing an assignment"):
+        DataStream.create(Config(bad), dataset, tmp_path / "bad.json")
+
+
+def test_cli_runs_the_two_tomato_farms(tomato_root, tmp_path, monkeypatch):
+    import yaml
+
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(yaml.safe_dump(_tomato_cfg(tomato_root, tmp_path).as_dict()))
+    _run_cli(monkeypatch, cfg_path)
+    logs = json.loads((tmp_path / "out" / "continual" / "mobilenet_v3_small" / "batch_logs.json").read_text())
+    per_node = logs[0]["per_node"]
+    assert set(per_node) == {"node_0", "node_1"}
+    for node_id, r in per_node.items():
+        assert list(r["peers_used"]) == [{"node_0": "node_1", "node_1": "node_0"}[node_id]]
+        assert r["num_early_warning"] > 0 and "disease_accuracy" in r["post_early_warning_eval"]

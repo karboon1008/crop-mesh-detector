@@ -67,6 +67,7 @@ def carve_probe_and_partition(cfg, dataset) -> tuple[list[int], list[list[int]]]
         cfg.get("data.seed", 42),
         manual_node_crops=cfg.get("data.manual_node_crops", None),
         farm_crops=cfg.get("data.farm_crops", None),
+        manual_node_classes=cfg.get("data.manual_node_classes", None),
     )
     return probe_idx, shards
 

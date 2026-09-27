@@ -65,6 +65,8 @@ def stream_manifest(cfg, dataset) -> dict:
             "growers_per_crop": cfg.get("data.farm_crops.growers_per_crop", 2),
             "disease_spread": cfg.get("data.farm_crops.disease_spread", 0.5),
         }
+    if manifest["non_iid_strategy"] == "manual_classes":
+        manifest["manual_node_classes"] = cfg.get("data.manual_node_classes", None)
     if cfg.get("data.early_warning.enabled", False):
         manifest["early_warning_holdout_fraction"] = cfg.get("data.early_warning.holdout_fraction", 0.1)
     return manifest
@@ -132,6 +134,7 @@ class DataStream:
             cfg.get("data.seed", 42),
             manual_node_crops=cfg.get("data.manual_node_crops", None),
             farm_crops=cfg.get("data.farm_crops", None),
+            manual_node_classes=cfg.get("data.manual_node_classes", None),
         )
         num_nodes, seed = cfg.get("data.num_nodes", 6), cfg.get("data.seed", 42)
         if cfg.get("data.non_iid_strategy", "dirichlet") == "farm_crops":

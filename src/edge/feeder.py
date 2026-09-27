@@ -27,7 +27,7 @@ import shutil
 from pathlib import Path
 
 from src.config import Config
-from src.data.plantvillage import load_full_dataset
+from src.data.plantvillage import load_configured_dataset
 from src.data.stream import DataStream
 from src.edge.client import KnowledgeClient
 from src.edge.data import LabelSpace, inbox_path
@@ -87,7 +87,7 @@ def publish_batch(
 def trigger(cfg, client: KnowledgeClient, edge_dir: str | Path, next_batch: bool, dataset=None) -> dict:
     """Batch 0 on a fresh stream, or (next_batch) the next one."""
     edge_dir = Path(edge_dir)
-    dataset = dataset or load_full_dataset(cfg.get("data.root"), cfg.get("data.image_size", 224))
+    dataset = dataset or load_configured_dataset(cfg)
     stream_path = edge_dir / "stream.json"
     seed = cfg.get("data.seed", 42)
     probe_fraction = cfg.get("data.probe_set_fraction", 0.05)

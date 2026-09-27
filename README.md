@@ -109,12 +109,18 @@ one stopped.
 
 Set up once, on the first run:
 
-1. **Load PlantVillage** (every class folder, ~54k images) and parse each
-   folder name (e.g. `Tomato___Bacterial_spot`) into two labels: crop type
+1. **Load PlantVillage**, restricted to the class folders in `data.classes`
+   (all 38, ~54k images, when unset). The default config uses **tomato
+   only**: Bacterial spot, Early blight, Late blight, Septoria leaf spot and
+   healthy, about 8,400 images. Each folder name (e.g.
+   `Tomato___Bacterial_spot`) is parsed into two labels: crop type
    (`Tomato`) and disease (`Bacterial_spot`).
 2. **Ownership**: every image is assigned to the node (farm) that would
-   photograph it. The default split (`data.non_iid_strategy: farm_crops`)
-   follows how farms actually differ: each crop is grown by two farms
+   photograph it. The default is two tomato farms
+   (`data.non_iid_strategy: manual_classes`, `data.manual_node_classes`):
+   healthy leaves are split between both farms, Bacterial spot and Early
+   blight appear only at node_0, Late blight and Septoria leaf spot only at
+   node_1. With all 38 classes, `farm_crops` follows how farms actually differ: each crop is grown by two farms
    (`data.farm_crops.growers_per_crop`), so each farm grows 4-5 crops. Both
    growers see the crop's healthy leaves, but each disease has so far
    reached only one of them (`disease_spread`). The other grower is still
@@ -128,8 +134,9 @@ Then every batch, only when it is triggered:
 
 4. **Draw the batch**: a **stratified** sample (every class in
    proportion) of the images no earlier batch used:
-   `continual.first_batch_size` (20,000) for batch 0,
-   `continual.next_batch_size` (3,000) for each `--next-batch`.
+   `continual.first_batch_size` for batch 0 and `continual.next_batch_size`
+   for each `--next-batch`: 3,000 and 500 for the tomato setup (about 9
+   later rounds), 20,000 and 3,000 with all 38 classes.
 5. **Probe set**: a stratified 5% of this batch (`data.probe_set_fraction`,
    e.g. 150 of 3,000) becomes this batch's public probe set, shared by all
    nodes. It is **not cumulative**: each batch uses only its own probe images.
@@ -154,8 +161,9 @@ sits that batch out, keeping its model, EMA, and database entry.
 Before distillation the early-warning score is usually near zero, because
 the node has never seen those diseases. The rise after distillation is what
 learning from peers adds, and the own-crop score shows whether it cost
-anything. With the default seed on PlantVillage, every farm has 3-6 such
-diseases (150-287 test photos). The early-warning test's energy is reported
+anything. In the tomato setup, node_0's early-warning test is node_1's two diseases
+and the other way round. With all 38 classes and `farm_crops`, every farm
+has 3-6 such diseases. The early-warning test's energy is reported
 separately as `measurement_energy_kwh` and left out of the system's
 energy, since a real farm has no such test. Results: the `*_ew_*` columns of
 `batch_summary.csv` and `continual.early_warning` in `results_<arch>.json`.
@@ -323,9 +331,9 @@ Simulated on one machine (each command in its own terminal, or `&`):
 
 ```bash
 python -m src.edge.server --db edge_run/knowledge.db --port 8000 --reset
-python -m src.edge.feeder                       # round 0: 20k images into the farms' inboxes
-python -m src.edge.node_agent --node-id node_0 --follow   # ...and node_1 ... node_5
-python -m src.edge.feeder --next-batch          # each later 3k-image round
+python -m src.edge.feeder                       # round 0 into the farms' inboxes
+python -m src.edge.node_agent --node-id node_0 --follow   # ...and one per other farm (node_1)
+python -m src.edge.feeder --next-batch          # each later round
 ```
 
 On real farms, each device runs only its own `node_agent` (with
