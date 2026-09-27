@@ -108,11 +108,16 @@ def pseudo_label_rates(stats_by_phase: dict[str, dict[str, int]]) -> dict[str, f
     """
     total = {k: sum(p.get(k, 0) for p in stats_by_phase.values())
              for k in ("seen", "crop_accepted", "crop_correct", "disease_accepted", "disease_correct")}
+    # stats recorded before "checkable" existed had every image checkable
+    checkable = sum(p.get("checkable", p.get("seen", 0)) for p in stats_by_phase.values())
     rates: dict[str, float | None] = {}
     for head in ("crop", "disease"):
         accepted = total[f"{head}_accepted"]
         rates[f"pseudo_{head}_accept_rate"] = round(accepted / total["seen"], 4) if total["seen"] else None
-        rates[f"pseudo_{head}_accuracy"] = round(total[f"{head}_correct"] / accepted, 4) if accepted else None
+        # accuracy needs the hidden true labels: blank on real, truly unlabelled photos
+        rates[f"pseudo_{head}_accuracy"] = (
+            round(total[f"{head}_correct"] / accepted, 4) if accepted and checkable else None
+        )
     return rates
 
 

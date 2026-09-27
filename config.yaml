@@ -123,6 +123,16 @@ output:
   dir: "outputs"
   save_plots: true
 
+# Edge deployment (src/edge/): one knowledge server for the co-op, one node
+# agent per farm device, and — in simulation — a feeder playing the cameras.
+edge:
+  dir: "edge_run"                     # inboxes, stream.json and each farm's local state
+  server_url: "http://localhost:8000" # the knowledge server (python -m src.edge.server)
+  architecture: mobilenet_v3_small    # the model each farm's agent runs
+  round_timeout_s: 1800               # a learner waits at most this long for the other farms' logits
+  poll_interval_s: 10                 # how often an agent checks the server for uploads / new rounds
+  export_onnx: true                   # re-export model.onnx for the camera app after every round
+
 scenarios:
   rounds: 6
   disconnection:

@@ -341,6 +341,8 @@ class Node:
         crop_counts: dict[int, int] = {}
         disease_counts: dict[int, int] = {}
         subset = self.train_loader.dataset
+        if hasattr(subset, "class_counts"):  # e.g. an edge node's FileListDataset
+            return subset.class_counts()
         if hasattr(subset, "indices") and hasattr(subset, "dataset"):
             targets, pairs = subset.dataset.targets, subset.dataset.labels.class_to_crop_disease
             labels = (pairs[targets[idx]] for idx in subset.indices)
@@ -540,9 +542,11 @@ class Node:
             crop_logits, crop_labels, crop_mask
         ) + self.disease_loss_weight * _masked_cross_entropy(disease_logits, disease_labels, disease_mask)
 
-        # true labels are only read here, to measure pseudo-label quality
+        # true labels are only read here, to measure pseudo-label quality; on
+        # a real farm they're unknown (-1) and the image isn't checkable
         true_crop, true_disease = true_crop.to(self.device), true_disease.to(self.device)
         self.pseudo_stats["seen"] += len(weak)
+        self.pseudo_stats["checkable"] += int((true_disease >= 0).sum())
         self.pseudo_stats["crop_accepted"] += int(crop_mask.sum())
         self.pseudo_stats["crop_correct"] += int((crop_mask & (crop_labels == true_crop)).sum())
         self.pseudo_stats["disease_accepted"] += int(disease_mask.sum())
@@ -725,11 +729,16 @@ class Node:
         return result
 
 def _empty_pseudo_stats() -> dict[str, int]:
-    return {"seen": 0, "crop_accepted": 0, "crop_correct": 0, "disease_accepted": 0, "disease_correct": 0}
+    return {
+        "seen": 0, "checkable": 0,
+        "crop_accepted": 0, "crop_correct": 0, "disease_accepted": 0, "disease_correct": 0,
+    }
 
 
 def _cycle(loader: DataLoader):
     """Endless iterator over a loader, reshuffling each pass."""
+    if len(loader) == 0:
+        raise ValueError("cannot cycle over an empty loader")
     while True:
         yield from loader
 

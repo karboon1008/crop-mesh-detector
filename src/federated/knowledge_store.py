@@ -74,9 +74,10 @@ def encode_payload(payload: KnowledgePayload) -> bytes:
 
 
 def decode_payload(data: bytes) -> KnowledgePayload:
-    # weights_only=False: the tuple-keyed prototypes dict isn't loadable
-    # otherwise. Only ever reads blobs this process wrote itself.
-    obj = torch.load(io.BytesIO(data), weights_only=False)
+    # weights_only=True: payloads arrive over the network on an edge
+    # deployment (src/edge/), so only plain tensors, dicts, tuples and
+    # numbers are accepted — never arbitrary pickled objects
+    obj = torch.load(io.BytesIO(data), weights_only=True)
     return KnowledgePayload(
         prototypes=obj["prototypes"],
         crop_logits=obj["crop_logits"],

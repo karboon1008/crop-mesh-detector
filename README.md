@@ -67,6 +67,12 @@ crop-mesh-detector/
 │   │   ├── knowledge_store.py    # the ONE shared knowledge database (SQLite)
 │   │   ├── continual.py          # per-batch continual mesh (EMA teacher/learner roles)
 │   │   └── mesh.py               # fixed-round all-to-all mesh (used by the scenarios)
+│   ├── edge/                     # the same mesh deployed on real devices (see "Edge deployment")
+│   │   ├── server.py             # the co-op's knowledge server (FastAPI over knowledge_store.py)
+│   │   ├── client.py             # HTTP client with the KnowledgeStore interface
+│   │   ├── node_agent.py         # runs ONE farm's rounds on its own device
+│   │   ├── data.py               # inbox manifests -> loaders on the device
+│   │   └── feeder.py             # simulation only: plays the farms' cameras
 │   ├── energy/
 │   │   └── tracker.py            # CodeCarbon compute-energy tracking +
 │   │                             # communication-cost estimator + sustainability report
@@ -259,6 +265,47 @@ python -m src.scenarios.disconnection [--config path] [--arch name]
 python -m src.scenarios.class_addition [--config path] [--arch name]
 python -m src.scenarios.distribution_shift [--config path] [--arch name]
 ```
+
+### Edge deployment: one device per farm
+
+`python -m src.train` runs all six farms in one process. `src/edge/` runs the
+same rounds with each farm on its own device, sharing knowledge only through
+one knowledge server — the round logic is the same code
+(`ContinualMesh.local_phase / upload_phase / learn_phase / finish_phase`).
+
+```
+ farm device (node agent)            knowledge server            farm device ...
+ inbox/<node>/round_N.json  ──┐    (python -m src.edge.server)
+ 1 local train + pseudo-label │      classes.json  (label space)
+ 2 pre-eval -> EMA -> role    │      rounds/N      (probe paths, expected farms)
+ 3 upload logits (+protos) ───┼──▶   knowledge.db  (one row per farm)
+ 4 learner: wait for peers,   │
+   fetch, aggregate, distil ◀─┼───   GET /knowledge/<node>/peers (never your own)
+ 5 post-eval, save, model.onnx│
+```
+
+Only prototypes, probe logits and class counts cross the network — never a
+photo, label or weight — and payloads are decoded with
+`torch.load(weights_only=True)`, so a farm can't make the server run code.
+A learner waits (`edge.round_timeout_s`) for the other expected farms'
+fresh logits; a farm that misses the deadline just isn't in that round's
+logit consensus, and a learner with no fresh logits distils on prototypes
+only. Each agent keeps its model, optimizer, EMA and per-round records in
+`<edge.dir>/nodes/<node_id>/` and re-exports `model.onnx` for the camera
+app after every round (`edge.export_onnx`).
+
+Simulated on one machine (each command in its own terminal, or `&`):
+
+```bash
+python -m src.edge.server --db edge_run/knowledge.db --port 8000 --reset
+python -m src.edge.feeder                       # round 0: 20k images into the farms' inboxes
+python -m src.edge.node_agent --node-id node_0 --follow   # ...and node_1 ... node_5
+python -m src.edge.feeder --next-batch          # each later 3k-image round
+```
+
+On real farms, each device runs only its own `node_agent` (with
+`--server http://<co-op server>:8000`); the farm's capture app writes the
+inbox manifest (format in `src/edge/data.py`) instead of the feeder.
 
 ### Hyperparameter tuning
 

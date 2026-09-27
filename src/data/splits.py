@@ -142,7 +142,8 @@ def build_batch_loaders(cfg, dataset, split: BatchSplit) -> NodeBatchLoaders:
         if cfg.get("training.disease_class_balanced", True) else None
     )
     unlabeled_loader = None
-    if split.unlabeled_idx:
+    # a lone unlabelled image can't form a batch (BatchNorm), and would leave an empty loader
+    if len(split.unlabeled_idx) >= 2:
         unlabeled_bs = batch_size * cfg.get("continual.unlabeled_batch_ratio", 7)
         unlabeled_loader = DataLoader(
             TwoViewSubset(dataset, split.unlabeled_idx), batch_size=unlabeled_bs, shuffle=True,
