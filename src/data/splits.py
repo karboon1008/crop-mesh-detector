@@ -95,7 +95,8 @@ def split_node_arrival(dataset, indices: list[int], test_fraction: float, seed: 
 def build_probe_loader(cfg, dataset, probe_idx: list[int]) -> DataLoader:
     # shuffle=False is load-bearing: a probe batch's position is how it's
     # matched back to the consensus logits during distillation.
-    return DataLoader(make_subset(dataset, probe_idx), batch_size=cfg.get("training.batch_size", 32), shuffle=False)
+    return DataLoader(make_subset(dataset, probe_idx), batch_size=cfg.get("training.batch_size", 32), shuffle=False,
+                      num_workers=cfg.get("data.num_workers", 0))
 
 
 def build_batch_loaders(cfg, dataset, split: BatchSplit):
@@ -106,9 +107,10 @@ def build_batch_loaders(cfg, dataset, split: BatchSplit):
     # a trailing batch of exactly one image crashes BatchNorm in train mode
     train_loader = DataLoader(
         make_subset(dataset, split.train_idx, train=True), batch_size=batch_size, shuffle=True,
-        drop_last=len(split.train_idx) % batch_size == 1,
+        drop_last=len(split.train_idx) % batch_size == 1, num_workers=cfg.get("data.num_workers", 0),
     )
-    test_loader = DataLoader(make_subset(dataset, split.test_idx), batch_size=batch_size, shuffle=False)
+    test_loader = DataLoader(make_subset(dataset, split.test_idx), batch_size=batch_size, shuffle=False,
+                             num_workers=cfg.get("data.num_workers", 0))
     crop_weights = (
         compute_crop_class_weights(dataset, split.train_idx)
         if cfg.get("training.crop_class_balanced", False) else None
