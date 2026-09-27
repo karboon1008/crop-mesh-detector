@@ -16,7 +16,7 @@ Each run folder is named `<setting>_<strategy>_s<seed>` and holds
 |---|---|---|---|
 | `b36bl_a100/baselines/` | Isambard `b36bl.macs3` (A100) | `993ebf0` + the control-group code in commit `d01728a` | n2 seed 42: `continual` (HiveMind), `fedavg`, `fedavg_gated`, `dpsgd`, `dpsgd_gated`, `local_extra`; n4 seed 42: `continual` |
 | `b36bl_a100/ablation/` | same | as above, plus: skip the KD pass when both KD weights are 0 | n2 seed 42: `logits_only` (`proto_weight: 0`), `protos_only` (`kd_weight = crop_kd_weight = 0`) |
-| `b6dj_gh200/baselines/` | Isambard-AI `b6dj.aip2` (GH200) | same control-group code | n2 seeds 43/44 (runs finished so far), n6 seeds 42-44, all six strategies |
+| `b6dj_gh200/baselines/` | Isambard-AI `b6dj.aip2` (GH200) | same control-group code | n2 seeds 43/44 (runs finished so far); n6 seeds 42-44, all six strategies — **incomplete**: the n6 jobs ended early (seed 42 reached batch 7, seed 43 batch 5, seed 44 batch 4, of 0-12), so only compare n6 runs over the batches they share |
 
 Settings (`configs/`): `n2` = node_0 Tomato, node_1 Grape; `n4` = 2 Tomato + 2 Grape
 nodes (PlantVillage + PlantDoc + PlantWild); `n6` = all PlantVillage crops, Dirichlet split.
