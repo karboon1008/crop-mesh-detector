@@ -63,6 +63,8 @@ from src.evaluate import scalar_metrics
 from src.federated.continual import BatchLog, ContinualMesh
 from src.federated.knowledge_store import KnowledgeStore
 from src.federated.node import Node
+from src.federated.weight_mesh import WeightMesh
+from src.pooled_eval import build_pooled_test_loader, pooled_eval_taps
 from src.models.factory import build_model, count_parameters, model_size_mb
 from src.reporting import write_csv
 
@@ -199,6 +201,8 @@ def run_architecture(cfg, arch, dataset, stream, tracker, comm_estimator, device
     node_dir = run_dir / "nodes"
     node_dir.mkdir(parents=True, exist_ok=True)
     state_path, logs_path = run_dir / "state.json", run_dir / "batch_logs.json"
+    pooled_path = run_dir / "pooled_log.json"
+    pooled_log = _read_json(pooled_path, [])
     state = _read_json(state_path, {"completed_batches": 0, "ema": {}})
     batch_logs = _read_json(logs_path, [])
     metric = cfg.get("continual.ema_metric", "pair_accuracy")
@@ -208,18 +212,35 @@ def run_architecture(cfg, arch, dataset, stream, tracker, comm_estimator, device
     if state["completed_batches"] > 0:
         for node in nodes:
             node.load_state(torch.load(node_dir / f"{node.node_id}.pt", map_location=device), lr)
-    mesh = ContinualMesh(
-        nodes,
-        KnowledgeStore(run_dir / "knowledge.db", reset=state["completed_batches"] == 0), tracker,
-        aggregation_method=cfg.get("federated.aggregation", "trimmed_mean"),
-        trim_fraction=cfg.get("federated.trim_fraction", 0.2),
-        krum_neighbors=cfg.get("federated.krum_neighbors", 2),
-        ema_alpha=cfg.get("continual.ema_alpha", 0.3),
-        ema_threshold=cfg.get("continual.ema_threshold", 0.8),
-        ema_metric=metric,
-        label_prefix=f"{arch}_",
-    )
+    strategy = cfg.get("baseline.strategy", "continual")
+    if strategy == "continual":
+        mesh = ContinualMesh(
+            nodes,
+            KnowledgeStore(run_dir / "knowledge.db", reset=state["completed_batches"] == 0), tracker,
+            aggregation_method=cfg.get("federated.aggregation", "trimmed_mean"),
+            trim_fraction=cfg.get("federated.trim_fraction", 0.2),
+            krum_neighbors=cfg.get("federated.krum_neighbors", 2),
+            ema_alpha=cfg.get("continual.ema_alpha", 0.3),
+            ema_threshold=cfg.get("continual.ema_threshold", 0.8),
+            ema_metric=metric,
+            label_prefix=f"{arch}_",
+        )
+    else:
+        # control group: same loop, weights exchanged instead of knowledge (src/federated/weight_mesh.py)
+        mesh = WeightMesh(
+            nodes, tracker,
+            method="fedavg" if strategy.startswith("fedavg") else "dpsgd" if strategy.startswith("dpsgd") else "local",
+            gated=strategy.endswith("_gated"), store_path=run_dir / "published.pt",
+            reset=state["completed_batches"] == 0,
+            ema_alpha=cfg.get("continual.ema_alpha", 0.3), ema_threshold=cfg.get("continual.ema_threshold", 0.8),
+            ema_metric=metric, label_prefix=f"{arch}_",
+        )
     mesh.ema.update(state["ema"])
+    if strategy != "continual" and state["completed_batches"] == 0:
+        # FedAvg / D-PSGD start from one server-chosen initialisation; our mesh has no server and keeps each
+        # node's own head initialisation, so this is an advantage granted to the controls.
+        for node in nodes[1:]:
+            node.model.load_state_dict(nodes[0].model.state_dict())
 
     base_local_epochs = cfg.get(
         f"training.local_epochs_per_round_overrides.{arch}", cfg.get("training.local_epochs_per_round", 2)
@@ -247,18 +268,27 @@ def run_architecture(cfg, arch, dataset, stream, tracker, comm_estimator, device
 
         probe_idx = stream.batches[b]["probe_idx"]
         print(f"  batch {b}: {stream.batches[b]['size']} images, probe set {len(probe_idx)} images")
-        log = mesh.run_batch(
-            b, batch_loaders,
-            probe_loader=build_probe_loader(cfg, dataset, probe_idx),
-            local_epochs={node.node_id: e for node, e in zip(present, epochs)},
-            lr=lr,
-            distill_epochs=cfg.get("training.distill_epochs_per_round", 1),
-            distill_lr=cfg.get("training.distill_lr", 0.0005),
-            proto_weight=cfg.get("training.proto_weight", 0.5),
-            kd_weight=cfg.get("training.kd_weight", 0.5),
-            crop_kd_weight=cfg.get("training.crop_kd_weight", None),
-            temperature=cfg.get("training.kd_temperature", 2.0),
+        pooled_loader = build_pooled_test_loader(
+            cfg, dataset, stream, b, cfg.get("baseline.pooled_test_max", 1000), cfg.get("data.seed", 42),
         )
+        with pooled_eval_taps(present, pooled_loader) as pooled:
+            log = mesh.run_batch(
+                b, batch_loaders,
+                probe_loader=build_probe_loader(cfg, dataset, probe_idx),
+                local_epochs={node.node_id: e for node, e in zip(present, epochs)},
+                lr=lr,
+                distill_epochs=cfg.get("training.distill_epochs_per_round", 1),
+                distill_lr=cfg.get("training.distill_lr", 0.0005),
+                proto_weight=cfg.get("training.proto_weight", 0.5),
+                kd_weight=cfg.get("training.kd_weight", 0.5),
+                crop_kd_weight=cfg.get("training.crop_kd_weight", None),
+                temperature=cfg.get("training.kd_temperature", 2.0),
+            )
+        pooled_log.extend(
+            {"batch": b, "node": nid, "n_pooled": len(pooled_loader.dataset), "pre": v[0], "post": v[-1]}
+            for nid, v in pooled.items() if v
+        )
+        pooled_path.write_text(json.dumps(pooled_log))
         for record in log.per_node.values():
             pre, post = record.pre_distill_eval[metric], record.post_distill_eval[metric]
             print(
@@ -328,8 +358,22 @@ def main():
         "--reset", action="store_true",
         help="Delete the saved stream, models, and knowledge database, and start again from batch 0",
     )
+    parser.add_argument(
+        "--strategy", default="continual",
+        choices=["continual", "fedavg", "fedavg_gated", "dpsgd", "dpsgd_gated", "local_extra"],
+        help="continual = our knowledge mesh; fedavg/dpsgd(ring) = weight-exchange controls; local_extra = no exchange, extra local epoch",
+    )
+    parser.add_argument("--seed", type=int, default=None, help="Overrides data.seed (dataset draw, stream, partition)")
+    parser.add_argument("--output-dir", default=None, help="Overrides output.dir")
     args = parser.parse_args()
     cfg = Config.load(args.config)
+    overrides = cfg.as_dict()
+    overrides.setdefault("baseline", {})["strategy"] = args.strategy
+    if args.seed is not None:
+        overrides.setdefault("data", {})["seed"] = args.seed
+    if args.output_dir is not None:
+        overrides.setdefault("output", {})["dir"] = args.output_dir
+    cfg = Config(overrides, path=cfg.path)
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     output_dir = Path(cfg.get("output.dir", "outputs"))
@@ -369,6 +413,17 @@ def main():
         print(f"  probe: {len(batch['probe_idx'])} images carved from this batch")
         for node_id, split in batch["nodes"].items():
             print(f"  {node_id}: {len(split['train_idx'])} train / {len(split['test_idx'])} test")
+
+    import random
+
+    import numpy as np
+
+    run_seed = seed * 1000 + stream.num_batches  # differs per trigger (shuffles don't repeat), same for every strategy
+    random.seed(run_seed)
+    np.random.seed(run_seed)
+    torch.manual_seed(run_seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(run_seed)
 
     checkpoints_dir = output_dir / "checkpoints"
     checkpoints_dir.mkdir(parents=True, exist_ok=True)

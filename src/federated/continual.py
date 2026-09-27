@@ -161,55 +161,12 @@ class ContinualMesh:
     def _metric(self, eval_: dict) -> float:
         return float(eval_[self.ema_metric])
 
-    def run_batch(
-        self,
-        batch_idx: int,
-        batch_loaders: dict[str, tuple],
-        probe_loader: DataLoader,
-        local_epochs: dict[str, int],
-        lr: float,
-        distill_epochs: int,
-        distill_lr: float,
-        proto_weight: float,
-        kd_weight: float,
-        crop_kd_weight: float | None,
-        temperature: float,
-    ) -> BatchLog:
-        """`batch_loaders`: node_id -> (train_loader, test_loader,
-        crop_class_weights, disease_class_weights) for this batch. Nodes
-        missing from it received no usable data this batch and sit it out.
+    def _decide_roles(self, batch_idx: int, ema: float, prev_ema: float | None) -> list[str]:
+        return decide_roles(batch_idx, ema, prev_ema, self.ema_threshold)
 
-        `probe_loader`: an unshuffled loader over THIS batch's probe set.
-        """
-        crop_kd_weight = kd_weight if crop_kd_weight is None else crop_kd_weight
-        log = BatchLog(batch_idx=batch_idx)
-        present = [node for node in self.nodes if node.node_id in batch_loaders]
-        log.absent = [node.node_id for node in self.nodes if node.node_id not in batch_loaders]
-
-        # 1) + 2) local training on this batch, then pre-distill evaluation
-        for node in present:
-            train_loader, test_loader, crop_weights, disease_weights = batch_loaders[node.node_id]
-            node.train_loader, node.test_loader = train_loader, test_loader
-            node.crop_class_weights = crop_weights.to(node.device) if crop_weights is not None else None
-            node.disease_class_weights = disease_weights.to(node.device) if disease_weights is not None else None
-
-            record = NodeBatchRecord(
-                node_id=node.node_id, batch_idx=batch_idx,
-                num_train=len(train_loader.dataset), num_test=len(test_loader.dataset),
-                local_epochs=local_epochs[node.node_id], train_loss=0.0,
-                pre_distill_eval={}, ema=0.0, prev_ema=self.ema[node.node_id], roles=[],
-            )
-            with self._track(record, "local_train"):
-                record.train_loss = node.local_train(local_epochs[node.node_id], lr)
-            with self._track(record, "evaluate"):
-                record.pre_distill_eval = node.evaluate()
-
-            # 3) role from the EMA of pre-distill performance
-            record.ema = update_ema(record.prev_ema, self._metric(record.pre_distill_eval), self.ema_alpha)
-            self.ema[node.node_id] = record.ema
-            record.roles = decide_roles(batch_idx, record.ema, record.prev_ema, self.ema_threshold)
-            log.per_node[node.node_id] = record
-
+    def _exchange(self, log: BatchLog, present: list, batch_idx: int, probe_loader: DataLoader, distill: dict) -> None:
+        """Steps 4-5: teachers upload knowledge, learners retrieve, aggregate and distil. Overridable so a
+        control group can swap only this step (see src/federated/weight_mesh.py)."""
         # 4) teachers extract knowledge (probe logits on this batch's probe
         # set) and upload it, replacing their old entry
         for node in present:
@@ -263,10 +220,66 @@ class ContinualMesh:
                 record.distill_loss = node.distill(
                     consensus_prototypes, consensus_crop_logits, crop_known_mask,
                     consensus_disease_logits, disease_known_mask, probe_loader if logit_payloads else None,
-                    epochs=distill_epochs, lr=distill_lr, proto_weight=proto_weight,
-                    kd_weight=kd_weight, crop_kd_weight=crop_kd_weight, temperature=temperature,
+                    epochs=distill["distill_epochs"], lr=distill["distill_lr"],
+                    proto_weight=distill["proto_weight"], kd_weight=distill["kd_weight"],
+                    crop_kd_weight=distill["crop_kd_weight"], temperature=distill["temperature"],
                 )
             record.distilled = True
+
+    def run_batch(
+        self,
+        batch_idx: int,
+        batch_loaders: dict[str, tuple],
+        probe_loader: DataLoader,
+        local_epochs: dict[str, int],
+        lr: float,
+        distill_epochs: int,
+        distill_lr: float,
+        proto_weight: float,
+        kd_weight: float,
+        crop_kd_weight: float | None,
+        temperature: float,
+    ) -> BatchLog:
+        """`batch_loaders`: node_id -> (train_loader, test_loader,
+        crop_class_weights, disease_class_weights) for this batch. Nodes
+        missing from it received no usable data this batch and sit it out.
+
+        `probe_loader`: an unshuffled loader over THIS batch's probe set.
+        """
+        crop_kd_weight = kd_weight if crop_kd_weight is None else crop_kd_weight
+        log = BatchLog(batch_idx=batch_idx)
+        present = [node for node in self.nodes if node.node_id in batch_loaders]
+        log.absent = [node.node_id for node in self.nodes if node.node_id not in batch_loaders]
+
+        # 1) + 2) local training on this batch, then pre-distill evaluation
+        for node in present:
+            train_loader, test_loader, crop_weights, disease_weights = batch_loaders[node.node_id]
+            node.train_loader, node.test_loader = train_loader, test_loader
+            node.crop_class_weights = crop_weights.to(node.device) if crop_weights is not None else None
+            node.disease_class_weights = disease_weights.to(node.device) if disease_weights is not None else None
+
+            record = NodeBatchRecord(
+                node_id=node.node_id, batch_idx=batch_idx,
+                num_train=len(train_loader.dataset), num_test=len(test_loader.dataset),
+                local_epochs=local_epochs[node.node_id], train_loss=0.0,
+                pre_distill_eval={}, ema=0.0, prev_ema=self.ema[node.node_id], roles=[],
+            )
+            with self._track(record, "local_train"):
+                record.train_loss = node.local_train(local_epochs[node.node_id], lr)
+            with self._track(record, "evaluate"):
+                record.pre_distill_eval = node.evaluate()
+
+            # 3) role from the EMA of pre-distill performance
+            record.ema = update_ema(record.prev_ema, self._metric(record.pre_distill_eval), self.ema_alpha)
+            self.ema[node.node_id] = record.ema
+            record.roles = self._decide_roles(batch_idx, record.ema, record.prev_ema)
+            log.per_node[node.node_id] = record
+
+        # 4) + 5) the exchange: teachers upload, learners retrieve and adopt what they got
+        self._exchange(log, present, batch_idx, probe_loader, dict(
+            distill_epochs=distill_epochs, distill_lr=distill_lr, proto_weight=proto_weight,
+            kd_weight=kd_weight, crop_kd_weight=crop_kd_weight, temperature=temperature,
+        ))
 
         # 6) + 7) post-distill evaluation on the same test set, and the comparison
         for node in present:
