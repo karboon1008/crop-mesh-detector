@@ -16,13 +16,17 @@ from src.data.splits import build_probe_loader, stratified_sample
 from src.evaluate import scalar_metrics
 
 
-def build_pooled_test_loader(cfg, dataset, stream, up_to_batch: int, max_images: int, seed: int):
+def build_pooled_test_loader(cfg, dataset, stream, up_to_batch: int, max_images: int, seed: int, keep=None):
+    """`keep` (optional predicate on a dataset index) restricts the pool, e.g. to one image source."""
     pool = sorted({
         idx
         for b in range(up_to_batch + 1)
         for i in range(stream.num_nodes)
         for idx in stream.node_split(b, f"node_{i}").test_idx
+        if keep is None or keep(idx)
     })
+    if not pool:
+        return None
     if len(pool) > max_images:
         pool = sorted(stratified_sample(dataset, pool, max_images, seed))
     return build_probe_loader(cfg, dataset, pool)  # unshuffled, evaluation transforms
@@ -35,13 +39,15 @@ def pooled_eval_taps(nodes, loader):
     Yields node_id -> list of scalar-metric dicts in call order: [pre] or [pre, post].
     """
     logs = {node.node_id: [] for node in nodes}
+    previous = {}
     for node in nodes:
+        previous[node.node_id] = node.__dict__.get("evaluate")  # another tap may already be active
         original = node.evaluate
 
         def tapped(eval_loader=None, _original=original, _log=logs[node.node_id]):
             result = _original(eval_loader)
-            if eval_loader is None:
-                _log.append(scalar_metrics(_original(loader)))
+            if eval_loader is None and loader is not None:
+                _log.append(with_pair_recall(_original(loader)))
             return result
 
         node.evaluate = tapped
@@ -49,4 +55,15 @@ def pooled_eval_taps(nodes, loader):
         yield logs
     finally:
         for node in nodes:
-            del node.evaluate  # drop the instance attribute; the class method is back
+            if previous[node.node_id] is None:
+                del node.evaluate  # drop the instance attribute; the class method is back
+            else:
+                node.evaluate = previous[node.node_id]
+
+
+def with_pair_recall(result: dict) -> dict:
+    """scalar metrics + per-class recall of the (crop, disease) pair head, for classes present in the set."""
+    out = scalar_metrics(result)
+    per_class = result.get("detail", {}).get("pair", {}).get("per_class", {})
+    out["pair_recall"] = {name: m["recall"] for name, m in per_class.items() if m.get("support", 0) > 0}
+    return out

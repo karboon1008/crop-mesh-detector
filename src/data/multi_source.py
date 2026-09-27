@@ -197,6 +197,38 @@ def select_top_crops(counts_by_source: dict[str, Counter], n: int, min_diseases:
     return selected
 
 
+def sample_sources(dataset: PlantVillageDataset, cfg) -> list[str]:
+    """The source ("plantvillage", "plantdoc", ...) of every sample, from which
+    configured root its path sits under."""
+    roots = [("plantvillage", cfg.get("data.root"))] + [
+        (source, root)
+        for source, rs in (cfg.get("data.extra_sources", None) or {}).items()
+        for root in (rs if isinstance(rs, list) else [rs])
+    ]
+    roots = [(s, os.path.normcase(os.path.normpath(r)) + os.sep) for s, r in roots]
+    out = []
+    for path, _ in dataset.base.samples:
+        p = os.path.normcase(os.path.normpath(path))
+        match = [s for s, r in roots if p.startswith(r)]
+        if not match:
+            raise ValueError(f"{path} is under no configured data root")
+        out.append(match[0])
+    return out
+
+
+def by_source_shards(dataset: PlantVillageDataset, cfg) -> list[list[int]]:
+    """non_iid_strategy "by_source": every image goes to the node that owns its
+    source (data.source_nodes, e.g. {plantvillage: node_0, plantdoc: node_1}) —
+    same crops everywhere, different ways of taking the photos."""
+    source_nodes = cfg.get("data.source_nodes")
+    shards: list[list[int]] = [[] for _ in range(cfg.get("data.num_nodes"))]
+    for idx, source in enumerate(sample_sources(dataset, cfg)):
+        if source not in source_nodes:
+            raise ValueError(f"data.source_nodes has no node for source {source!r}")
+        shards[int(str(source_nodes[source]).split("_")[-1])].append(idx)
+    return shards
+
+
 def load_dataset(cfg) -> PlantVillageDataset:
     """The project dataset per config.yaml's data.* keys: PlantVillage,
     merged with data.extra_sources, restricted to data.included_crops. With

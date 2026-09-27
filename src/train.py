@@ -41,6 +41,7 @@ Outputs (under output.dir, default outputs/):
 from __future__ import annotations
 
 import argparse
+import contextlib
 import dataclasses
 import json
 import shutil
@@ -50,8 +51,8 @@ from pathlib import Path
 import torch
 
 from src.config import Config
-from src.data.multi_source import load_dataset
-from src.data.splits import build_batch_loaders, build_probe_loader
+from src.data.multi_source import load_dataset, sample_sources
+from src.data.splits import BatchSplit, build_batch_loaders, build_probe_loader
 from src.data.stream import DataStream
 from src.energy.tracker import (
     CommunicationCostEstimator,
@@ -189,6 +190,24 @@ def summarise_run(batch_logs: list[dict], metric: str) -> dict:
     }
 
 
+def scheduled_split(cfg, dataset, batch_idx: int, node_id: str, split: BatchSplit) -> BatchSplit | None:
+    """Experiment schedules applied to a node's arrivals for one batch:
+
+    continual.offline: {node_id: [batches]}   the node is offline: it gets nothing and sits the batch out
+    continual.withhold: {node, classes, until_batch}
+        the node sees none of `classes` (full "Crop___disease" names) before `until_batch`,
+        i.e. a disease that has not yet reached that farm
+    """
+    if batch_idx in (cfg.get("continual.offline", None) or {}).get(node_id, []):
+        return None
+    withhold = cfg.get("continual.withhold", None)
+    if withhold and withhold["node"] == node_id and batch_idx < withhold["until_batch"]:
+        hidden = {dataset.base.class_to_idx[name] for name in withhold["classes"]}
+        visible = lambda idxs: [i for i in idxs if dataset.targets[i] not in hidden]
+        return BatchSplit(visible(split.train_idx), visible(split.test_idx))
+    return split
+
+
 def _read_json(path: Path, default):
     return json.loads(path.read_text()) if path.exists() else default
 
@@ -203,6 +222,10 @@ def run_architecture(cfg, arch, dataset, stream, tracker, comm_estimator, device
     state_path, logs_path = run_dir / "state.json", run_dir / "batch_logs.json"
     pooled_path = run_dir / "pooled_log.json"
     pooled_log = _read_json(pooled_path, [])
+    # by_source runs: every node is also scored on each source's pooled test images (lab vs field photos)
+    sources = sample_sources(dataset, cfg) if cfg.get("data.non_iid_strategy", "") == "by_source" else None
+    source_path = run_dir / "pooled_by_source.json"
+    source_log = _read_json(source_path, [])
     state = _read_json(state_path, {"completed_batches": 0, "ema": {}})
     batch_logs = _read_json(logs_path, [])
     metric = cfg.get("continual.ema_metric", "pair_accuracy")
@@ -249,8 +272,8 @@ def run_architecture(cfg, arch, dataset, stream, tracker, comm_estimator, device
         # a node needs >= 2 train images (BatchNorm) and >= 1 test image to take part
         batch_loaders = {}
         for node in nodes:
-            split = stream.node_split(b, node.node_id)
-            if len(split.train_idx) >= 2 and split.test_idx:
+            split = scheduled_split(cfg, dataset, b, node.node_id, stream.node_split(b, node.node_id))
+            if split is not None and len(split.train_idx) >= 2 and split.test_idx:
                 batch_loaders[node.node_id] = build_batch_loaders(cfg, dataset, split)
         present = [n for n in nodes if n.node_id in batch_loaders]
         if b == 0:
@@ -271,7 +294,19 @@ def run_architecture(cfg, arch, dataset, stream, tracker, comm_estimator, device
         pooled_loader = build_pooled_test_loader(
             cfg, dataset, stream, b, cfg.get("baseline.pooled_test_max", 1000), cfg.get("data.seed", 42),
         )
-        with pooled_eval_taps(present, pooled_loader) as pooled:
+        if strategy == "continual" and cfg.get("continual.offline_purge", False):
+            # counterfactual for the offline experiment: the hive forgets an offline node's knowledge
+            for node_id, batches in (cfg.get("continual.offline", None) or {}).items():
+                if b in batches:
+                    mesh.store.delete(node_id)
+        source_loaders = {
+            s: build_pooled_test_loader(cfg, dataset, stream, b, cfg.get("baseline.pooled_test_max", 1000),
+                                        cfg.get("data.seed", 42), keep=lambda i, s=s: sources[i] == s)
+            for s in sorted(set(sources))
+        } if sources else {}
+        with contextlib.ExitStack() as taps:
+            pooled = taps.enter_context(pooled_eval_taps(present, pooled_loader))
+            by_source = {s: taps.enter_context(pooled_eval_taps(present, l)) for s, l in source_loaders.items()}
             log = mesh.run_batch(
                 b, batch_loaders,
                 probe_loader=build_probe_loader(cfg, dataset, probe_idx),
@@ -289,6 +324,12 @@ def run_architecture(cfg, arch, dataset, stream, tracker, comm_estimator, device
             for nid, v in pooled.items() if v
         )
         pooled_path.write_text(json.dumps(pooled_log))
+        if by_source:
+            source_log.extend(
+                {"batch": b, "node": nid, "source": s, "n_test": len(source_loaders[s].dataset), "pre": v[0], "post": v[-1]}
+                for s, taps_ in by_source.items() for nid, v in taps_.items() if v
+            )
+            source_path.write_text(json.dumps(source_log))
         for record in log.per_node.values():
             pre, post = record.pre_distill_eval[metric], record.post_distill_eval[metric]
             print(

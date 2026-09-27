@@ -50,6 +50,7 @@ def stream_manifest(cfg, dataset) -> dict:
             cfg.get("data.manual_node_crops", None) if strategy in ("manual", "dirichlet_by_crop") else None
         ),
         "dirichlet_alpha": cfg.get("data.dirichlet_alpha", 0.5),
+        "source_nodes": cfg.get("data.source_nodes", None) if strategy == "by_source" else None,
         "probe_set_fraction": cfg.get("data.probe_set_fraction", 0.05),
     }
 
@@ -64,6 +65,11 @@ class DataStream:
 
     @classmethod
     def create(cls, cfg, dataset, path: Path) -> "DataStream":
+        if cfg.get("data.non_iid_strategy", "dirichlet") == "by_source":
+            from src.data.multi_source import by_source_shards
+            stream = cls(path, stream_manifest(cfg, dataset), by_source_shards(dataset, cfg), [])
+            stream.save()
+            return stream
         node_shards = partition_nodes(
             dataset,
             list(range(len(dataset))),

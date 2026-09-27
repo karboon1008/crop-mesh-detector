@@ -155,6 +155,11 @@ class KnowledgeStore:
             )
         return peers
 
+    def delete(self, node_id: str) -> None:
+        """Drops `node_id`'s live entry (the upload log keeps its history)."""
+        with self._connect() as conn:
+            conn.execute("DELETE FROM knowledge WHERE node_id = ?", (node_id,))
+
     def entries(self) -> list[dict]:
         """Current live entries (without the payload blobs)."""
         with self._connect() as conn:
