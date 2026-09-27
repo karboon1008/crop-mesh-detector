@@ -1,0 +1,3866 @@
+[
+  {
+    "batch_idx": 0,
+    "absent": [],
+    "per_node": {
+      "node_0": {
+        "node_id": "node_0",
+        "batch_idx": 0,
+        "num_train": 2632,
+        "num_test": 465,
+        "local_epochs": 5,
+        "train_loss": 1.1705920071127902,
+        "pre_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.8473118279569892,
+          "pair_accuracy": 0.8473118279569892,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.8096567319627341,
+          "disease_macro_recall": 0.8317598376558054,
+          "disease_macro_f1": 0.8067438065250171,
+          "pair_macro_precision": 0.8096567319627341,
+          "pair_macro_recall": 0.8317598376558054,
+          "pair_macro_f1": 0.8067438065250171
+        },
+        "ema": 0.8473118279569892,
+        "prev_ema": null,
+        "roles": [
+          "teacher",
+          "learner"
+        ],
+        "uploaded": true,
+        "distilled": true,
+        "peers_used": {
+          "node_1": 0
+        },
+        "logit_peers": [],
+        "probe_images_used": 0,
+        "distill_loss": {},
+        "post_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.7978494623655914,
+          "pair_accuracy": 0.7978494623655914,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.7709420906055524,
+          "disease_macro_recall": 0.760643091230188,
+          "disease_macro_f1": 0.743329176912227,
+          "pair_macro_precision": 0.7709420906055524,
+          "pair_macro_recall": 0.760643091230188,
+          "pair_macro_f1": 0.7433291769122269
+        },
+        "distill_gain": {
+          "crop_accuracy": 0.0,
+          "disease_accuracy": -0.04946236559139783,
+          "pair_accuracy": -0.04946236559139783,
+          "crop_macro_precision": 0.0,
+          "crop_macro_recall": 0.0,
+          "crop_macro_f1": 0.0,
+          "disease_macro_precision": -0.03871464135718172,
+          "disease_macro_recall": -0.07111674642561738,
+          "disease_macro_f1": -0.0634146296127901,
+          "pair_macro_precision": -0.03871464135718172,
+          "pair_macro_recall": -0.07111674642561738,
+          "pair_macro_f1": -0.06341462961279021
+        },
+        "improved": false,
+        "bytes_uploaded": 3840060,
+        "bytes_downloaded": 0,
+        "energy_kwh": {
+          "local_train": 0.0020651365236496228,
+          "evaluate": 0.00018383567928328856,
+          "upload": 8.150841818854412e-08,
+          "exchange": 8.540845025975856e-08
+        },
+        "duration_s": {
+          "local_train": 63.6522376537323,
+          "evaluate": 6.147323131561279,
+          "upload": 0.06460976600646973,
+          "exchange": 0.07781767845153809
+        },
+        "total_bytes": 3840060,
+        "total_energy_kwh": 0.0022491391198013596
+      },
+      "node_1": {
+        "node_id": "node_1",
+        "batch_idx": 0,
+        "num_train": 598,
+        "num_test": 105,
+        "local_epochs": 14,
+        "train_loss": 0.4903360200184572,
+        "pre_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.9523809523809523,
+          "pair_accuracy": 0.9523809523809523,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.9440052006465669,
+          "disease_macro_recall": 0.9595928265283105,
+          "disease_macro_f1": 0.9505006959480359,
+          "pair_macro_precision": 0.9440052006465669,
+          "pair_macro_recall": 0.9595928265283105,
+          "pair_macro_f1": 0.9505006959480359
+        },
+        "ema": 0.9523809523809523,
+        "prev_ema": null,
+        "roles": [
+          "teacher",
+          "learner"
+        ],
+        "uploaded": true,
+        "distilled": true,
+        "peers_used": {
+          "node_0": 0
+        },
+        "logit_peers": [],
+        "probe_images_used": 0,
+        "distill_loss": {},
+        "post_distill_eval": {
+          "crop_accuracy": 0.0,
+          "disease_accuracy": 0.12380952380952381,
+          "pair_accuracy": 0.0,
+          "crop_macro_precision": 0.0,
+          "crop_macro_recall": 0.0,
+          "crop_macro_f1": 0.0,
+          "disease_macro_precision": 0.21666666666666667,
+          "disease_macro_recall": 0.21666666666666667,
+          "disease_macro_f1": 0.21666666666666667,
+          "pair_macro_precision": 0.0,
+          "pair_macro_recall": 0.0,
+          "pair_macro_f1": 0.0
+        },
+        "distill_gain": {
+          "crop_accuracy": -1.0,
+          "disease_accuracy": -0.8285714285714285,
+          "pair_accuracy": -0.9523809523809523,
+          "crop_macro_precision": -1.0,
+          "crop_macro_recall": -1.0,
+          "crop_macro_f1": -1.0,
+          "disease_macro_precision": -0.7273385339799002,
+          "disease_macro_recall": -0.7429261598616438,
+          "disease_macro_f1": -0.7338340292813692,
+          "pair_macro_precision": -0.9440052006465669,
+          "pair_macro_recall": -0.9595928265283105,
+          "pair_macro_f1": -0.9505006959480359
+        },
+        "improved": false,
+        "bytes_uploaded": 3840060,
+        "bytes_downloaded": 0,
+        "energy_kwh": {
+          "local_train": 0.00141596656501719,
+          "evaluate": 0.00011990575068183712,
+          "upload": 8.835301204350381e-08,
+          "exchange": 8.543858283666286e-08
+        },
+        "duration_s": {
+          "local_train": 44.164379596710205,
+          "evaluate": 4.07157826423645,
+          "upload": 0.0669550895690918,
+          "exchange": 0.07831263542175293
+        },
+        "total_bytes": 3840060,
+        "total_energy_kwh": 0.0015360461072939074
+      }
+    }
+  },
+  {
+    "batch_idx": 1,
+    "absent": [],
+    "per_node": {
+      "node_0": {
+        "node_id": "node_0",
+        "batch_idx": 1,
+        "num_train": 659,
+        "num_test": 115,
+        "local_epochs": 3,
+        "train_loss": 0.5998802589518684,
+        "pre_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.8782608695652174,
+          "pair_accuracy": 0.8782608695652174,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.8571717171717171,
+          "disease_macro_recall": 0.8726936862420732,
+          "disease_macro_f1": 0.8512555238019633,
+          "pair_macro_precision": 0.8571717171717171,
+          "pair_macro_recall": 0.8726936862420734,
+          "pair_macro_f1": 0.8512555238019635
+        },
+        "ema": 0.8565965404394575,
+        "prev_ema": 0.8473118279569892,
+        "roles": [
+          "teacher",
+          "learner"
+        ],
+        "uploaded": true,
+        "distilled": true,
+        "peers_used": {
+          "node_1": 1
+        },
+        "logit_peers": [],
+        "probe_images_used": 0,
+        "distill_loss": {},
+        "post_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.8782608695652174,
+          "pair_accuracy": 0.8782608695652174,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.8608951914098973,
+          "disease_macro_recall": 0.8679433022174958,
+          "disease_macro_f1": 0.842520894115647,
+          "pair_macro_precision": 0.8608951914098973,
+          "pair_macro_recall": 0.8679433022174958,
+          "pair_macro_f1": 0.842520894115647
+        },
+        "distill_gain": {
+          "crop_accuracy": 0.0,
+          "disease_accuracy": 0.0,
+          "pair_accuracy": 0.0,
+          "crop_macro_precision": 0.0,
+          "crop_macro_recall": 0.0,
+          "crop_macro_f1": 0.0,
+          "disease_macro_precision": 0.003723474238180202,
+          "disease_macro_recall": -0.004750384024577392,
+          "disease_macro_f1": -0.00873462968631633,
+          "pair_macro_precision": 0.003723474238180202,
+          "pair_macro_recall": -0.004750384024577614,
+          "pair_macro_f1": -0.008734629686316442
+        },
+        "improved": false,
+        "bytes_uploaded": 3840060,
+        "bytes_downloaded": 0,
+        "energy_kwh": {
+          "local_train": 0.00036035430794447115,
+          "evaluate": 0.00015386963152270533,
+          "upload": 8.95753417914869e-08,
+          "exchange": 7.966227628626226e-06
+        },
+        "duration_s": {
+          "local_train": 11.431517839431763,
+          "evaluate": 5.164795398712158,
+          "upload": 0.0663301944732666,
+          "exchange": 0.2933821678161621
+        },
+        "total_bytes": 3840060,
+        "total_energy_kwh": 0.0005222797424375942
+      },
+      "node_1": {
+        "node_id": "node_1",
+        "batch_idx": 1,
+        "num_train": 149,
+        "num_test": 27,
+        "local_epochs": 3,
+        "train_loss": 5.1002676328023275,
+        "pre_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.48148148148148145,
+          "pair_accuracy": 0.48148148148148145,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.5119047619047619,
+          "disease_macro_recall": 0.5089285714285714,
+          "disease_macro_f1": 0.4522167487684729,
+          "pair_macro_precision": 0.5119047619047619,
+          "pair_macro_recall": 0.5089285714285714,
+          "pair_macro_f1": 0.4522167487684729
+        },
+        "ema": 0.8111111111111111,
+        "prev_ema": 0.9523809523809523,
+        "roles": [
+          "teacher",
+          "learner"
+        ],
+        "uploaded": true,
+        "distilled": true,
+        "peers_used": {
+          "node_0": 1
+        },
+        "logit_peers": [],
+        "probe_images_used": 0,
+        "distill_loss": {},
+        "post_distill_eval": {
+          "crop_accuracy": 0.0,
+          "disease_accuracy": 0.07407407407407407,
+          "pair_accuracy": 0.0,
+          "crop_macro_precision": 0.0,
+          "crop_macro_recall": 0.0,
+          "crop_macro_f1": 0.0,
+          "disease_macro_precision": 0.25,
+          "disease_macro_recall": 0.125,
+          "disease_macro_f1": 0.16666666666666666,
+          "pair_macro_precision": 0.0,
+          "pair_macro_recall": 0.0,
+          "pair_macro_f1": 0.0
+        },
+        "distill_gain": {
+          "crop_accuracy": -1.0,
+          "disease_accuracy": -0.4074074074074074,
+          "pair_accuracy": -0.48148148148148145,
+          "crop_macro_precision": -1.0,
+          "crop_macro_recall": -1.0,
+          "crop_macro_f1": -1.0,
+          "disease_macro_precision": -0.26190476190476186,
+          "disease_macro_recall": -0.3839285714285714,
+          "disease_macro_f1": -0.2855500821018062,
+          "pair_macro_precision": -0.5119047619047619,
+          "pair_macro_recall": -0.5089285714285714,
+          "pair_macro_f1": -0.4522167487684729
+        },
+        "improved": false,
+        "bytes_uploaded": 3840060,
+        "bytes_downloaded": 0,
+        "energy_kwh": {
+          "local_train": 8.75968102548827e-05,
+          "evaluate": 0.0001375361876010078,
+          "upload": 8.421536522013491e-08,
+          "exchange": 8.06257612427378e-08
+        },
+        "duration_s": {
+          "local_train": 2.7903788089752197,
+          "evaluate": 4.674895763397217,
+          "upload": 0.06422233581542969,
+          "exchange": 0.07440638542175293
+        },
+        "total_bytes": 3840060,
+        "total_energy_kwh": 0.00022529783898235335
+      }
+    }
+  },
+  {
+    "batch_idx": 2,
+    "absent": [],
+    "per_node": {
+      "node_0": {
+        "node_id": "node_0",
+        "batch_idx": 2,
+        "num_train": 659,
+        "num_test": 115,
+        "local_epochs": 3,
+        "train_loss": 0.7730642866993708,
+        "pre_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.8521739130434782,
+          "pair_accuracy": 0.8521739130434782,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.8283506636732442,
+          "disease_macro_recall": 0.8585277088502895,
+          "disease_macro_f1": 0.8268022811991653,
+          "pair_macro_precision": 0.8283506636732444,
+          "pair_macro_recall": 0.8585277088502895,
+          "pair_macro_f1": 0.8268022811991653
+        },
+        "ema": 0.8552697522206636,
+        "prev_ema": 0.8565965404394575,
+        "roles": [
+          "teacher",
+          "learner"
+        ],
+        "uploaded": true,
+        "distilled": true,
+        "peers_used": {
+          "node_1": 2
+        },
+        "logit_peers": [],
+        "probe_images_used": 0,
+        "distill_loss": {},
+        "post_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.8173913043478261,
+          "pair_accuracy": 0.8173913043478261,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.8043763046988852,
+          "disease_macro_recall": 0.8252859506085312,
+          "disease_macro_f1": 0.7867469749642925,
+          "pair_macro_precision": 0.8043763046988854,
+          "pair_macro_recall": 0.8252859506085313,
+          "pair_macro_f1": 0.7867469749642924
+        },
+        "distill_gain": {
+          "crop_accuracy": 0.0,
+          "disease_accuracy": -0.034782608695652084,
+          "pair_accuracy": -0.034782608695652084,
+          "crop_macro_precision": 0.0,
+          "crop_macro_recall": 0.0,
+          "crop_macro_f1": 0.0,
+          "disease_macro_precision": -0.023974358974358956,
+          "disease_macro_recall": -0.033241758241758346,
+          "disease_macro_f1": -0.040055306234872856,
+          "pair_macro_precision": -0.023974358974358956,
+          "pair_macro_recall": -0.033241758241758235,
+          "pair_macro_f1": -0.04005530623487297
+        },
+        "improved": false,
+        "bytes_uploaded": 3840060,
+        "bytes_downloaded": 0,
+        "energy_kwh": {
+          "local_train": 0.0003535802481237849,
+          "evaluate": 0.00016164612830874307,
+          "upload": 8.27776592679748e-08,
+          "exchange": 1.7794006964965242e-06
+        },
+        "duration_s": {
+          "local_train": 11.162545919418335,
+          "evaluate": 5.426299571990967,
+          "upload": 0.06737399101257324,
+          "exchange": 0.07638001441955566
+        },
+        "total_bytes": 3840060,
+        "total_energy_kwh": 0.0005170885547882924
+      },
+      "node_1": {
+        "node_id": "node_1",
+        "batch_idx": 2,
+        "num_train": 149,
+        "num_test": 27,
+        "local_epochs": 3,
+        "train_loss": 3.2771130164464313,
+        "pre_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.4444444444444444,
+          "pair_accuracy": 0.4444444444444444,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.5869565217391304,
+          "disease_macro_recall": 0.4464285714285714,
+          "disease_macro_f1": 0.4068100358422939,
+          "pair_macro_precision": 0.5869565217391304,
+          "pair_macro_recall": 0.4464285714285714,
+          "pair_macro_f1": 0.4068100358422939
+        },
+        "ema": 0.701111111111111,
+        "prev_ema": 0.8111111111111111,
+        "roles": [
+          "teacher",
+          "learner"
+        ],
+        "uploaded": true,
+        "distilled": true,
+        "peers_used": {
+          "node_0": 2
+        },
+        "logit_peers": [],
+        "probe_images_used": 0,
+        "distill_loss": {},
+        "post_distill_eval": {
+          "crop_accuracy": 0.0,
+          "disease_accuracy": 0.07407407407407407,
+          "pair_accuracy": 0.0,
+          "crop_macro_precision": 0.0,
+          "crop_macro_recall": 0.0,
+          "crop_macro_f1": 0.0,
+          "disease_macro_precision": 0.25,
+          "disease_macro_recall": 0.125,
+          "disease_macro_f1": 0.16666666666666666,
+          "pair_macro_precision": 0.0,
+          "pair_macro_recall": 0.0,
+          "pair_macro_f1": 0.0
+        },
+        "distill_gain": {
+          "crop_accuracy": -1.0,
+          "disease_accuracy": -0.37037037037037035,
+          "pair_accuracy": -0.4444444444444444,
+          "crop_macro_precision": -1.0,
+          "crop_macro_recall": -1.0,
+          "crop_macro_f1": -1.0,
+          "disease_macro_precision": -0.3369565217391304,
+          "disease_macro_recall": -0.3214285714285714,
+          "disease_macro_f1": -0.24014336917562726,
+          "pair_macro_precision": -0.5869565217391304,
+          "pair_macro_recall": -0.4464285714285714,
+          "pair_macro_f1": -0.4068100358422939
+        },
+        "improved": false,
+        "bytes_uploaded": 3840060,
+        "bytes_downloaded": 0,
+        "energy_kwh": {
+          "local_train": 7.1083616851777e-05,
+          "evaluate": 0.00014862253616984306,
+          "upload": 8.179156688608505e-08,
+          "exchange": 1.0639596603831013e-07
+        },
+        "duration_s": {
+          "local_train": 2.282548427581787,
+          "evaluate": 5.012260913848877,
+          "upload": 0.06918835639953613,
+          "exchange": 0.07750821113586426
+        },
+        "total_bytes": 3840060,
+        "total_energy_kwh": 0.00021989434055454446
+      }
+    }
+  },
+  {
+    "batch_idx": 3,
+    "absent": [],
+    "per_node": {
+      "node_0": {
+        "node_id": "node_0",
+        "batch_idx": 3,
+        "num_train": 659,
+        "num_test": 115,
+        "local_epochs": 3,
+        "train_loss": 0.5725972581477392,
+        "pre_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.808695652173913,
+          "pair_accuracy": 0.808695652173913,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.7943207282913165,
+          "disease_macro_recall": 0.7571656032139903,
+          "disease_macro_f1": 0.754436373343383,
+          "pair_macro_precision": 0.7943207282913165,
+          "pair_macro_recall": 0.7571656032139902,
+          "pair_macro_f1": 0.754436373343383
+        },
+        "ema": 0.8412975222066383,
+        "prev_ema": 0.8552697522206636,
+        "roles": [
+          "teacher",
+          "learner"
+        ],
+        "uploaded": true,
+        "distilled": true,
+        "peers_used": {
+          "node_1": 3
+        },
+        "logit_peers": [],
+        "probe_images_used": 0,
+        "distill_loss": {},
+        "post_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.8608695652173913,
+          "pair_accuracy": 0.8608695652173913,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.8671121888863823,
+          "disease_macro_recall": 0.8143993461735397,
+          "disease_macro_f1": 0.8138901963551127,
+          "pair_macro_precision": 0.8671121888863824,
+          "pair_macro_recall": 0.8143993461735397,
+          "pair_macro_f1": 0.8138901963551127
+        },
+        "distill_gain": {
+          "crop_accuracy": 0.0,
+          "disease_accuracy": 0.05217391304347829,
+          "pair_accuracy": 0.05217391304347829,
+          "crop_macro_precision": 0.0,
+          "crop_macro_recall": 0.0,
+          "crop_macro_f1": 0.0,
+          "disease_macro_precision": 0.0727914605950658,
+          "disease_macro_recall": 0.057233742959549416,
+          "disease_macro_f1": 0.059453823011729745,
+          "pair_macro_precision": 0.07279146059506592,
+          "pair_macro_recall": 0.05723374295954953,
+          "pair_macro_f1": 0.059453823011729745
+        },
+        "improved": true,
+        "bytes_uploaded": 3840060,
+        "bytes_downloaded": 0,
+        "energy_kwh": {
+          "local_train": 0.00028555398054452776,
+          "evaluate": 0.0001927493778573585,
+          "upload": 8.391369512545883e-08,
+          "exchange": 8.260637814171258e-08
+        },
+        "duration_s": {
+          "local_train": 8.808073282241821,
+          "evaluate": 6.517255544662476,
+          "upload": 0.06849026679992676,
+          "exchange": 0.07478046417236328
+        },
+        "total_bytes": 3840060,
+        "total_energy_kwh": 0.00047846987847515344
+      },
+      "node_1": {
+        "node_id": "node_1",
+        "batch_idx": 3,
+        "num_train": 149,
+        "num_test": 27,
+        "local_epochs": 3,
+        "train_loss": 2.747092060248057,
+        "pre_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.5185185185185185,
+          "pair_accuracy": 0.5185185185185185,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.5952380952380952,
+          "disease_macro_recall": 0.5714285714285714,
+          "disease_macro_f1": 0.4990421455938697,
+          "pair_macro_precision": 0.5952380952380952,
+          "pair_macro_recall": 0.5714285714285714,
+          "pair_macro_f1": 0.4990421455938697
+        },
+        "ema": 0.6463333333333332,
+        "prev_ema": 0.701111111111111,
+        "roles": [
+          "teacher",
+          "learner"
+        ],
+        "uploaded": true,
+        "distilled": true,
+        "peers_used": {
+          "node_0": 3
+        },
+        "logit_peers": [],
+        "probe_images_used": 0,
+        "distill_loss": {},
+        "post_distill_eval": {
+          "crop_accuracy": 0.0,
+          "disease_accuracy": 0.1111111111111111,
+          "pair_accuracy": 0.0,
+          "crop_macro_precision": 0.0,
+          "crop_macro_recall": 0.0,
+          "crop_macro_f1": 0.0,
+          "disease_macro_precision": 0.25,
+          "disease_macro_recall": 0.1875,
+          "disease_macro_f1": 0.21428571428571427,
+          "pair_macro_precision": 0.0,
+          "pair_macro_recall": 0.0,
+          "pair_macro_f1": 0.0
+        },
+        "distill_gain": {
+          "crop_accuracy": -1.0,
+          "disease_accuracy": -0.4074074074074074,
+          "pair_accuracy": -0.5185185185185185,
+          "crop_macro_precision": -1.0,
+          "crop_macro_recall": -1.0,
+          "crop_macro_f1": -1.0,
+          "disease_macro_precision": -0.34523809523809523,
+          "disease_macro_recall": -0.3839285714285714,
+          "disease_macro_f1": -0.2847564313081554,
+          "pair_macro_precision": -0.5952380952380952,
+          "pair_macro_recall": -0.5714285714285714,
+          "pair_macro_f1": -0.4990421455938697
+        },
+        "improved": false,
+        "bytes_uploaded": 3840060,
+        "bytes_downloaded": 0,
+        "energy_kwh": {
+          "local_train": 0.00010844238541328415,
+          "evaluate": 0.00017119673755624902,
+          "upload": 8.337704627805334e-08,
+          "exchange": 8.185470231164587e-08
+        },
+        "duration_s": {
+          "local_train": 3.5886712074279785,
+          "evaluate": 5.720430135726929,
+          "upload": 0.06569576263427734,
+          "exchange": 0.07576632499694824
+        },
+        "total_bytes": 3840060,
+        "total_energy_kwh": 0.00027980435471812286
+      }
+    }
+  },
+  {
+    "batch_idx": 4,
+    "absent": [],
+    "per_node": {
+      "node_0": {
+        "node_id": "node_0",
+        "batch_idx": 4,
+        "num_train": 660,
+        "num_test": 115,
+        "local_epochs": 3,
+        "train_loss": 0.5779333580580969,
+        "pre_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.8347826086956521,
+          "pair_accuracy": 0.8347826086956521,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.823775659824047,
+          "disease_macro_recall": 0.84936035290874,
+          "disease_macro_f1": 0.8057064808688132,
+          "pair_macro_precision": 0.823775659824047,
+          "pair_macro_recall": 0.84936035290874,
+          "pair_macro_f1": 0.8057064808688134
+        },
+        "ema": 0.8393430481533424,
+        "prev_ema": 0.8412975222066383,
+        "roles": [
+          "teacher",
+          "learner"
+        ],
+        "uploaded": true,
+        "distilled": true,
+        "peers_used": {
+          "node_1": 4
+        },
+        "logit_peers": [],
+        "probe_images_used": 0,
+        "distill_loss": {},
+        "post_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.8695652173913043,
+          "pair_accuracy": 0.8695652173913043,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.8462193272677144,
+          "disease_macro_recall": 0.8741161526645398,
+          "disease_macro_f1": 0.8351006030864649,
+          "pair_macro_precision": 0.8462193272677144,
+          "pair_macro_recall": 0.8741161526645398,
+          "pair_macro_f1": 0.8351006030864649
+        },
+        "distill_gain": {
+          "crop_accuracy": 0.0,
+          "disease_accuracy": 0.034782608695652195,
+          "pair_accuracy": 0.034782608695652195,
+          "crop_macro_precision": 0.0,
+          "crop_macro_recall": 0.0,
+          "crop_macro_f1": 0.0,
+          "disease_macro_precision": 0.022443667443667437,
+          "disease_macro_recall": 0.02475579975579978,
+          "disease_macro_f1": 0.029394122217651697,
+          "pair_macro_precision": 0.022443667443667437,
+          "pair_macro_recall": 0.02475579975579978,
+          "pair_macro_f1": 0.029394122217651586
+        },
+        "improved": true,
+        "bytes_uploaded": 3840060,
+        "bytes_downloaded": 0,
+        "energy_kwh": {
+          "local_train": 0.0003306614337378884,
+          "evaluate": 0.0003327755552177599,
+          "upload": 8.300426628279717e-08,
+          "exchange": 1.7719379709992446e-06
+        },
+        "duration_s": {
+          "local_train": 10.365072965621948,
+          "evaluate": 11.253859996795654,
+          "upload": 0.06717395782470703,
+          "exchange": 0.07812809944152832
+        },
+        "total_bytes": 3840060,
+        "total_energy_kwh": 0.0006652919311929303
+      },
+      "node_1": {
+        "node_id": "node_1",
+        "batch_idx": 4,
+        "num_train": 148,
+        "num_test": 27,
+        "local_epochs": 3,
+        "train_loss": 2.0056060294310254,
+        "pre_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.6296296296296297,
+          "pair_accuracy": 0.6296296296296297,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.6111111111111112,
+          "disease_macro_recall": 0.625,
+          "disease_macro_f1": 0.5705128205128205,
+          "pair_macro_precision": 0.6111111111111112,
+          "pair_macro_recall": 0.625,
+          "pair_macro_f1": 0.5705128205128205
+        },
+        "ema": 0.6413222222222221,
+        "prev_ema": 0.6463333333333332,
+        "roles": [
+          "teacher",
+          "learner"
+        ],
+        "uploaded": true,
+        "distilled": true,
+        "peers_used": {
+          "node_0": 4
+        },
+        "logit_peers": [],
+        "probe_images_used": 0,
+        "distill_loss": {},
+        "post_distill_eval": {
+          "crop_accuracy": 0.0,
+          "disease_accuracy": 0.1111111111111111,
+          "pair_accuracy": 0.0,
+          "crop_macro_precision": 0.0,
+          "crop_macro_recall": 0.0,
+          "crop_macro_f1": 0.0,
+          "disease_macro_precision": 0.25,
+          "disease_macro_recall": 0.1875,
+          "disease_macro_f1": 0.21428571428571427,
+          "pair_macro_precision": 0.0,
+          "pair_macro_recall": 0.0,
+          "pair_macro_f1": 0.0
+        },
+        "distill_gain": {
+          "crop_accuracy": -1.0,
+          "disease_accuracy": -0.5185185185185186,
+          "pair_accuracy": -0.6296296296296297,
+          "crop_macro_precision": -1.0,
+          "crop_macro_recall": -1.0,
+          "crop_macro_f1": -1.0,
+          "disease_macro_precision": -0.36111111111111116,
+          "disease_macro_recall": -0.4375,
+          "disease_macro_f1": -0.3562271062271062,
+          "pair_macro_precision": -0.6111111111111112,
+          "pair_macro_recall": -0.625,
+          "pair_macro_f1": -0.5705128205128205
+        },
+        "improved": false,
+        "bytes_uploaded": 3840060,
+        "bytes_downloaded": 0,
+        "energy_kwh": {
+          "local_train": 6.014960930715486e-05,
+          "evaluate": 0.00018194939923817268,
+          "upload": 8.147315978969759e-08,
+          "exchange": 8.621894408462102e-08
+        },
+        "duration_s": {
+          "local_train": 1.9361605644226074,
+          "evaluate": 6.133833646774292,
+          "upload": 0.06586670875549316,
+          "exchange": 0.08023452758789062
+        },
+        "total_bytes": 3840060,
+        "total_energy_kwh": 0.00024226670064920184
+      }
+    }
+  },
+  {
+    "batch_idx": 5,
+    "absent": [],
+    "per_node": {
+      "node_0": {
+        "node_id": "node_0",
+        "batch_idx": 5,
+        "num_train": 659,
+        "num_test": 115,
+        "local_epochs": 3,
+        "train_loss": 0.6216015356873709,
+        "pre_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.8521739130434782,
+          "pair_accuracy": 0.8521739130434782,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.8252777777777777,
+          "disease_macro_recall": 0.8577493205719012,
+          "disease_macro_f1": 0.8230131797036346,
+          "pair_macro_precision": 0.8252777777777777,
+          "pair_macro_recall": 0.8577493205719012,
+          "pair_macro_f1": 0.8230131797036346
+        },
+        "ema": 0.8431923076203831,
+        "prev_ema": 0.8393430481533424,
+        "roles": [
+          "teacher",
+          "learner"
+        ],
+        "uploaded": true,
+        "distilled": true,
+        "peers_used": {
+          "node_1": 5
+        },
+        "logit_peers": [],
+        "probe_images_used": 0,
+        "distill_loss": {},
+        "post_distill_eval": {
+          "crop_accuracy": 0.9826086956521739,
+          "disease_accuracy": 0.8869565217391304,
+          "pair_accuracy": 0.8695652173913043,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 0.9826086956521739,
+          "crop_macro_f1": 0.9912280701754386,
+          "disease_macro_precision": 0.8592063492063492,
+          "disease_macro_recall": 0.8889513174997046,
+          "disease_macro_f1": 0.8625654908061227,
+          "pair_macro_precision": 0.8534920634920635,
+          "pair_macro_recall": 0.8603798889282761,
+          "pair_macro_f1": 0.8435178717585037
+        },
+        "distill_gain": {
+          "crop_accuracy": -0.017391304347826098,
+          "disease_accuracy": 0.034782608695652195,
+          "pair_accuracy": 0.017391304347826098,
+          "crop_macro_precision": 0.0,
+          "crop_macro_recall": -0.017391304347826098,
+          "crop_macro_f1": -0.00877192982456143,
+          "disease_macro_precision": 0.03392857142857153,
+          "disease_macro_recall": 0.031201996927803344,
+          "disease_macro_f1": 0.039552311102488025,
+          "pair_macro_precision": 0.02821428571428586,
+          "pair_macro_recall": 0.002630568356374874,
+          "pair_macro_f1": 0.020504692054869045
+        },
+        "improved": true,
+        "bytes_uploaded": 3840060,
+        "bytes_downloaded": 0,
+        "energy_kwh": {
+          "local_train": 0.00036578558227629487,
+          "evaluate": 0.00020831372564897,
+          "upload": 8.322330732329326e-08,
+          "exchange": 8.939941928776227e-08
+        },
+        "duration_s": {
+          "local_train": 11.60365629196167,
+          "evaluate": 6.937589883804321,
+          "upload": 0.06603813171386719,
+          "exchange": 0.07596683502197266
+        },
+        "total_bytes": 3840060,
+        "total_energy_kwh": 0.000574271930651876
+      },
+      "node_1": {
+        "node_id": "node_1",
+        "batch_idx": 5,
+        "num_train": 149,
+        "num_test": 27,
+        "local_epochs": 3,
+        "train_loss": 1.8096099038918814,
+        "pre_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.8148148148148148,
+          "pair_accuracy": 0.8148148148148148,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.8809523809523809,
+          "disease_macro_recall": 0.8035714285714286,
+          "disease_macro_f1": 0.8226190476190477,
+          "pair_macro_precision": 0.8809523809523809,
+          "pair_macro_recall": 0.8035714285714286,
+          "pair_macro_f1": 0.8226190476190477
+        },
+        "ema": 0.6933699999999998,
+        "prev_ema": 0.6413222222222221,
+        "roles": [
+          "teacher",
+          "learner"
+        ],
+        "uploaded": true,
+        "distilled": true,
+        "peers_used": {
+          "node_0": 5
+        },
+        "logit_peers": [],
+        "probe_images_used": 0,
+        "distill_loss": {},
+        "post_distill_eval": {
+          "crop_accuracy": 0.0,
+          "disease_accuracy": 0.1111111111111111,
+          "pair_accuracy": 0.0,
+          "crop_macro_precision": 0.0,
+          "crop_macro_recall": 0.0,
+          "crop_macro_f1": 0.0,
+          "disease_macro_precision": 0.25,
+          "disease_macro_recall": 0.1875,
+          "disease_macro_f1": 0.21428571428571427,
+          "pair_macro_precision": 0.0,
+          "pair_macro_recall": 0.0,
+          "pair_macro_f1": 0.0
+        },
+        "distill_gain": {
+          "crop_accuracy": -1.0,
+          "disease_accuracy": -0.7037037037037037,
+          "pair_accuracy": -0.8148148148148148,
+          "crop_macro_precision": -1.0,
+          "crop_macro_recall": -1.0,
+          "crop_macro_f1": -1.0,
+          "disease_macro_precision": -0.6309523809523809,
+          "disease_macro_recall": -0.6160714285714286,
+          "disease_macro_f1": -0.6083333333333334,
+          "pair_macro_precision": -0.8809523809523809,
+          "pair_macro_recall": -0.8035714285714286,
+          "pair_macro_f1": -0.8226190476190477
+        },
+        "improved": false,
+        "bytes_uploaded": 3840060,
+        "bytes_downloaded": 0,
+        "energy_kwh": {
+          "local_train": 7.672078070708853e-05,
+          "evaluate": 0.00019325805434783903,
+          "upload": 8.288253303981206e-08,
+          "exchange": 1.7823513522887876e-06
+        },
+        "duration_s": {
+          "local_train": 2.458899974822998,
+          "evaluate": 6.501677513122559,
+          "upload": 0.06609034538269043,
+          "exchange": 0.07838869094848633
+        },
+        "total_bytes": 3840060,
+        "total_energy_kwh": 0.00027184406894025615
+      }
+    }
+  },
+  {
+    "batch_idx": 6,
+    "absent": [],
+    "per_node": {
+      "node_0": {
+        "node_id": "node_0",
+        "batch_idx": 6,
+        "num_train": 660,
+        "num_test": 115,
+        "local_epochs": 3,
+        "train_loss": 0.627382783544442,
+        "pre_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.8608695652173913,
+          "pair_accuracy": 0.8608695652173913,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.8718253968253968,
+          "disease_macro_recall": 0.8485110677852614,
+          "disease_macro_f1": 0.8462012465194721,
+          "pair_macro_precision": 0.8718253968253968,
+          "pair_macro_recall": 0.8485110677852614,
+          "pair_macro_f1": 0.8462012465194721
+        },
+        "ema": 0.8484954848994855,
+        "prev_ema": 0.8431923076203831,
+        "roles": [
+          "teacher",
+          "learner"
+        ],
+        "uploaded": true,
+        "distilled": true,
+        "peers_used": {
+          "node_1": 6
+        },
+        "logit_peers": [],
+        "probe_images_used": 0,
+        "distill_loss": {},
+        "post_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.8782608695652174,
+          "pair_accuracy": 0.8782608695652174,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.8809348739495798,
+          "disease_macro_recall": 0.8699396392138329,
+          "disease_macro_f1": 0.864284668473862,
+          "pair_macro_precision": 0.8809348739495798,
+          "pair_macro_recall": 0.8699396392138328,
+          "pair_macro_f1": 0.8642846684738619
+        },
+        "distill_gain": {
+          "crop_accuracy": 0.0,
+          "disease_accuracy": 0.017391304347826098,
+          "pair_accuracy": 0.017391304347826098,
+          "crop_macro_precision": 0.0,
+          "crop_macro_recall": 0.0,
+          "crop_macro_f1": 0.0,
+          "disease_macro_precision": 0.009109477124182974,
+          "disease_macro_recall": 0.021428571428571463,
+          "disease_macro_f1": 0.018083421954389833,
+          "pair_macro_precision": 0.009109477124182974,
+          "pair_macro_recall": 0.021428571428571352,
+          "pair_macro_f1": 0.018083421954389722
+        },
+        "improved": true,
+        "bytes_uploaded": 3840060,
+        "bytes_downloaded": 0,
+        "energy_kwh": {
+          "local_train": 0.0003994960973990211,
+          "evaluate": 0.00021786856622012078,
+          "upload": 8.485971585862163e-08,
+          "exchange": 1.0524114162256882e-07
+        },
+        "duration_s": {
+          "local_train": 12.818785429000854,
+          "evaluate": 7.391117334365845,
+          "upload": 0.06858515739440918,
+          "exchange": 0.07885026931762695
+        },
+        "total_bytes": 3840060,
+        "total_energy_kwh": 0.000617554764476623
+      },
+      "node_1": {
+        "node_id": "node_1",
+        "batch_idx": 6,
+        "num_train": 148,
+        "num_test": 27,
+        "local_epochs": 3,
+        "train_loss": 1.8420507490634919,
+        "pre_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.6296296296296297,
+          "pair_accuracy": 0.6296296296296297,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.8259803921568628,
+          "disease_macro_recall": 0.6473214285714286,
+          "disease_macro_f1": 0.6221489621489622,
+          "pair_macro_precision": 0.8259803921568628,
+          "pair_macro_recall": 0.6473214285714286,
+          "pair_macro_f1": 0.6221489621489622
+        },
+        "ema": 0.6742478888888888,
+        "prev_ema": 0.6933699999999998,
+        "roles": [
+          "teacher",
+          "learner"
+        ],
+        "uploaded": true,
+        "distilled": true,
+        "peers_used": {
+          "node_0": 6
+        },
+        "logit_peers": [],
+        "probe_images_used": 0,
+        "distill_loss": {},
+        "post_distill_eval": {
+          "crop_accuracy": 0.0,
+          "disease_accuracy": 0.07407407407407407,
+          "pair_accuracy": 0.0,
+          "crop_macro_precision": 0.0,
+          "crop_macro_recall": 0.0,
+          "crop_macro_f1": 0.0,
+          "disease_macro_precision": 0.25,
+          "disease_macro_recall": 0.125,
+          "disease_macro_f1": 0.16666666666666666,
+          "pair_macro_precision": 0.0,
+          "pair_macro_recall": 0.0,
+          "pair_macro_f1": 0.0
+        },
+        "distill_gain": {
+          "crop_accuracy": -1.0,
+          "disease_accuracy": -0.5555555555555556,
+          "pair_accuracy": -0.6296296296296297,
+          "crop_macro_precision": -1.0,
+          "crop_macro_recall": -1.0,
+          "crop_macro_f1": -1.0,
+          "disease_macro_precision": -0.5759803921568628,
+          "disease_macro_recall": -0.5223214285714286,
+          "disease_macro_f1": -0.4554822954822956,
+          "pair_macro_precision": -0.8259803921568628,
+          "pair_macro_recall": -0.6473214285714286,
+          "pair_macro_f1": -0.6221489621489622
+        },
+        "improved": false,
+        "bytes_uploaded": 3840060,
+        "bytes_downloaded": 0,
+        "energy_kwh": {
+          "local_train": 6.398686757198931e-05,
+          "evaluate": 0.00019021406313242566,
+          "upload": 7.751075684232017e-07,
+          "exchange": 8.028199003566966e-08
+        },
+        "duration_s": {
+          "local_train": 1.9976394176483154,
+          "evaluate": 6.4290361404418945,
+          "upload": 0.11165285110473633,
+          "exchange": 0.07762813568115234
+        },
+        "total_bytes": 3840060,
+        "total_energy_kwh": 0.0002550563202628738
+      }
+    }
+  },
+  {
+    "batch_idx": 7,
+    "absent": [],
+    "per_node": {
+      "node_0": {
+        "node_id": "node_0",
+        "batch_idx": 7,
+        "num_train": 659,
+        "num_test": 115,
+        "local_epochs": 3,
+        "train_loss": 0.6306932265796359,
+        "pre_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.8782608695652174,
+          "pair_accuracy": 0.8782608695652174,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.8416883116883117,
+          "disease_macro_recall": 0.8722290165032099,
+          "disease_macro_f1": 0.8426955124874225,
+          "pair_macro_precision": 0.8416883116883117,
+          "pair_macro_recall": 0.87222901650321,
+          "pair_macro_f1": 0.8426955124874225
+        },
+        "ema": 0.857425100299205,
+        "prev_ema": 0.8484954848994855,
+        "roles": [
+          "teacher",
+          "learner"
+        ],
+        "uploaded": true,
+        "distilled": true,
+        "peers_used": {
+          "node_1": 7
+        },
+        "logit_peers": [],
+        "probe_images_used": 0,
+        "distill_loss": {},
+        "post_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.8869565217391304,
+          "pair_accuracy": 0.8869565217391304,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.8570757020757022,
+          "disease_macro_recall": 0.8841795659537596,
+          "disease_macro_f1": 0.854235629863453,
+          "pair_macro_precision": 0.8570757020757022,
+          "pair_macro_recall": 0.8841795659537596,
+          "pair_macro_f1": 0.854235629863453
+        },
+        "distill_gain": {
+          "crop_accuracy": 0.0,
+          "disease_accuracy": 0.008695652173912993,
+          "pair_accuracy": 0.008695652173912993,
+          "crop_macro_precision": 0.0,
+          "crop_macro_recall": 0.0,
+          "crop_macro_f1": 0.0,
+          "disease_macro_precision": 0.015387390387390454,
+          "disease_macro_recall": 0.01195054945054963,
+          "disease_macro_f1": 0.011540117376030556,
+          "pair_macro_precision": 0.015387390387390454,
+          "pair_macro_recall": 0.011950549450549519,
+          "pair_macro_f1": 0.011540117376030556
+        },
+        "improved": true,
+        "bytes_uploaded": 3840060,
+        "bytes_downloaded": 0,
+        "energy_kwh": {
+          "local_train": 0.00031704267723679265,
+          "evaluate": 0.0002180861547422175,
+          "upload": 8.847469660661663e-08,
+          "exchange": 8.933765576473972e-08
+        },
+        "duration_s": {
+          "local_train": 9.90524411201477,
+          "evaluate": 7.406718730926514,
+          "upload": 0.06504201889038086,
+          "exchange": 0.0776827335357666
+        },
+        "total_bytes": 3840060,
+        "total_energy_kwh": 0.0005353066443313815
+      },
+      "node_1": {
+        "node_id": "node_1",
+        "batch_idx": 7,
+        "num_train": 149,
+        "num_test": 27,
+        "local_epochs": 3,
+        "train_loss": 1.5139343003431955,
+        "pre_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.7407407407407407,
+          "pair_accuracy": 0.7407407407407407,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.8833333333333333,
+          "disease_macro_recall": 0.7633928571428571,
+          "disease_macro_f1": 0.7662207357859532,
+          "pair_macro_precision": 0.8833333333333333,
+          "pair_macro_recall": 0.7633928571428571,
+          "pair_macro_f1": 0.7662207357859532
+        },
+        "ema": 0.6941957444444443,
+        "prev_ema": 0.6742478888888888,
+        "roles": [
+          "teacher",
+          "learner"
+        ],
+        "uploaded": true,
+        "distilled": true,
+        "peers_used": {
+          "node_0": 7
+        },
+        "logit_peers": [],
+        "probe_images_used": 0,
+        "distill_loss": {},
+        "post_distill_eval": {
+          "crop_accuracy": 0.037037037037037035,
+          "disease_accuracy": 0.18518518518518517,
+          "pair_accuracy": 0.0,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 0.037037037037037035,
+          "crop_macro_f1": 0.07142857142857142,
+          "disease_macro_precision": 0.5,
+          "disease_macro_recall": 0.2857142857142857,
+          "disease_macro_f1": 0.3125,
+          "pair_macro_precision": 0.0,
+          "pair_macro_recall": 0.0,
+          "pair_macro_f1": 0.0
+        },
+        "distill_gain": {
+          "crop_accuracy": -0.962962962962963,
+          "disease_accuracy": -0.5555555555555556,
+          "pair_accuracy": -0.7407407407407407,
+          "crop_macro_precision": 0.0,
+          "crop_macro_recall": -0.962962962962963,
+          "crop_macro_f1": -0.9285714285714286,
+          "disease_macro_precision": -0.3833333333333333,
+          "disease_macro_recall": -0.4776785714285714,
+          "disease_macro_f1": -0.4537207357859532,
+          "pair_macro_precision": -0.8833333333333333,
+          "pair_macro_recall": -0.7633928571428571,
+          "pair_macro_f1": -0.7662207357859532
+        },
+        "improved": false,
+        "bytes_uploaded": 3840060,
+        "bytes_downloaded": 0,
+        "energy_kwh": {
+          "local_train": 7.646020414820302e-05,
+          "evaluate": 0.00027984661444956365,
+          "upload": 2.4508518027567706e-06,
+          "exchange": 9.577254923834828e-08
+        },
+        "duration_s": {
+          "local_train": 2.4542980194091797,
+          "evaluate": 9.508754253387451,
+          "upload": 0.11260080337524414,
+          "exchange": 0.07800793647766113
+        },
+        "total_bytes": 3840060,
+        "total_energy_kwh": 0.0003588534429497618
+      }
+    }
+  },
+  {
+    "batch_idx": 8,
+    "absent": [],
+    "per_node": {
+      "node_0": {
+        "node_id": "node_0",
+        "batch_idx": 8,
+        "num_train": 660,
+        "num_test": 115,
+        "local_epochs": 3,
+        "train_loss": 0.518608210342271,
+        "pre_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.8521739130434782,
+          "pair_accuracy": 0.8521739130434782,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.8209503731562554,
+          "disease_macro_recall": 0.8300227460711331,
+          "disease_macro_f1": 0.8082619047619047,
+          "pair_macro_precision": 0.8209503731562554,
+          "pair_macro_recall": 0.8300227460711331,
+          "pair_macro_f1": 0.8082619047619047
+        },
+        "ema": 0.855849744122487,
+        "prev_ema": 0.857425100299205,
+        "roles": [
+          "teacher",
+          "learner"
+        ],
+        "uploaded": true,
+        "distilled": true,
+        "peers_used": {
+          "node_1": 8
+        },
+        "logit_peers": [],
+        "probe_images_used": 0,
+        "distill_loss": {},
+        "post_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.8695652173913043,
+          "pair_accuracy": 0.8695652173913043,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.8278621378621379,
+          "disease_macro_recall": 0.8302723620465556,
+          "disease_macro_f1": 0.8191316858771561,
+          "pair_macro_precision": 0.8278621378621379,
+          "pair_macro_recall": 0.8302723620465556,
+          "pair_macro_f1": 0.8191316858771561
+        },
+        "distill_gain": {
+          "crop_accuracy": 0.0,
+          "disease_accuracy": 0.017391304347826098,
+          "pair_accuracy": 0.017391304347826098,
+          "crop_macro_precision": 0.0,
+          "crop_macro_recall": 0.0,
+          "crop_macro_f1": 0.0,
+          "disease_macro_precision": 0.006911764705882506,
+          "disease_macro_recall": 0.00024961597542250136,
+          "disease_macro_f1": 0.010869781115251387,
+          "pair_macro_precision": 0.006911764705882506,
+          "pair_macro_recall": 0.00024961597542250136,
+          "pair_macro_f1": 0.010869781115251387
+        },
+        "improved": true,
+        "bytes_uploaded": 3840060,
+        "bytes_downloaded": 0,
+        "energy_kwh": {
+          "local_train": 0.0003565821054165286,
+          "evaluate": 0.0002091940828892514,
+          "upload": 9.159793070583149e-08,
+          "exchange": 8.143280476609825e-08
+        },
+        "duration_s": {
+          "local_train": 11.227025508880615,
+          "evaluate": 7.070677280426025,
+          "upload": 0.06857538223266602,
+          "exchange": 0.07602238655090332
+        },
+        "total_bytes": 3840060,
+        "total_energy_kwh": 0.000565949219041252
+      },
+      "node_1": {
+        "node_id": "node_1",
+        "batch_idx": 8,
+        "num_train": 148,
+        "num_test": 27,
+        "local_epochs": 3,
+        "train_loss": 1.2181423048178355,
+        "pre_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.5555555555555556,
+          "pair_accuracy": 0.5555555555555556,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.85,
+          "disease_macro_recall": 0.5714285714285714,
+          "disease_macro_f1": 0.5682539682539682,
+          "pair_macro_precision": 0.85,
+          "pair_macro_recall": 0.5714285714285714,
+          "pair_macro_f1": 0.5682539682539682
+        },
+        "ema": 0.6526036877777777,
+        "prev_ema": 0.6941957444444443,
+        "roles": [
+          "teacher",
+          "learner"
+        ],
+        "uploaded": true,
+        "distilled": true,
+        "peers_used": {
+          "node_0": 8
+        },
+        "logit_peers": [],
+        "probe_images_used": 0,
+        "distill_loss": {},
+        "post_distill_eval": {
+          "crop_accuracy": 0.0,
+          "disease_accuracy": 0.1111111111111111,
+          "pair_accuracy": 0.0,
+          "crop_macro_precision": 0.0,
+          "crop_macro_recall": 0.0,
+          "crop_macro_f1": 0.0,
+          "disease_macro_precision": 0.25,
+          "disease_macro_recall": 0.1875,
+          "disease_macro_f1": 0.21428571428571427,
+          "pair_macro_precision": 0.0,
+          "pair_macro_recall": 0.0,
+          "pair_macro_f1": 0.0
+        },
+        "distill_gain": {
+          "crop_accuracy": -1.0,
+          "disease_accuracy": -0.4444444444444445,
+          "pair_accuracy": -0.5555555555555556,
+          "crop_macro_precision": -1.0,
+          "crop_macro_recall": -1.0,
+          "crop_macro_f1": -1.0,
+          "disease_macro_precision": -0.6,
+          "disease_macro_recall": -0.3839285714285714,
+          "disease_macro_f1": -0.35396825396825393,
+          "pair_macro_precision": -0.85,
+          "pair_macro_recall": -0.5714285714285714,
+          "pair_macro_f1": -0.5682539682539682
+        },
+        "improved": false,
+        "bytes_uploaded": 3840060,
+        "bytes_downloaded": 0,
+        "energy_kwh": {
+          "local_train": 7.557923770016613e-05,
+          "evaluate": 0.00018529231947030108,
+          "upload": 9.464602525976654e-08,
+          "exchange": 8.619318970172145e-08
+        },
+        "duration_s": {
+          "local_train": 2.4037890434265137,
+          "evaluate": 6.223519563674927,
+          "upload": 0.06674551963806152,
+          "exchange": 0.07718420028686523
+        },
+        "total_bytes": 3840060,
+        "total_energy_kwh": 0.0002610523963854287
+      }
+    }
+  },
+  {
+    "batch_idx": 9,
+    "absent": [],
+    "per_node": {
+      "node_0": {
+        "node_id": "node_0",
+        "batch_idx": 9,
+        "num_train": 659,
+        "num_test": 115,
+        "local_epochs": 3,
+        "train_loss": 0.594726153900699,
+        "pre_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.8434782608695652,
+          "pair_accuracy": 0.8434782608695652,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.8422910422910423,
+          "disease_macro_recall": 0.8401502619244555,
+          "disease_macro_f1": 0.8053216570014387,
+          "pair_macro_precision": 0.8422910422910423,
+          "pair_macro_recall": 0.8401502619244555,
+          "pair_macro_f1": 0.8053216570014389
+        },
+        "ema": 0.8521382991466104,
+        "prev_ema": 0.855849744122487,
+        "roles": [
+          "teacher",
+          "learner"
+        ],
+        "uploaded": true,
+        "distilled": true,
+        "peers_used": {
+          "node_1": 9
+        },
+        "logit_peers": [],
+        "probe_images_used": 0,
+        "distill_loss": {},
+        "post_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.8521739130434782,
+          "pair_accuracy": 0.8521739130434782,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.8582251082251083,
+          "disease_macro_recall": 0.8516581984323921,
+          "disease_macro_f1": 0.8168720303280269,
+          "pair_macro_precision": 0.8582251082251082,
+          "pair_macro_recall": 0.8516581984323921,
+          "pair_macro_f1": 0.8168720303280269
+        },
+        "distill_gain": {
+          "crop_accuracy": 0.0,
+          "disease_accuracy": 0.008695652173912993,
+          "pair_accuracy": 0.008695652173912993,
+          "crop_macro_precision": 0.0,
+          "crop_macro_recall": 0.0,
+          "crop_macro_f1": 0.0,
+          "disease_macro_precision": 0.01593406593406599,
+          "disease_macro_recall": 0.011507936507936578,
+          "disease_macro_f1": 0.011550373326588259,
+          "pair_macro_precision": 0.015934065934065877,
+          "pair_macro_recall": 0.011507936507936578,
+          "pair_macro_f1": 0.011550373326588037
+        },
+        "improved": true,
+        "bytes_uploaded": 3840060,
+        "bytes_downloaded": 0,
+        "energy_kwh": {
+          "local_train": 0.00028581658899069816,
+          "evaluate": 0.000247691852920742,
+          "upload": 8.392868044764259e-08,
+          "exchange": 9.763990986975305e-08
+        },
+        "duration_s": {
+          "local_train": 8.871912956237793,
+          "evaluate": 8.35639762878418,
+          "upload": 0.06561994552612305,
+          "exchange": 0.08160614967346191
+        },
+        "total_bytes": 3840060,
+        "total_energy_kwh": 0.0005336900105017575
+      },
+      "node_1": {
+        "node_id": "node_1",
+        "batch_idx": 9,
+        "num_train": 149,
+        "num_test": 27,
+        "local_epochs": 3,
+        "train_loss": 1.1390520751476287,
+        "pre_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.6296296296296297,
+          "pair_accuracy": 0.6296296296296297,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.6176470588235294,
+          "disease_macro_recall": 0.6517857142857143,
+          "disease_macro_f1": 0.6050549450549451,
+          "pair_macro_precision": 0.6176470588235294,
+          "pair_macro_recall": 0.6517857142857143,
+          "pair_macro_f1": 0.6050549450549451
+        },
+        "ema": 0.6457114703333332,
+        "prev_ema": 0.6526036877777777,
+        "roles": [
+          "teacher",
+          "learner"
+        ],
+        "uploaded": true,
+        "distilled": true,
+        "peers_used": {
+          "node_0": 9
+        },
+        "logit_peers": [],
+        "probe_images_used": 0,
+        "distill_loss": {},
+        "post_distill_eval": {
+          "crop_accuracy": 0.0,
+          "disease_accuracy": 0.14814814814814814,
+          "pair_accuracy": 0.0,
+          "crop_macro_precision": 0.0,
+          "crop_macro_recall": 0.0,
+          "crop_macro_f1": 0.0,
+          "disease_macro_precision": 0.25,
+          "disease_macro_recall": 0.25,
+          "disease_macro_f1": 0.25,
+          "pair_macro_precision": 0.0,
+          "pair_macro_recall": 0.0,
+          "pair_macro_f1": 0.0
+        },
+        "distill_gain": {
+          "crop_accuracy": -1.0,
+          "disease_accuracy": -0.4814814814814815,
+          "pair_accuracy": -0.6296296296296297,
+          "crop_macro_precision": -1.0,
+          "crop_macro_recall": -1.0,
+          "crop_macro_f1": -1.0,
+          "disease_macro_precision": -0.36764705882352944,
+          "disease_macro_recall": -0.4017857142857143,
+          "disease_macro_f1": -0.35505494505494506,
+          "pair_macro_precision": -0.6176470588235294,
+          "pair_macro_recall": -0.6517857142857143,
+          "pair_macro_f1": -0.6050549450549451
+        },
+        "improved": false,
+        "bytes_uploaded": 3840060,
+        "bytes_downloaded": 0,
+        "energy_kwh": {
+          "local_train": 0.00010864564076656013,
+          "evaluate": 0.00025623822021302847,
+          "upload": 8.738820175058209e-08,
+          "exchange": 1.7753117968061672e-06
+        },
+        "duration_s": {
+          "local_train": 3.5878396034240723,
+          "evaluate": 8.70006537437439,
+          "upload": 0.06547093391418457,
+          "exchange": 0.0768272876739502
+        },
+        "total_bytes": 3840060,
+        "total_energy_kwh": 0.0003667465609781454
+      }
+    }
+  },
+  {
+    "batch_idx": 10,
+    "absent": [],
+    "per_node": {
+      "node_0": {
+        "node_id": "node_0",
+        "batch_idx": 10,
+        "num_train": 660,
+        "num_test": 115,
+        "local_epochs": 3,
+        "train_loss": 0.5311276593378612,
+        "pre_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.8434782608695652,
+          "pair_accuracy": 0.8434782608695652,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.8194431875314228,
+          "disease_macro_recall": 0.8330216826184568,
+          "disease_macro_f1": 0.822091282589423,
+          "pair_macro_precision": 0.8194431875314228,
+          "pair_macro_recall": 0.8330216826184568,
+          "pair_macro_f1": 0.822091282589423
+        },
+        "ema": 0.8495402876634968,
+        "prev_ema": 0.8521382991466104,
+        "roles": [
+          "teacher",
+          "learner"
+        ],
+        "uploaded": true,
+        "distilled": true,
+        "peers_used": {
+          "node_1": 10
+        },
+        "logit_peers": [],
+        "probe_images_used": 0,
+        "distill_loss": {},
+        "post_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.8434782608695652,
+          "pair_accuracy": 0.8434782608695652,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.8096153846153846,
+          "disease_macro_recall": 0.8432367363818976,
+          "disease_macro_f1": 0.8196282569784226,
+          "pair_macro_precision": 0.8096153846153846,
+          "pair_macro_recall": 0.8432367363818976,
+          "pair_macro_f1": 0.8196282569784223
+        },
+        "distill_gain": {
+          "crop_accuracy": 0.0,
+          "disease_accuracy": 0.0,
+          "pair_accuracy": 0.0,
+          "crop_macro_precision": 0.0,
+          "crop_macro_recall": 0.0,
+          "crop_macro_f1": 0.0,
+          "disease_macro_precision": -0.00982780291603813,
+          "disease_macro_recall": 0.010215053763440785,
+          "disease_macro_f1": -0.0024630256110004245,
+          "pair_macro_precision": -0.00982780291603813,
+          "pair_macro_recall": 0.010215053763440785,
+          "pair_macro_f1": -0.0024630256110006465
+        },
+        "improved": false,
+        "bytes_uploaded": 3840060,
+        "bytes_downloaded": 0,
+        "energy_kwh": {
+          "local_train": 0.00028967147741504004,
+          "evaluate": 0.00025910039343967196,
+          "upload": 8.46337570410644e-08,
+          "exchange": 8.570734607771869e-08
+        },
+        "duration_s": {
+          "local_train": 8.950055122375488,
+          "evaluate": 8.776811838150024,
+          "upload": 0.06728792190551758,
+          "exchange": 0.07758474349975586
+        },
+        "total_bytes": 3840060,
+        "total_energy_kwh": 0.0005489422119578308
+      },
+      "node_1": {
+        "node_id": "node_1",
+        "batch_idx": 10,
+        "num_train": 148,
+        "num_test": 27,
+        "local_epochs": 3,
+        "train_loss": 1.0237222949663798,
+        "pre_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.8148148148148148,
+          "pair_accuracy": 0.8148148148148148,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.9038461538461539,
+          "disease_macro_recall": 0.8392857142857143,
+          "disease_macro_f1": 0.8379120879120878,
+          "pair_macro_precision": 0.9038461538461539,
+          "pair_macro_recall": 0.8392857142857143,
+          "pair_macro_f1": 0.8379120879120878
+        },
+        "ema": 0.6964424736777777,
+        "prev_ema": 0.6457114703333332,
+        "roles": [
+          "teacher",
+          "learner"
+        ],
+        "uploaded": true,
+        "distilled": true,
+        "peers_used": {
+          "node_0": 10
+        },
+        "logit_peers": [],
+        "probe_images_used": 0,
+        "distill_loss": {},
+        "post_distill_eval": {
+          "crop_accuracy": 0.0,
+          "disease_accuracy": 0.14814814814814814,
+          "pair_accuracy": 0.0,
+          "crop_macro_precision": 0.0,
+          "crop_macro_recall": 0.0,
+          "crop_macro_f1": 0.0,
+          "disease_macro_precision": 0.25,
+          "disease_macro_recall": 0.25,
+          "disease_macro_f1": 0.25,
+          "pair_macro_precision": 0.0,
+          "pair_macro_recall": 0.0,
+          "pair_macro_f1": 0.0
+        },
+        "distill_gain": {
+          "crop_accuracy": -1.0,
+          "disease_accuracy": -0.6666666666666666,
+          "pair_accuracy": -0.8148148148148148,
+          "crop_macro_precision": -1.0,
+          "crop_macro_recall": -1.0,
+          "crop_macro_f1": -1.0,
+          "disease_macro_precision": -0.6538461538461539,
+          "disease_macro_recall": -0.5892857142857143,
+          "disease_macro_f1": -0.5879120879120878,
+          "pair_macro_precision": -0.9038461538461539,
+          "pair_macro_recall": -0.8392857142857143,
+          "pair_macro_f1": -0.8379120879120878
+        },
+        "improved": false,
+        "bytes_uploaded": 3840060,
+        "bytes_downloaded": 0,
+        "energy_kwh": {
+          "local_train": 6.254492628931553e-05,
+          "evaluate": 0.00021203641598808895,
+          "upload": 8.43540110292199e-08,
+          "exchange": 8.326879318446029e-08
+        },
+        "duration_s": {
+          "local_train": 1.9574298858642578,
+          "evaluate": 7.218285799026489,
+          "upload": 0.06461286544799805,
+          "exchange": 0.0773305892944336
+        },
+        "total_bytes": 3840060,
+        "total_energy_kwh": 0.00027474896508161814
+      }
+    }
+  },
+  {
+    "batch_idx": 11,
+    "absent": [],
+    "per_node": {
+      "node_0": {
+        "node_id": "node_0",
+        "batch_idx": 11,
+        "num_train": 659,
+        "num_test": 115,
+        "local_epochs": 3,
+        "train_loss": 0.5246093100498593,
+        "pre_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.9217391304347826,
+          "pair_accuracy": 0.9217391304347826,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.9062409812409813,
+          "disease_macro_recall": 0.9157600732600732,
+          "disease_macro_f1": 0.8960911890397185,
+          "pair_macro_precision": 0.9062409812409813,
+          "pair_macro_recall": 0.9157600732600732,
+          "pair_macro_f1": 0.8960911890397185
+        },
+        "ema": 0.8711999404948825,
+        "prev_ema": 0.8495402876634968,
+        "roles": [
+          "teacher",
+          "learner"
+        ],
+        "uploaded": true,
+        "distilled": true,
+        "peers_used": {
+          "node_1": 11
+        },
+        "logit_peers": [],
+        "probe_images_used": 0,
+        "distill_loss": {},
+        "post_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.9217391304347826,
+          "pair_accuracy": 0.9217391304347826,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.9062409812409813,
+          "disease_macro_recall": 0.9157600732600732,
+          "disease_macro_f1": 0.8966920809014798,
+          "pair_macro_precision": 0.9062409812409813,
+          "pair_macro_recall": 0.9157600732600732,
+          "pair_macro_f1": 0.8966920809014798
+        },
+        "distill_gain": {
+          "crop_accuracy": 0.0,
+          "disease_accuracy": 0.0,
+          "pair_accuracy": 0.0,
+          "crop_macro_precision": 0.0,
+          "crop_macro_recall": 0.0,
+          "crop_macro_f1": 0.0,
+          "disease_macro_precision": 0.0,
+          "disease_macro_recall": 0.0,
+          "disease_macro_f1": 0.0006008918617612657,
+          "pair_macro_precision": 0.0,
+          "pair_macro_recall": 0.0,
+          "pair_macro_f1": 0.0006008918617612657
+        },
+        "improved": false,
+        "bytes_uploaded": 3840060,
+        "bytes_downloaded": 0,
+        "energy_kwh": {
+          "local_train": 0.000381515875058481,
+          "evaluate": 0.00025024622475320485,
+          "upload": 8.970121422510863e-08,
+          "exchange": 8.217314475629596e-08
+        },
+        "duration_s": {
+          "local_train": 12.234197854995728,
+          "evaluate": 8.362929582595825,
+          "upload": 0.06643176078796387,
+          "exchange": 0.07641983032226562
+        },
+        "total_bytes": 3840060,
+        "total_energy_kwh": 0.0006319339741706672
+      },
+      "node_1": {
+        "node_id": "node_1",
+        "batch_idx": 11,
+        "num_train": 149,
+        "num_test": 27,
+        "local_epochs": 3,
+        "train_loss": 0.9157670021057129,
+        "pre_distill_eval": {
+          "crop_accuracy": 0.9259259259259259,
+          "disease_accuracy": 0.7037037037037037,
+          "pair_accuracy": 0.6296296296296297,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 0.9259259259259259,
+          "crop_macro_f1": 0.9615384615384616,
+          "disease_macro_precision": 0.875,
+          "disease_macro_recall": 0.7410714285714286,
+          "disease_macro_f1": 0.725,
+          "pair_macro_precision": 0.875,
+          "pair_macro_recall": 0.6160714285714286,
+          "pair_macro_f1": 0.6416666666666666
+        },
+        "ema": 0.6763986204633332,
+        "prev_ema": 0.6964424736777777,
+        "roles": [
+          "teacher",
+          "learner"
+        ],
+        "uploaded": true,
+        "distilled": true,
+        "peers_used": {
+          "node_0": 11
+        },
+        "logit_peers": [],
+        "probe_images_used": 0,
+        "distill_loss": {},
+        "post_distill_eval": {
+          "crop_accuracy": 0.0,
+          "disease_accuracy": 0.14814814814814814,
+          "pair_accuracy": 0.0,
+          "crop_macro_precision": 0.0,
+          "crop_macro_recall": 0.0,
+          "crop_macro_f1": 0.0,
+          "disease_macro_precision": 0.25,
+          "disease_macro_recall": 0.25,
+          "disease_macro_f1": 0.25,
+          "pair_macro_precision": 0.0,
+          "pair_macro_recall": 0.0,
+          "pair_macro_f1": 0.0
+        },
+        "distill_gain": {
+          "crop_accuracy": -0.9259259259259259,
+          "disease_accuracy": -0.5555555555555556,
+          "pair_accuracy": -0.6296296296296297,
+          "crop_macro_precision": -1.0,
+          "crop_macro_recall": -0.9259259259259259,
+          "crop_macro_f1": -0.9615384615384616,
+          "disease_macro_precision": -0.625,
+          "disease_macro_recall": -0.4910714285714286,
+          "disease_macro_f1": -0.475,
+          "pair_macro_precision": -0.875,
+          "pair_macro_recall": -0.6160714285714286,
+          "pair_macro_f1": -0.6416666666666666
+        },
+        "improved": false,
+        "bytes_uploaded": 3840060,
+        "bytes_downloaded": 0,
+        "energy_kwh": {
+          "local_train": 6.510114633256954e-05,
+          "evaluate": 0.0002250268037966141,
+          "upload": 9.48140027404401e-08,
+          "exchange": 9.605795587549117e-08
+        },
+        "duration_s": {
+          "local_train": 2.102250337600708,
+          "evaluate": 7.589910984039307,
+          "upload": 0.06594061851501465,
+          "exchange": 0.07610893249511719
+        },
+        "total_bytes": 3840060,
+        "total_energy_kwh": 0.00029031882208779955
+      }
+    }
+  },
+  {
+    "batch_idx": 12,
+    "absent": [],
+    "per_node": {
+      "node_0": {
+        "node_id": "node_0",
+        "batch_idx": 12,
+        "num_train": 660,
+        "num_test": 115,
+        "local_epochs": 3,
+        "train_loss": 0.5004369526628464,
+        "pre_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.8608695652173913,
+          "pair_accuracy": 0.8608695652173913,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.8443047148929501,
+          "disease_macro_recall": 0.8611460671944542,
+          "disease_macro_f1": 0.8353667843949173,
+          "pair_macro_precision": 0.8443047148929501,
+          "pair_macro_recall": 0.8611460671944542,
+          "pair_macro_f1": 0.8353667843949175
+        },
+        "ema": 0.8681008279116351,
+        "prev_ema": 0.8711999404948825,
+        "roles": [
+          "teacher",
+          "learner"
+        ],
+        "uploaded": true,
+        "distilled": true,
+        "peers_used": {
+          "node_1": 12
+        },
+        "logit_peers": [],
+        "probe_images_used": 0,
+        "distill_loss": {},
+        "post_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.8521739130434782,
+          "pair_accuracy": 0.8521739130434782,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.8412698412698413,
+          "disease_macro_recall": 0.8486460671944542,
+          "disease_macro_f1": 0.8259276486514338,
+          "pair_macro_precision": 0.8412698412698413,
+          "pair_macro_recall": 0.8486460671944542,
+          "pair_macro_f1": 0.8259276486514338
+        },
+        "distill_gain": {
+          "crop_accuracy": 0.0,
+          "disease_accuracy": -0.008695652173913104,
+          "pair_accuracy": -0.008695652173913104,
+          "crop_macro_precision": 0.0,
+          "crop_macro_recall": 0.0,
+          "crop_macro_f1": 0.0,
+          "disease_macro_precision": -0.003034873623108836,
+          "disease_macro_recall": -0.012499999999999956,
+          "disease_macro_f1": -0.00943913574348354,
+          "pair_macro_precision": -0.003034873623108836,
+          "pair_macro_recall": -0.012499999999999956,
+          "pair_macro_f1": -0.009439135743483762
+        },
+        "improved": false,
+        "bytes_uploaded": 3840060,
+        "bytes_downloaded": 0,
+        "energy_kwh": {
+          "local_train": 0.0003343408310357413,
+          "evaluate": 0.00020583818551055957,
+          "upload": 8.869905261749914e-08,
+          "exchange": 6.462096987195626e-06
+        },
+        "duration_s": {
+          "local_train": 10.54981017112732,
+          "evaluate": 6.976086616516113,
+          "upload": 0.06977391242980957,
+          "exchange": 0.29836368560791016
+        },
+        "total_bytes": 3840060,
+        "total_energy_kwh": 0.000546729812586114
+      },
+      "node_1": {
+        "node_id": "node_1",
+        "batch_idx": 12,
+        "num_train": 148,
+        "num_test": 27,
+        "local_epochs": 3,
+        "train_loss": 0.9709952930609386,
+        "pre_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.7777777777777778,
+          "pair_accuracy": 0.7777777777777778,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.8538461538461539,
+          "disease_macro_recall": 0.8035714285714286,
+          "disease_macro_f1": 0.8026556776556777,
+          "pair_macro_precision": 0.8538461538461539,
+          "pair_macro_recall": 0.8035714285714286,
+          "pair_macro_f1": 0.8026556776556777
+        },
+        "ema": 0.7068123676576665,
+        "prev_ema": 0.6763986204633332,
+        "roles": [
+          "teacher",
+          "learner"
+        ],
+        "uploaded": true,
+        "distilled": true,
+        "peers_used": {
+          "node_0": 12
+        },
+        "logit_peers": [],
+        "probe_images_used": 0,
+        "distill_loss": {},
+        "post_distill_eval": {
+          "crop_accuracy": 0.0,
+          "disease_accuracy": 0.1111111111111111,
+          "pair_accuracy": 0.0,
+          "crop_macro_precision": 0.0,
+          "crop_macro_recall": 0.0,
+          "crop_macro_f1": 0.0,
+          "disease_macro_precision": 0.125,
+          "disease_macro_recall": 0.1875,
+          "disease_macro_f1": 0.15,
+          "pair_macro_precision": 0.0,
+          "pair_macro_recall": 0.0,
+          "pair_macro_f1": 0.0
+        },
+        "distill_gain": {
+          "crop_accuracy": -1.0,
+          "disease_accuracy": -0.6666666666666667,
+          "pair_accuracy": -0.7777777777777778,
+          "crop_macro_precision": -1.0,
+          "crop_macro_recall": -1.0,
+          "crop_macro_f1": -1.0,
+          "disease_macro_precision": -0.7288461538461539,
+          "disease_macro_recall": -0.6160714285714286,
+          "disease_macro_f1": -0.6526556776556777,
+          "pair_macro_precision": -0.8538461538461539,
+          "pair_macro_recall": -0.8035714285714286,
+          "pair_macro_f1": -0.8026556776556777
+        },
+        "improved": false,
+        "bytes_uploaded": 3840060,
+        "bytes_downloaded": 0,
+        "energy_kwh": {
+          "local_train": 6.699996537540071e-05,
+          "evaluate": 0.00020003959359267545,
+          "upload": 8.651999809546005e-08,
+          "exchange": 9.226103106254247e-08
+        },
+        "duration_s": {
+          "local_train": 2.087392568588257,
+          "evaluate": 6.835846662521362,
+          "upload": 0.06614971160888672,
+          "exchange": 0.0785684585571289
+        },
+        "total_bytes": 3840060,
+        "total_energy_kwh": 0.00026721833999723414
+      }
+    }
+  },
+  {
+    "batch_idx": 13,
+    "absent": [],
+    "per_node": {
+      "node_0": {
+        "node_id": "node_0",
+        "batch_idx": 13,
+        "num_train": 659,
+        "num_test": 115,
+        "local_epochs": 3,
+        "train_loss": 0.5002558234901655,
+        "pre_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.8782608695652174,
+          "pair_accuracy": 0.8782608695652174,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.8866233766233765,
+          "disease_macro_recall": 0.8731064634290441,
+          "disease_macro_f1": 0.8593153559832105,
+          "pair_macro_precision": 0.8866233766233765,
+          "pair_macro_recall": 0.8731064634290441,
+          "pair_macro_f1": 0.8593153559832107
+        },
+        "ema": 0.8711488404077097,
+        "prev_ema": 0.8681008279116351,
+        "roles": [
+          "teacher",
+          "learner"
+        ],
+        "uploaded": true,
+        "distilled": true,
+        "peers_used": {
+          "node_1": 13
+        },
+        "logit_peers": [],
+        "probe_images_used": 0,
+        "distill_loss": {},
+        "post_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.8782608695652174,
+          "pair_accuracy": 0.8782608695652174,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.8768384303868174,
+          "disease_macro_recall": 0.8691894127377999,
+          "disease_macro_f1": 0.8528316242660683,
+          "pair_macro_precision": 0.8768384303868176,
+          "pair_macro_recall": 0.8691894127377999,
+          "pair_macro_f1": 0.8528316242660683
+        },
+        "distill_gain": {
+          "crop_accuracy": 0.0,
+          "disease_accuracy": 0.0,
+          "pair_accuracy": 0.0,
+          "crop_macro_precision": 0.0,
+          "crop_macro_recall": 0.0,
+          "crop_macro_f1": 0.0,
+          "disease_macro_precision": -0.009784946236559122,
+          "disease_macro_recall": -0.0039170506912441505,
+          "disease_macro_f1": -0.006483731717142227,
+          "pair_macro_precision": -0.0097849462365589,
+          "pair_macro_recall": -0.0039170506912441505,
+          "pair_macro_f1": -0.006483731717142449
+        },
+        "improved": false,
+        "bytes_uploaded": 3840060,
+        "bytes_downloaded": 0,
+        "energy_kwh": {
+          "local_train": 0.0002974696747826495,
+          "evaluate": 0.0002962539777680004,
+          "upload": 8.510796992730483e-08,
+          "exchange": 8.347652659254611e-08
+        },
+        "duration_s": {
+          "local_train": 9.108646869659424,
+          "evaluate": 10.066373586654663,
+          "upload": 0.06579399108886719,
+          "exchange": 0.07611250877380371
+        },
+        "total_bytes": 3840060,
+        "total_energy_kwh": 0.0005938922370471697
+      },
+      "node_1": {
+        "node_id": "node_1",
+        "batch_idx": 13,
+        "num_train": 149,
+        "num_test": 27,
+        "local_epochs": 3,
+        "train_loss": 0.8612351655960083,
+        "pre_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.6296296296296297,
+          "pair_accuracy": 0.6296296296296297,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.8611111111111112,
+          "disease_macro_recall": 0.6607142857142857,
+          "disease_macro_f1": 0.6330128205128205,
+          "pair_macro_precision": 0.8611111111111112,
+          "pair_macro_recall": 0.6607142857142857,
+          "pair_macro_f1": 0.6330128205128205
+        },
+        "ema": 0.6836575462492553,
+        "prev_ema": 0.7068123676576665,
+        "roles": [
+          "teacher",
+          "learner"
+        ],
+        "uploaded": true,
+        "distilled": true,
+        "peers_used": {
+          "node_0": 13
+        },
+        "logit_peers": [],
+        "probe_images_used": 0,
+        "distill_loss": {},
+        "post_distill_eval": {
+          "crop_accuracy": 0.0,
+          "disease_accuracy": 0.14814814814814814,
+          "pair_accuracy": 0.0,
+          "crop_macro_precision": 0.0,
+          "crop_macro_recall": 0.0,
+          "crop_macro_f1": 0.0,
+          "disease_macro_precision": 0.25,
+          "disease_macro_recall": 0.25,
+          "disease_macro_f1": 0.25,
+          "pair_macro_precision": 0.0,
+          "pair_macro_recall": 0.0,
+          "pair_macro_f1": 0.0
+        },
+        "distill_gain": {
+          "crop_accuracy": -1.0,
+          "disease_accuracy": -0.4814814814814815,
+          "pair_accuracy": -0.6296296296296297,
+          "crop_macro_precision": -1.0,
+          "crop_macro_recall": -1.0,
+          "crop_macro_f1": -1.0,
+          "disease_macro_precision": -0.6111111111111112,
+          "disease_macro_recall": -0.4107142857142857,
+          "disease_macro_f1": -0.3830128205128205,
+          "pair_macro_precision": -0.8611111111111112,
+          "pair_macro_recall": -0.6607142857142857,
+          "pair_macro_f1": -0.6330128205128205
+        },
+        "improved": false,
+        "bytes_uploaded": 3840060,
+        "bytes_downloaded": 0,
+        "energy_kwh": {
+          "local_train": 8.520452726806148e-05,
+          "evaluate": 0.0001975517903352331,
+          "upload": 9.290312445806993e-08,
+          "exchange": 1.7921616743665805e-06
+        },
+        "duration_s": {
+          "local_train": 2.775526762008667,
+          "evaluate": 6.626459360122681,
+          "upload": 0.06747317314147949,
+          "exchange": 0.07687616348266602
+        },
+        "total_bytes": 3840060,
+        "total_energy_kwh": 0.0002846413824021192
+      }
+    }
+  },
+  {
+    "batch_idx": 14,
+    "absent": [],
+    "per_node": {
+      "node_0": {
+        "node_id": "node_0",
+        "batch_idx": 14,
+        "num_train": 660,
+        "num_test": 115,
+        "local_epochs": 3,
+        "train_loss": 0.5262165211495899,
+        "pre_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.8347826086956521,
+          "pair_accuracy": 0.8347826086956521,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.8262870462870463,
+          "disease_macro_recall": 0.8534978730946474,
+          "disease_macro_f1": 0.810889570366332,
+          "pair_macro_precision": 0.8262870462870463,
+          "pair_macro_recall": 0.8534978730946474,
+          "pair_macro_f1": 0.810889570366332
+        },
+        "ema": 0.8602389708940923,
+        "prev_ema": 0.8711488404077097,
+        "roles": [
+          "teacher",
+          "learner"
+        ],
+        "uploaded": true,
+        "distilled": true,
+        "peers_used": {
+          "node_1": 14
+        },
+        "logit_peers": [],
+        "probe_images_used": 0,
+        "distill_loss": {},
+        "post_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.8869565217391304,
+          "pair_accuracy": 0.8869565217391304,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.8624999999999998,
+          "disease_macro_recall": 0.9083903462129268,
+          "disease_macro_f1": 0.8722473885657209,
+          "pair_macro_precision": 0.8625,
+          "pair_macro_recall": 0.9083903462129269,
+          "pair_macro_f1": 0.8722473885657207
+        },
+        "distill_gain": {
+          "crop_accuracy": 0.0,
+          "disease_accuracy": 0.05217391304347829,
+          "pair_accuracy": 0.05217391304347829,
+          "crop_macro_precision": 0.0,
+          "crop_macro_recall": 0.0,
+          "crop_macro_f1": 0.0,
+          "disease_macro_precision": 0.03621295371295352,
+          "disease_macro_recall": 0.054892473118279383,
+          "disease_macro_f1": 0.0613578181993889,
+          "pair_macro_precision": 0.036212953712953744,
+          "pair_macro_recall": 0.054892473118279494,
+          "pair_macro_f1": 0.06135781819938868
+        },
+        "improved": true,
+        "bytes_uploaded": 3840060,
+        "bytes_downloaded": 0,
+        "energy_kwh": {
+          "local_train": 0.000315184273291469,
+          "evaluate": 0.00021245116076649387,
+          "upload": 9.369608082875241e-08,
+          "exchange": 9.393924480076172e-08
+        },
+        "duration_s": {
+          "local_train": 9.898786067962646,
+          "evaluate": 7.089953899383545,
+          "upload": 0.06676173210144043,
+          "exchange": 0.07663679122924805
+        },
+        "total_bytes": 3840060,
+        "total_energy_kwh": 0.0005278230693835924
+      },
+      "node_1": {
+        "node_id": "node_1",
+        "batch_idx": 14,
+        "num_train": 148,
+        "num_test": 27,
+        "local_epochs": 3,
+        "train_loss": 1.2530751486619314,
+        "pre_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.6296296296296297,
+          "pair_accuracy": 0.6296296296296297,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.7583333333333333,
+          "disease_macro_recall": 0.5848214285714286,
+          "disease_macro_f1": 0.5893892339544513,
+          "pair_macro_precision": 0.7583333333333333,
+          "pair_macro_recall": 0.5848214285714286,
+          "pair_macro_f1": 0.5893892339544513
+        },
+        "ema": 0.6674491712633677,
+        "prev_ema": 0.6836575462492553,
+        "roles": [
+          "teacher",
+          "learner"
+        ],
+        "uploaded": true,
+        "distilled": true,
+        "peers_used": {
+          "node_0": 14
+        },
+        "logit_peers": [],
+        "probe_images_used": 0,
+        "distill_loss": {},
+        "post_distill_eval": {
+          "crop_accuracy": 0.0,
+          "disease_accuracy": 0.1111111111111111,
+          "pair_accuracy": 0.0,
+          "crop_macro_precision": 0.0,
+          "crop_macro_recall": 0.0,
+          "crop_macro_f1": 0.0,
+          "disease_macro_precision": 0.25,
+          "disease_macro_recall": 0.1875,
+          "disease_macro_f1": 0.21428571428571427,
+          "pair_macro_precision": 0.0,
+          "pair_macro_recall": 0.0,
+          "pair_macro_f1": 0.0
+        },
+        "distill_gain": {
+          "crop_accuracy": -1.0,
+          "disease_accuracy": -0.5185185185185186,
+          "pair_accuracy": -0.6296296296296297,
+          "crop_macro_precision": -1.0,
+          "crop_macro_recall": -1.0,
+          "crop_macro_f1": -1.0,
+          "disease_macro_precision": -0.5083333333333333,
+          "disease_macro_recall": -0.3973214285714286,
+          "disease_macro_f1": -0.375103519668737,
+          "pair_macro_precision": -0.7583333333333333,
+          "pair_macro_recall": -0.5848214285714286,
+          "pair_macro_f1": -0.5893892339544513
+        },
+        "improved": false,
+        "bytes_uploaded": 3840060,
+        "bytes_downloaded": 0,
+        "energy_kwh": {
+          "local_train": 7.444079501171205e-05,
+          "evaluate": 0.00019418405633934933,
+          "upload": 7.928680286626403e-07,
+          "exchange": 9.876017687808465e-08
+        },
+        "duration_s": {
+          "local_train": 2.416386365890503,
+          "evaluate": 6.480186223983765,
+          "upload": 0.11450695991516113,
+          "exchange": 0.07595014572143555
+        },
+        "total_bytes": 3840060,
+        "total_energy_kwh": 0.0002695164795566021
+      }
+    }
+  },
+  {
+    "batch_idx": 15,
+    "absent": [],
+    "per_node": {
+      "node_0": {
+        "node_id": "node_0",
+        "batch_idx": 15,
+        "num_train": 659,
+        "num_test": 115,
+        "local_epochs": 3,
+        "train_loss": 0.4435826271535858,
+        "pre_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.9130434782608695,
+          "pair_accuracy": 0.9130434782608695,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.8898809523809523,
+          "disease_macro_recall": 0.9154592540076412,
+          "disease_macro_f1": 0.8847588538052934,
+          "pair_macro_precision": 0.8898809523809523,
+          "pair_macro_recall": 0.9154592540076412,
+          "pair_macro_f1": 0.8847588538052935
+        },
+        "ema": 0.8760803231041254,
+        "prev_ema": 0.8602389708940923,
+        "roles": [
+          "teacher",
+          "learner"
+        ],
+        "uploaded": true,
+        "distilled": true,
+        "peers_used": {
+          "node_1": 15
+        },
+        "logit_peers": [],
+        "probe_images_used": 0,
+        "distill_loss": {},
+        "post_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.8869565217391304,
+          "pair_accuracy": 0.8869565217391304,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.864483016983017,
+          "disease_macro_recall": 0.8988153334121076,
+          "disease_macro_f1": 0.8656869904646675,
+          "pair_macro_precision": 0.864483016983017,
+          "pair_macro_recall": 0.8988153334121076,
+          "pair_macro_f1": 0.8656869904646675
+        },
+        "distill_gain": {
+          "crop_accuracy": 0.0,
+          "disease_accuracy": -0.02608695652173909,
+          "pair_accuracy": -0.02608695652173909,
+          "crop_macro_precision": 0.0,
+          "crop_macro_recall": 0.0,
+          "crop_macro_f1": 0.0,
+          "disease_macro_precision": -0.025397935397935334,
+          "disease_macro_recall": -0.016643920595533546,
+          "disease_macro_f1": -0.01907186334062594,
+          "pair_macro_precision": -0.025397935397935334,
+          "pair_macro_recall": -0.016643920595533546,
+          "pair_macro_f1": -0.01907186334062605
+        },
+        "improved": false,
+        "bytes_uploaded": 3840060,
+        "bytes_downloaded": 0,
+        "energy_kwh": {
+          "local_train": 0.00028837687589571345,
+          "evaluate": 0.00024688502336101784,
+          "upload": 8.455715372576527e-08,
+          "exchange": 1.788708969588957e-06
+        },
+        "duration_s": {
+          "local_train": 8.952920913696289,
+          "evaluate": 8.342490673065186,
+          "upload": 0.06689023971557617,
+          "exchange": 0.08078742027282715
+        },
+        "total_bytes": 3840060,
+        "total_energy_kwh": 0.000537135165380046
+      },
+      "node_1": {
+        "node_id": "node_1",
+        "batch_idx": 15,
+        "num_train": 149,
+        "num_test": 27,
+        "local_epochs": 3,
+        "train_loss": 1.0653053124745686,
+        "pre_distill_eval": {
+          "crop_accuracy": 0.9259259259259259,
+          "disease_accuracy": 0.6666666666666666,
+          "pair_accuracy": 0.5925925925925926,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 0.9259259259259259,
+          "crop_macro_f1": 0.9615384615384616,
+          "disease_macro_precision": 0.825,
+          "disease_macro_recall": 0.7098214285714286,
+          "disease_macro_f1": 0.6527777777777778,
+          "pair_macro_precision": 0.7916666666666666,
+          "pair_macro_recall": 0.5848214285714286,
+          "pair_macro_f1": 0.5734126984126984
+        },
+        "ema": 0.6449921976621351,
+        "prev_ema": 0.6674491712633677,
+        "roles": [
+          "teacher",
+          "learner"
+        ],
+        "uploaded": true,
+        "distilled": true,
+        "peers_used": {
+          "node_0": 15
+        },
+        "logit_peers": [],
+        "probe_images_used": 0,
+        "distill_loss": {},
+        "post_distill_eval": {
+          "crop_accuracy": 0.0,
+          "disease_accuracy": 0.14814814814814814,
+          "pair_accuracy": 0.0,
+          "crop_macro_precision": 0.0,
+          "crop_macro_recall": 0.0,
+          "crop_macro_f1": 0.0,
+          "disease_macro_precision": 0.25,
+          "disease_macro_recall": 0.25,
+          "disease_macro_f1": 0.25,
+          "pair_macro_precision": 0.0,
+          "pair_macro_recall": 0.0,
+          "pair_macro_f1": 0.0
+        },
+        "distill_gain": {
+          "crop_accuracy": -0.9259259259259259,
+          "disease_accuracy": -0.5185185185185185,
+          "pair_accuracy": -0.5925925925925926,
+          "crop_macro_precision": -1.0,
+          "crop_macro_recall": -0.9259259259259259,
+          "crop_macro_f1": -0.9615384615384616,
+          "disease_macro_precision": -0.575,
+          "disease_macro_recall": -0.4598214285714286,
+          "disease_macro_f1": -0.4027777777777778,
+          "pair_macro_precision": -0.7916666666666666,
+          "pair_macro_recall": -0.5848214285714286,
+          "pair_macro_f1": -0.5734126984126984
+        },
+        "improved": false,
+        "bytes_uploaded": 3840060,
+        "bytes_downloaded": 0,
+        "energy_kwh": {
+          "local_train": 8.788527459307922e-05,
+          "evaluate": 0.00020855574652987744,
+          "upload": 8.871953080763238e-08,
+          "exchange": 8.311486266681089e-08
+        },
+        "duration_s": {
+          "local_train": 2.8573269844055176,
+          "evaluate": 7.0136399269104,
+          "upload": 0.06658554077148438,
+          "exchange": 0.07728123664855957
+        },
+        "total_bytes": 3840060,
+        "total_energy_kwh": 0.0002966128555164311
+      }
+    }
+  },
+  {
+    "batch_idx": 16,
+    "absent": [],
+    "per_node": {
+      "node_0": {
+        "node_id": "node_0",
+        "batch_idx": 16,
+        "num_train": 659,
+        "num_test": 115,
+        "local_epochs": 3,
+        "train_loss": 0.5132248633437686,
+        "pre_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.8608695652173913,
+          "pair_accuracy": 0.8608695652173913,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.826357808857809,
+          "disease_macro_recall": 0.8495923431407302,
+          "disease_macro_f1": 0.8162169182054093,
+          "pair_macro_precision": 0.826357808857809,
+          "pair_macro_recall": 0.8495923431407302,
+          "pair_macro_f1": 0.8162169182054093
+        },
+        "ema": 0.8715170957381051,
+        "prev_ema": 0.8760803231041254,
+        "roles": [
+          "teacher",
+          "learner"
+        ],
+        "uploaded": true,
+        "distilled": true,
+        "peers_used": {
+          "node_1": 16
+        },
+        "logit_peers": [],
+        "probe_images_used": 0,
+        "distill_loss": {},
+        "post_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.8869565217391304,
+          "pair_accuracy": 0.8869565217391304,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.8508394383394384,
+          "disease_macro_recall": 0.8781179841663713,
+          "disease_macro_f1": 0.8469170698582463,
+          "pair_macro_precision": 0.8508394383394384,
+          "pair_macro_recall": 0.8781179841663713,
+          "pair_macro_f1": 0.8469170698582463
+        },
+        "distill_gain": {
+          "crop_accuracy": 0.0,
+          "disease_accuracy": 0.02608695652173909,
+          "pair_accuracy": 0.02608695652173909,
+          "crop_macro_precision": 0.0,
+          "crop_macro_recall": 0.0,
+          "crop_macro_f1": 0.0,
+          "disease_macro_precision": 0.024481629481629463,
+          "disease_macro_recall": 0.028525641025641146,
+          "disease_macro_f1": 0.030700151652837016,
+          "pair_macro_precision": 0.024481629481629463,
+          "pair_macro_recall": 0.028525641025641146,
+          "pair_macro_f1": 0.030700151652837016
+        },
+        "improved": true,
+        "bytes_uploaded": 3840060,
+        "bytes_downloaded": 0,
+        "energy_kwh": {
+          "local_train": 0.00029130992187902934,
+          "evaluate": 0.0002063367499453498,
+          "upload": 8.580167239190035e-08,
+          "exchange": 9.965185049935598e-08
+        },
+        "duration_s": {
+          "local_train": 9.0197434425354,
+          "evaluate": 6.899559259414673,
+          "upload": 0.06594181060791016,
+          "exchange": 0.08309149742126465
+        },
+        "total_bytes": 3840060,
+        "total_energy_kwh": 0.0004978321253472704
+      },
+      "node_1": {
+        "node_id": "node_1",
+        "batch_idx": 16,
+        "num_train": 149,
+        "num_test": 27,
+        "local_epochs": 3,
+        "train_loss": 0.8869714558124542,
+        "pre_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.6296296296296297,
+          "pair_accuracy": 0.6296296296296297,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.7843137254901961,
+          "disease_macro_recall": 0.6428571428571428,
+          "disease_macro_f1": 0.647012987012987,
+          "pair_macro_precision": 0.7843137254901961,
+          "pair_macro_recall": 0.6428571428571428,
+          "pair_macro_f1": 0.647012987012987
+        },
+        "ema": 0.6403834272523834,
+        "prev_ema": 0.6449921976621351,
+        "roles": [
+          "teacher",
+          "learner"
+        ],
+        "uploaded": true,
+        "distilled": true,
+        "peers_used": {
+          "node_0": 16
+        },
+        "logit_peers": [],
+        "probe_images_used": 0,
+        "distill_loss": {},
+        "post_distill_eval": {
+          "crop_accuracy": 0.0,
+          "disease_accuracy": 0.14814814814814814,
+          "pair_accuracy": 0.0,
+          "crop_macro_precision": 0.0,
+          "crop_macro_recall": 0.0,
+          "crop_macro_f1": 0.0,
+          "disease_macro_precision": 0.25,
+          "disease_macro_recall": 0.25,
+          "disease_macro_f1": 0.25,
+          "pair_macro_precision": 0.0,
+          "pair_macro_recall": 0.0,
+          "pair_macro_f1": 0.0
+        },
+        "distill_gain": {
+          "crop_accuracy": -1.0,
+          "disease_accuracy": -0.4814814814814815,
+          "pair_accuracy": -0.6296296296296297,
+          "crop_macro_precision": -1.0,
+          "crop_macro_recall": -1.0,
+          "crop_macro_f1": -1.0,
+          "disease_macro_precision": -0.5343137254901961,
+          "disease_macro_recall": -0.3928571428571428,
+          "disease_macro_f1": -0.39701298701298704,
+          "pair_macro_precision": -0.7843137254901961,
+          "pair_macro_recall": -0.6428571428571428,
+          "pair_macro_f1": -0.647012987012987
+        },
+        "improved": false,
+        "bytes_uploaded": 3840060,
+        "bytes_downloaded": 0,
+        "energy_kwh": {
+          "local_train": 0.0001094016623925657,
+          "evaluate": 0.00019531760688746766,
+          "upload": 9.771393488002193e-08,
+          "exchange": 1.7792545454188923e-06
+        },
+        "duration_s": {
+          "local_train": 3.6367409229278564,
+          "evaluate": 6.576214790344238,
+          "upload": 0.06911444664001465,
+          "exchange": 0.07626533508300781
+        },
+        "total_bytes": 3840060,
+        "total_energy_kwh": 0.00030659623776033227
+      }
+    }
+  },
+  {
+    "batch_idx": 17,
+    "absent": [],
+    "per_node": {
+      "node_0": {
+        "node_id": "node_0",
+        "batch_idx": 17,
+        "num_train": 659,
+        "num_test": 115,
+        "local_epochs": 3,
+        "train_loss": 0.3952648267149925,
+        "pre_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.8956521739130435,
+          "pair_accuracy": 0.8956521739130435,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.8886029411764707,
+          "disease_macro_recall": 0.893984895033282,
+          "disease_macro_f1": 0.8780238108882938,
+          "pair_macro_precision": 0.8886029411764707,
+          "pair_macro_recall": 0.8939848950332822,
+          "pair_macro_f1": 0.8780238108882938
+        },
+        "ema": 0.8787576191905866,
+        "prev_ema": 0.8715170957381051,
+        "roles": [
+          "teacher",
+          "learner"
+        ],
+        "uploaded": true,
+        "distilled": true,
+        "peers_used": {
+          "node_1": 17
+        },
+        "logit_peers": [],
+        "probe_images_used": 0,
+        "distill_loss": {},
+        "post_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.8869565217391304,
+          "pair_accuracy": 0.8869565217391304,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.8711268875366237,
+          "disease_macro_recall": 0.8691778920004726,
+          "disease_macro_f1": 0.8637625153234861,
+          "pair_macro_precision": 0.8711268875366238,
+          "pair_macro_recall": 0.8691778920004726,
+          "pair_macro_f1": 0.8637625153234861
+        },
+        "distill_gain": {
+          "crop_accuracy": 0.0,
+          "disease_accuracy": -0.008695652173913104,
+          "pair_accuracy": -0.008695652173913104,
+          "crop_macro_precision": 0.0,
+          "crop_macro_recall": 0.0,
+          "crop_macro_f1": 0.0,
+          "disease_macro_precision": -0.017476053639846945,
+          "disease_macro_recall": -0.02480700303280947,
+          "disease_macro_f1": -0.014261295564807708,
+          "pair_macro_precision": -0.017476053639846834,
+          "pair_macro_recall": -0.024807003032809583,
+          "pair_macro_f1": -0.014261295564807708
+        },
+        "improved": false,
+        "bytes_uploaded": 3840060,
+        "bytes_downloaded": 0,
+        "energy_kwh": {
+          "local_train": 0.0002857978252529225,
+          "evaluate": 0.0002535070065036119,
+          "upload": 8.300246948167296e-08,
+          "exchange": 1.0438438417938978e-07
+        },
+        "duration_s": {
+          "local_train": 8.780863523483276,
+          "evaluate": 8.619730234146118,
+          "upload": 0.06608033180236816,
+          "exchange": 0.08001494407653809
+        },
+        "total_bytes": 3840060,
+        "total_energy_kwh": 0.0005394922186101955
+      },
+      "node_1": {
+        "node_id": "node_1",
+        "batch_idx": 17,
+        "num_train": 149,
+        "num_test": 27,
+        "local_epochs": 3,
+        "train_loss": 1.3962579846382142,
+        "pre_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.7407407407407407,
+          "pair_accuracy": 0.7407407407407407,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.8833333333333333,
+          "disease_macro_recall": 0.7767857142857143,
+          "disease_macro_f1": 0.7546822742474917,
+          "pair_macro_precision": 0.8833333333333333,
+          "pair_macro_recall": 0.7767857142857143,
+          "pair_macro_f1": 0.7546822742474917
+        },
+        "ema": 0.6704906212988906,
+        "prev_ema": 0.6403834272523834,
+        "roles": [
+          "teacher",
+          "learner"
+        ],
+        "uploaded": true,
+        "distilled": true,
+        "peers_used": {
+          "node_0": 17
+        },
+        "logit_peers": [],
+        "probe_images_used": 0,
+        "distill_loss": {},
+        "post_distill_eval": {
+          "crop_accuracy": 0.0,
+          "disease_accuracy": 0.14814814814814814,
+          "pair_accuracy": 0.0,
+          "crop_macro_precision": 0.0,
+          "crop_macro_recall": 0.0,
+          "crop_macro_f1": 0.0,
+          "disease_macro_precision": 0.25,
+          "disease_macro_recall": 0.25,
+          "disease_macro_f1": 0.25,
+          "pair_macro_precision": 0.0,
+          "pair_macro_recall": 0.0,
+          "pair_macro_f1": 0.0
+        },
+        "distill_gain": {
+          "crop_accuracy": -1.0,
+          "disease_accuracy": -0.5925925925925926,
+          "pair_accuracy": -0.7407407407407407,
+          "crop_macro_precision": -1.0,
+          "crop_macro_recall": -1.0,
+          "crop_macro_f1": -1.0,
+          "disease_macro_precision": -0.6333333333333333,
+          "disease_macro_recall": -0.5267857142857143,
+          "disease_macro_f1": -0.5046822742474917,
+          "pair_macro_precision": -0.8833333333333333,
+          "pair_macro_recall": -0.7767857142857143,
+          "pair_macro_f1": -0.7546822742474917
+        },
+        "improved": false,
+        "bytes_uploaded": 3840060,
+        "bytes_downloaded": 0,
+        "energy_kwh": {
+          "local_train": 7.636556204594191e-05,
+          "evaluate": 0.0001844707650105587,
+          "upload": 8.129169147479466e-08,
+          "exchange": 8.00027997328724e-08
+        },
+        "duration_s": {
+          "local_train": 2.427510976791382,
+          "evaluate": 6.178932428359985,
+          "upload": 0.07471394538879395,
+          "exchange": 0.07805323600769043
+        },
+        "total_bytes": 3840060,
+        "total_energy_kwh": 0.0002609976215477083
+      }
+    }
+  },
+  {
+    "batch_idx": 18,
+    "absent": [],
+    "per_node": {
+      "node_0": {
+        "node_id": "node_0",
+        "batch_idx": 18,
+        "num_train": 659,
+        "num_test": 115,
+        "local_epochs": 3,
+        "train_loss": 0.4988786172535684,
+        "pre_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.9043478260869565,
+          "pair_accuracy": 0.9043478260869565,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.9024603174603175,
+          "disease_macro_recall": 0.8735042735042734,
+          "disease_macro_f1": 0.879904761904762,
+          "pair_macro_precision": 0.9024603174603175,
+          "pair_macro_recall": 0.8735042735042736,
+          "pair_macro_f1": 0.879904761904762
+        },
+        "ema": 0.8864346812594975,
+        "prev_ema": 0.8787576191905866,
+        "roles": [
+          "teacher",
+          "learner"
+        ],
+        "uploaded": true,
+        "distilled": true,
+        "peers_used": {
+          "node_1": 18
+        },
+        "logit_peers": [],
+        "probe_images_used": 0,
+        "distill_loss": {},
+        "post_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.9043478260869565,
+          "pair_accuracy": 0.9043478260869565,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.9061294261294262,
+          "disease_macro_recall": 0.8752442002442,
+          "disease_macro_f1": 0.8771306533761777,
+          "pair_macro_precision": 0.9061294261294262,
+          "pair_macro_recall": 0.8752442002442002,
+          "pair_macro_f1": 0.8771306533761776
+        },
+        "distill_gain": {
+          "crop_accuracy": 0.0,
+          "disease_accuracy": 0.0,
+          "pair_accuracy": 0.0,
+          "crop_macro_precision": 0.0,
+          "crop_macro_recall": 0.0,
+          "crop_macro_f1": 0.0,
+          "disease_macro_precision": 0.003669108669108634,
+          "disease_macro_recall": 0.0017399267399266227,
+          "disease_macro_f1": -0.002774108528584285,
+          "pair_macro_precision": 0.003669108669108634,
+          "pair_macro_recall": 0.0017399267399266227,
+          "pair_macro_f1": -0.002774108528584396
+        },
+        "improved": false,
+        "bytes_uploaded": 3840060,
+        "bytes_downloaded": 0,
+        "energy_kwh": {
+          "local_train": 0.0003195063231702673,
+          "evaluate": 0.00018718121278019453,
+          "upload": 1.0214827230407132e-07,
+          "exchange": 8.121515981985546e-08
+        },
+        "duration_s": {
+          "local_train": 10.021690845489502,
+          "evaluate": 6.223222970962524,
+          "upload": 0.06757402420043945,
+          "exchange": 0.07693028450012207
+        },
+        "total_bytes": 3840060,
+        "total_energy_kwh": 0.0005068708993825857
+      },
+      "node_1": {
+        "node_id": "node_1",
+        "batch_idx": 18,
+        "num_train": 149,
+        "num_test": 27,
+        "local_epochs": 3,
+        "train_loss": 0.6201511840025584,
+        "pre_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.7777777777777778,
+          "pair_accuracy": 0.7777777777777778,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.8413461538461539,
+          "disease_macro_recall": 0.78125,
+          "disease_macro_f1": 0.7797619047619048,
+          "pair_macro_precision": 0.8413461538461539,
+          "pair_macro_recall": 0.78125,
+          "pair_macro_f1": 0.7797619047619048
+        },
+        "ema": 0.7026767682425568,
+        "prev_ema": 0.6704906212988906,
+        "roles": [
+          "teacher",
+          "learner"
+        ],
+        "uploaded": true,
+        "distilled": true,
+        "peers_used": {
+          "node_0": 18
+        },
+        "logit_peers": [],
+        "probe_images_used": 0,
+        "distill_loss": {},
+        "post_distill_eval": {
+          "crop_accuracy": 0.0,
+          "disease_accuracy": 0.07407407407407407,
+          "pair_accuracy": 0.0,
+          "crop_macro_precision": 0.0,
+          "crop_macro_recall": 0.0,
+          "crop_macro_f1": 0.0,
+          "disease_macro_precision": 0.25,
+          "disease_macro_recall": 0.125,
+          "disease_macro_f1": 0.16666666666666666,
+          "pair_macro_precision": 0.0,
+          "pair_macro_recall": 0.0,
+          "pair_macro_f1": 0.0
+        },
+        "distill_gain": {
+          "crop_accuracy": -1.0,
+          "disease_accuracy": -0.7037037037037037,
+          "pair_accuracy": -0.7777777777777778,
+          "crop_macro_precision": -1.0,
+          "crop_macro_recall": -1.0,
+          "crop_macro_f1": -1.0,
+          "disease_macro_precision": -0.5913461538461539,
+          "disease_macro_recall": -0.65625,
+          "disease_macro_f1": -0.6130952380952381,
+          "pair_macro_precision": -0.8413461538461539,
+          "pair_macro_recall": -0.78125,
+          "pair_macro_f1": -0.7797619047619048
+        },
+        "improved": false,
+        "bytes_uploaded": 3840060,
+        "bytes_downloaded": 0,
+        "energy_kwh": {
+          "local_train": 6.831168785806482e-05,
+          "evaluate": 0.0001776087338732187,
+          "upload": 8.400192145929066e-08,
+          "exchange": 8.546912549871174e-08
+        },
+        "duration_s": {
+          "local_train": 2.174877166748047,
+          "evaluate": 5.988039016723633,
+          "upload": 0.06655287742614746,
+          "exchange": 0.07733511924743652
+        },
+        "total_bytes": 3840060,
+        "total_energy_kwh": 0.00024608989277824153
+      }
+    }
+  },
+  {
+    "batch_idx": 19,
+    "absent": [],
+    "per_node": {
+      "node_0": {
+        "node_id": "node_0",
+        "batch_idx": 19,
+        "num_train": 658,
+        "num_test": 115,
+        "local_epochs": 3,
+        "train_loss": 0.48824594678386807,
+        "pre_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.8434782608695652,
+          "pair_accuracy": 0.8434782608695652,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.8195238095238094,
+          "disease_macro_recall": 0.8503338059789673,
+          "disease_macro_f1": 0.8162332112332112,
+          "pair_macro_precision": 0.8195238095238094,
+          "pair_macro_recall": 0.8503338059789673,
+          "pair_macro_f1": 0.8162332112332112
+        },
+        "ema": 0.8735477551425177,
+        "prev_ema": 0.8864346812594975,
+        "roles": [
+          "teacher",
+          "learner"
+        ],
+        "uploaded": true,
+        "distilled": true,
+        "peers_used": {
+          "node_1": 19
+        },
+        "logit_peers": [],
+        "probe_images_used": 0,
+        "distill_loss": {},
+        "post_distill_eval": {
+          "crop_accuracy": 0.991304347826087,
+          "disease_accuracy": 0.8,
+          "pair_accuracy": 0.8,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 0.991304347826087,
+          "crop_macro_f1": 0.9956331877729258,
+          "disease_macro_precision": 0.8037008742891096,
+          "disease_macro_recall": 0.8028063334514947,
+          "disease_macro_f1": 0.7661103711103711,
+          "pair_macro_precision": 0.8073773448773449,
+          "pair_macro_recall": 0.8028063334514947,
+          "pair_macro_f1": 0.768959373959374
+        },
+        "distill_gain": {
+          "crop_accuracy": -0.008695652173912993,
+          "disease_accuracy": -0.04347826086956519,
+          "pair_accuracy": -0.04347826086956519,
+          "crop_macro_precision": 0.0,
+          "crop_macro_recall": -0.008695652173912993,
+          "crop_macro_f1": -0.004366812227074246,
+          "disease_macro_precision": -0.015822935234699798,
+          "disease_macro_recall": -0.04752747252747269,
+          "disease_macro_f1": -0.050122840122840184,
+          "pair_macro_precision": -0.012146464646464517,
+          "pair_macro_recall": -0.04752747252747269,
+          "pair_macro_f1": -0.04727383727383727
+        },
+        "improved": false,
+        "bytes_uploaded": 3840060,
+        "bytes_downloaded": 0,
+        "energy_kwh": {
+          "local_train": 0.00033441657790353376,
+          "evaluate": 0.00021055435759283404,
+          "upload": 8.384558993081251e-08,
+          "exchange": 1.7524442371804843e-06
+        },
+        "duration_s": {
+          "local_train": 10.60017442703247,
+          "evaluate": 7.119184255599976,
+          "upload": 0.06653094291687012,
+          "exchange": 0.07549285888671875
+        },
+        "total_bytes": 3840060,
+        "total_energy_kwh": 0.0005468072253234791
+      },
+      "node_1": {
+        "node_id": "node_1",
+        "batch_idx": 19,
+        "num_train": 150,
+        "num_test": 27,
+        "local_epochs": 3,
+        "train_loss": 1.1454470098018645,
+        "pre_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.6666666666666666,
+          "pair_accuracy": 0.6666666666666666,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.8676470588235294,
+          "disease_macro_recall": 0.7098214285714286,
+          "disease_macro_f1": 0.6738888888888889,
+          "pair_macro_precision": 0.8676470588235294,
+          "pair_macro_recall": 0.7098214285714286,
+          "pair_macro_f1": 0.6738888888888889
+        },
+        "ema": 0.6918737377697897,
+        "prev_ema": 0.7026767682425568,
+        "roles": [
+          "teacher",
+          "learner"
+        ],
+        "uploaded": true,
+        "distilled": true,
+        "peers_used": {
+          "node_0": 19
+        },
+        "logit_peers": [],
+        "probe_images_used": 0,
+        "distill_loss": {},
+        "post_distill_eval": {
+          "crop_accuracy": 0.0,
+          "disease_accuracy": 0.14814814814814814,
+          "pair_accuracy": 0.0,
+          "crop_macro_precision": 0.0,
+          "crop_macro_recall": 0.0,
+          "crop_macro_f1": 0.0,
+          "disease_macro_precision": 0.25,
+          "disease_macro_recall": 0.25,
+          "disease_macro_f1": 0.25,
+          "pair_macro_precision": 0.0,
+          "pair_macro_recall": 0.0,
+          "pair_macro_f1": 0.0
+        },
+        "distill_gain": {
+          "crop_accuracy": -1.0,
+          "disease_accuracy": -0.5185185185185185,
+          "pair_accuracy": -0.6666666666666666,
+          "crop_macro_precision": -1.0,
+          "crop_macro_recall": -1.0,
+          "crop_macro_f1": -1.0,
+          "disease_macro_precision": -0.6176470588235294,
+          "disease_macro_recall": -0.4598214285714286,
+          "disease_macro_f1": -0.42388888888888887,
+          "pair_macro_precision": -0.8676470588235294,
+          "pair_macro_recall": -0.7098214285714286,
+          "pair_macro_f1": -0.6738888888888889
+        },
+        "improved": false,
+        "bytes_uploaded": 3840060,
+        "bytes_downloaded": 0,
+        "energy_kwh": {
+          "local_train": 5.8920204644124493e-05,
+          "evaluate": 0.00018562089629676424,
+          "upload": 8.231680351669699e-08,
+          "exchange": 8.507223875993273e-08
+        },
+        "duration_s": {
+          "local_train": 1.8437530994415283,
+          "evaluate": 6.348641395568848,
+          "upload": 0.06470060348510742,
+          "exchange": 0.07653045654296875
+        },
+        "total_bytes": 3840060,
+        "total_energy_kwh": 0.00024470848998316537
+      }
+    }
+  },
+  {
+    "batch_idx": 20,
+    "absent": [],
+    "per_node": {
+      "node_0": {
+        "node_id": "node_0",
+        "batch_idx": 20,
+        "num_train": 658,
+        "num_test": 116,
+        "local_epochs": 3,
+        "train_loss": 0.38914670345802155,
+        "pre_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.8706896551724138,
+          "pair_accuracy": 0.8706896551724138,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.8625462962962963,
+          "disease_macro_recall": 0.892369136240104,
+          "disease_macro_f1": 0.8610127329818799,
+          "pair_macro_precision": 0.8625462962962963,
+          "pair_macro_recall": 0.892369136240104,
+          "pair_macro_f1": 0.86101273298188
+        },
+        "ema": 0.8726903251514865,
+        "prev_ema": 0.8735477551425177,
+        "roles": [
+          "teacher",
+          "learner"
+        ],
+        "uploaded": true,
+        "distilled": true,
+        "peers_used": {
+          "node_1": 20
+        },
+        "logit_peers": [],
+        "probe_images_used": 0,
+        "distill_loss": {},
+        "post_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.8879310344827587,
+          "pair_accuracy": 0.8879310344827587,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.8773039215686274,
+          "disease_macro_recall": 0.9065358029067706,
+          "disease_macro_f1": 0.8821986050169413,
+          "pair_macro_precision": 0.8773039215686275,
+          "pair_macro_recall": 0.9065358029067706,
+          "pair_macro_f1": 0.882198605016941
+        },
+        "distill_gain": {
+          "crop_accuracy": 0.0,
+          "disease_accuracy": 0.017241379310344862,
+          "pair_accuracy": 0.017241379310344862,
+          "crop_macro_precision": 0.0,
+          "crop_macro_recall": 0.0,
+          "crop_macro_f1": 0.0,
+          "disease_macro_precision": 0.014757625272331043,
+          "disease_macro_recall": 0.01416666666666655,
+          "disease_macro_f1": 0.021185872035061393,
+          "pair_macro_precision": 0.014757625272331154,
+          "pair_macro_recall": 0.01416666666666655,
+          "pair_macro_f1": 0.02118587203506106
+        },
+        "improved": true,
+        "bytes_uploaded": 3840060,
+        "bytes_downloaded": 0,
+        "energy_kwh": {
+          "local_train": 0.0003549315780670722,
+          "evaluate": 0.00018347240284855295,
+          "upload": 1.7549082748322083e-06,
+          "exchange": 6.236545119449284e-06
+        },
+        "duration_s": {
+          "local_train": 11.280169010162354,
+          "evaluate": 6.237642288208008,
+          "upload": 0.06526684761047363,
+          "exchange": 0.29319143295288086
+        },
+        "total_bytes": 3840060,
+        "total_energy_kwh": 0.0005463954343099066
+      },
+      "node_1": {
+        "node_id": "node_1",
+        "batch_idx": 20,
+        "num_train": 149,
+        "num_test": 27,
+        "local_epochs": 3,
+        "train_loss": 1.1333307147026062,
+        "pre_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.8888888888888888,
+          "pair_accuracy": 0.8888888888888888,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.8944444444444444,
+          "disease_macro_recall": 0.8928571428571428,
+          "disease_macro_f1": 0.8746286393345216,
+          "pair_macro_precision": 0.8944444444444444,
+          "pair_macro_recall": 0.8928571428571428,
+          "pair_macro_f1": 0.8746286393345216
+        },
+        "ema": 0.7509782831055194,
+        "prev_ema": 0.6918737377697897,
+        "roles": [
+          "teacher",
+          "learner"
+        ],
+        "uploaded": true,
+        "distilled": true,
+        "peers_used": {
+          "node_0": 20
+        },
+        "logit_peers": [],
+        "probe_images_used": 0,
+        "distill_loss": {},
+        "post_distill_eval": {
+          "crop_accuracy": 0.0,
+          "disease_accuracy": 0.14814814814814814,
+          "pair_accuracy": 0.0,
+          "crop_macro_precision": 0.0,
+          "crop_macro_recall": 0.0,
+          "crop_macro_f1": 0.0,
+          "disease_macro_precision": 0.2,
+          "disease_macro_recall": 0.25,
+          "disease_macro_f1": 0.2222222222222222,
+          "pair_macro_precision": 0.0,
+          "pair_macro_recall": 0.0,
+          "pair_macro_f1": 0.0
+        },
+        "distill_gain": {
+          "crop_accuracy": -1.0,
+          "disease_accuracy": -0.7407407407407407,
+          "pair_accuracy": -0.8888888888888888,
+          "crop_macro_precision": -1.0,
+          "crop_macro_recall": -1.0,
+          "crop_macro_f1": -1.0,
+          "disease_macro_precision": -0.6944444444444444,
+          "disease_macro_recall": -0.6428571428571428,
+          "disease_macro_f1": -0.6524064171122994,
+          "pair_macro_precision": -0.8944444444444444,
+          "pair_macro_recall": -0.8928571428571428,
+          "pair_macro_f1": -0.8746286393345216
+        },
+        "improved": false,
+        "bytes_uploaded": 3840060,
+        "bytes_downloaded": 0,
+        "energy_kwh": {
+          "local_train": 6.130922768304469e-05,
+          "evaluate": 0.0001776490078066688,
+          "upload": 1.352673615467855e-07,
+          "exchange": 9.158242238676168e-08
+        },
+        "duration_s": {
+          "local_train": 1.8899335861206055,
+          "evaluate": 5.9422831535339355,
+          "upload": 0.06877803802490234,
+          "exchange": 0.07759809494018555
+        },
+        "total_bytes": 3840060,
+        "total_energy_kwh": 0.00023918508527364702
+      }
+    }
+  },
+  {
+    "batch_idx": 21,
+    "absent": [],
+    "per_node": {
+      "node_0": {
+        "node_id": "node_0",
+        "batch_idx": 21,
+        "num_train": 660,
+        "num_test": 115,
+        "local_epochs": 3,
+        "train_loss": 0.3924509597912667,
+        "pre_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.8782608695652174,
+          "pair_accuracy": 0.8782608695652174,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.8364285714285714,
+          "disease_macro_recall": 0.8487705305447241,
+          "disease_macro_f1": 0.8343146140600843,
+          "pair_macro_precision": 0.8364285714285714,
+          "pair_macro_recall": 0.8487705305447241,
+          "pair_macro_f1": 0.8343146140600842
+        },
+        "ema": 0.8743614884756057,
+        "prev_ema": 0.8726903251514865,
+        "roles": [
+          "teacher",
+          "learner"
+        ],
+        "uploaded": true,
+        "distilled": true,
+        "peers_used": {
+          "node_1": 21
+        },
+        "logit_peers": [],
+        "probe_images_used": 0,
+        "distill_loss": {},
+        "post_distill_eval": {
+          "crop_accuracy": 0.991304347826087,
+          "disease_accuracy": 0.8869565217391304,
+          "pair_accuracy": 0.8869565217391304,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 0.991304347826087,
+          "crop_macro_f1": 0.9956331877729258,
+          "disease_macro_precision": 0.8716991341991343,
+          "disease_macro_recall": 0.8599610067352004,
+          "disease_macro_f1": 0.8444229267999761,
+          "pair_macro_precision": 0.8758658008658008,
+          "pair_macro_recall": 0.8599610067352004,
+          "pair_macro_f1": 0.847499849876899
+        },
+        "distill_gain": {
+          "crop_accuracy": -0.008695652173912993,
+          "disease_accuracy": 0.008695652173912993,
+          "pair_accuracy": 0.008695652173912993,
+          "crop_macro_precision": 0.0,
+          "crop_macro_recall": -0.008695652173912993,
+          "crop_macro_f1": -0.004366812227074246,
+          "disease_macro_precision": 0.03527056277056284,
+          "disease_macro_recall": 0.011190476190476306,
+          "disease_macro_f1": 0.010108312739891767,
+          "pair_macro_precision": 0.03943722943722938,
+          "pair_macro_recall": 0.011190476190476306,
+          "pair_macro_f1": 0.013185235816814744
+        },
+        "improved": true,
+        "bytes_uploaded": 3840060,
+        "bytes_downloaded": 0,
+        "energy_kwh": {
+          "local_train": 0.00032661152430983137,
+          "evaluate": 0.00022684053721157608,
+          "upload": 8.342412246179009e-08,
+          "exchange": 8.202515643007664e-08
+        },
+        "duration_s": {
+          "local_train": 10.28766918182373,
+          "evaluate": 7.666863203048706,
+          "upload": 0.06720995903015137,
+          "exchange": 0.07821249961853027
+        },
+        "total_bytes": 3840060,
+        "total_energy_kwh": 0.0005536175108002994
+      },
+      "node_1": {
+        "node_id": "node_1",
+        "batch_idx": 21,
+        "num_train": 148,
+        "num_test": 27,
+        "local_epochs": 3,
+        "train_loss": 0.4988582084576289,
+        "pre_distill_eval": {
+          "crop_accuracy": 0.9259259259259259,
+          "disease_accuracy": 0.8888888888888888,
+          "pair_accuracy": 0.8148148148148148,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 0.9259259259259259,
+          "crop_macro_f1": 0.9615384615384616,
+          "disease_macro_precision": 0.8888888888888888,
+          "disease_macro_recall": 0.90625,
+          "disease_macro_f1": 0.8776018099547511,
+          "pair_macro_precision": 0.8472222222222222,
+          "pair_macro_recall": 0.78125,
+          "pair_macro_f1": 0.8026018099547512
+        },
+        "ema": 0.770129242618308,
+        "prev_ema": 0.7509782831055194,
+        "roles": [
+          "teacher",
+          "learner"
+        ],
+        "uploaded": true,
+        "distilled": true,
+        "peers_used": {
+          "node_0": 21
+        },
+        "logit_peers": [],
+        "probe_images_used": 0,
+        "distill_loss": {},
+        "post_distill_eval": {
+          "crop_accuracy": 0.0,
+          "disease_accuracy": 0.14814814814814814,
+          "pair_accuracy": 0.0,
+          "crop_macro_precision": 0.0,
+          "crop_macro_recall": 0.0,
+          "crop_macro_f1": 0.0,
+          "disease_macro_precision": 0.2,
+          "disease_macro_recall": 0.25,
+          "disease_macro_f1": 0.2222222222222222,
+          "pair_macro_precision": 0.0,
+          "pair_macro_recall": 0.0,
+          "pair_macro_f1": 0.0
+        },
+        "distill_gain": {
+          "crop_accuracy": -0.9259259259259259,
+          "disease_accuracy": -0.7407407407407407,
+          "pair_accuracy": -0.8148148148148148,
+          "crop_macro_precision": -1.0,
+          "crop_macro_recall": -0.9259259259259259,
+          "crop_macro_f1": -0.9615384615384616,
+          "disease_macro_precision": -0.6888888888888889,
+          "disease_macro_recall": -0.65625,
+          "disease_macro_f1": -0.6553795877325289,
+          "pair_macro_precision": -0.8472222222222222,
+          "pair_macro_recall": -0.78125,
+          "pair_macro_f1": -0.8026018099547512
+        },
+        "improved": false,
+        "bytes_uploaded": 3840060,
+        "bytes_downloaded": 0,
+        "energy_kwh": {
+          "local_train": 6.498626531017752e-05,
+          "evaluate": 0.00020511239648167396,
+          "upload": 9.011667412208974e-08,
+          "exchange": 8.623871445946737e-08
+        },
+        "duration_s": {
+          "local_train": 2.070019483566284,
+          "evaluate": 6.986250877380371,
+          "upload": 0.06603336334228516,
+          "exchange": 0.07634902000427246
+        },
+        "total_bytes": 3840060,
+        "total_energy_kwh": 0.000270275017180433
+      }
+    }
+  },
+  {
+    "batch_idx": 22,
+    "absent": [],
+    "per_node": {
+      "node_0": {
+        "node_id": "node_0",
+        "batch_idx": 22,
+        "num_train": 396,
+        "num_test": 70,
+        "local_epochs": 3,
+        "train_loss": 0.3571156610089999,
+        "pre_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.8428571428571429,
+          "pair_accuracy": 0.8428571428571429,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.8384920634920634,
+          "disease_macro_recall": 0.8417105263157895,
+          "disease_macro_f1": 0.7970599008834303,
+          "pair_macro_precision": 0.8384920634920634,
+          "pair_macro_recall": 0.8417105263157895,
+          "pair_macro_f1": 0.7970599008834303
+        },
+        "ema": 0.8649101847900669,
+        "prev_ema": 0.8743614884756057,
+        "roles": [
+          "teacher",
+          "learner"
+        ],
+        "uploaded": true,
+        "distilled": true,
+        "peers_used": {
+          "node_1": 22
+        },
+        "logit_peers": [],
+        "probe_images_used": 0,
+        "distill_loss": {},
+        "post_distill_eval": {
+          "crop_accuracy": 1.0,
+          "disease_accuracy": 0.8714285714285714,
+          "pair_accuracy": 0.8714285714285714,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 1.0,
+          "crop_macro_f1": 1.0,
+          "disease_macro_precision": 0.8373809523809523,
+          "disease_macro_recall": 0.8492105263157896,
+          "disease_macro_f1": 0.8326251526251527,
+          "pair_macro_precision": 0.8373809523809523,
+          "pair_macro_recall": 0.8492105263157894,
+          "pair_macro_f1": 0.8326251526251527
+        },
+        "distill_gain": {
+          "crop_accuracy": 0.0,
+          "disease_accuracy": 0.02857142857142858,
+          "pair_accuracy": 0.02857142857142858,
+          "crop_macro_precision": 0.0,
+          "crop_macro_recall": 0.0,
+          "crop_macro_f1": 0.0,
+          "disease_macro_precision": -0.0011111111111110628,
+          "disease_macro_recall": 0.007500000000000173,
+          "disease_macro_f1": 0.035565251741722426,
+          "pair_macro_precision": -0.0011111111111110628,
+          "pair_macro_recall": 0.007499999999999951,
+          "pair_macro_f1": 0.035565251741722426
+        },
+        "improved": true,
+        "bytes_uploaded": 3840060,
+        "bytes_downloaded": 0,
+        "energy_kwh": {
+          "local_train": 0.000168839336202612,
+          "evaluate": 0.00019893448149114657,
+          "upload": 1.751698862669097e-06,
+          "exchange": 1.0522545726740505e-07
+        },
+        "duration_s": {
+          "local_train": 5.265679359436035,
+          "evaluate": 6.733697891235352,
+          "upload": 0.06685209274291992,
+          "exchange": 0.07888293266296387
+        },
+        "total_bytes": 3840060,
+        "total_energy_kwh": 0.0003696307420136951
+      },
+      "node_1": {
+        "node_id": "node_1",
+        "batch_idx": 22,
+        "num_train": 91,
+        "num_test": 16,
+        "local_epochs": 3,
+        "train_loss": 0.9066584507624308,
+        "pre_distill_eval": {
+          "crop_accuracy": 0.9375,
+          "disease_accuracy": 0.6875,
+          "pair_accuracy": 0.625,
+          "crop_macro_precision": 1.0,
+          "crop_macro_recall": 0.9375,
+          "crop_macro_f1": 0.967741935483871,
+          "disease_macro_precision": 0.75,
+          "disease_macro_recall": 0.725,
+          "disease_macro_f1": 0.6775793650793651,
+          "pair_macro_precision": 0.7166666666666667,
+          "pair_macro_recall": 0.6,
+          "pair_macro_f1": 0.6240079365079365
+        },
+        "ema": 0.7265904698328155,
+        "prev_ema": 0.770129242618308,
+        "roles": [
+          "teacher",
+          "learner"
+        ],
+        "uploaded": true,
+        "distilled": true,
+        "peers_used": {
+          "node_0": 22
+        },
+        "logit_peers": [],
+        "probe_images_used": 0,
+        "distill_loss": {},
+        "post_distill_eval": {
+          "crop_accuracy": 0.0,
+          "disease_accuracy": 0.125,
+          "pair_accuracy": 0.0,
+          "crop_macro_precision": 0.0,
+          "crop_macro_recall": 0.0,
+          "crop_macro_f1": 0.0,
+          "disease_macro_precision": 0.25,
+          "disease_macro_recall": 0.25,
+          "disease_macro_f1": 0.25,
+          "pair_macro_precision": 0.0,
+          "pair_macro_recall": 0.0,
+          "pair_macro_f1": 0.0
+        },
+        "distill_gain": {
+          "crop_accuracy": -0.9375,
+          "disease_accuracy": -0.5625,
+          "pair_accuracy": -0.625,
+          "crop_macro_precision": -1.0,
+          "crop_macro_recall": -0.9375,
+          "crop_macro_f1": -0.967741935483871,
+          "disease_macro_precision": -0.5,
+          "disease_macro_recall": -0.475,
+          "disease_macro_f1": -0.4275793650793651,
+          "pair_macro_precision": -0.7166666666666667,
+          "pair_macro_recall": -0.6,
+          "pair_macro_f1": -0.6240079365079365
+        },
+        "improved": false,
+        "bytes_uploaded": 3840060,
+        "bytes_downloaded": 0,
+        "energy_kwh": {
+          "local_train": 3.8469924716866516e-05,
+          "evaluate": 0.0001974753499831034,
+          "upload": 8.083371854593279e-08,
+          "exchange": 8.134352969388143e-08
+        },
+        "duration_s": {
+          "local_train": 1.2569952011108398,
+          "evaluate": 6.685842037200928,
+          "upload": 0.06500554084777832,
+          "exchange": 0.07384371757507324
+        },
+        "total_bytes": 3840060,
+        "total_energy_kwh": 0.00023610745194820973
+      }
+    }
+  }
+]

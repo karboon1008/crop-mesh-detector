@@ -1,0 +1,1558 @@
+{
+  "mobilenet_v3_small": {
+    "architecture": "mobilenet_v3_small",
+    "params": 1533231,
+    "model_size_mb": 5.848812103271484,
+    "mesh_eval": {
+      "node_0": {
+        "crop_accuracy": 1.0,
+        "disease_accuracy": 0.8428571428571429,
+        "pair_accuracy": 0.8428571428571429,
+        "crop_macro_precision": 1.0,
+        "crop_macro_recall": 1.0,
+        "crop_macro_f1": 1.0,
+        "disease_macro_precision": 0.847564935064935,
+        "disease_macro_recall": 0.841140350877193,
+        "disease_macro_f1": 0.8260464535464536,
+        "pair_macro_precision": 0.847564935064935,
+        "pair_macro_recall": 0.841140350877193,
+        "pair_macro_f1": 0.8260464535464536
+      },
+      "node_1": {
+        "crop_accuracy": 1.0,
+        "disease_accuracy": 0.75,
+        "pair_accuracy": 0.75,
+        "crop_macro_precision": 1.0,
+        "crop_macro_recall": 1.0,
+        "crop_macro_f1": 1.0,
+        "disease_macro_precision": 0.7708333333333334,
+        "disease_macro_recall": 0.7875,
+        "disease_macro_f1": 0.7242965367965367,
+        "pair_macro_precision": 0.7708333333333334,
+        "pair_macro_recall": 0.7875,
+        "pair_macro_f1": 0.7242965367965367
+      }
+    },
+    "continual": {
+      "metric": "pair_accuracy",
+      "num_batches": 23,
+      "num_distillations": 25,
+      "num_improved": 25,
+      "mean_distill_gain": 0.12921818251140688,
+      "total_bytes_uploaded": 1020096,
+      "total_bytes_downloaded": 628248,
+      "total_bytes_exchanged": 1648344,
+      "total_compute_energy_kwh": 0.02837793268745747,
+      "per_batch": [
+        {
+          "batch": 0,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_0",
+            "node_1"
+          ],
+          "learners": [
+            "node_0",
+            "node_1"
+          ],
+          "mean_pre_pair_accuracy": 0.8104454685099847,
+          "mean_post_pair_accuracy": 0.8701996927803379,
+          "num_distilled": 2,
+          "num_improved": 2,
+          "bytes_uploaded": 89664,
+          "bytes_downloaded": 89664,
+          "compute_energy_kwh": 0.005573091347310454
+        },
+        {
+          "batch": 1,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_0"
+          ],
+          "learners": [
+            "node_0"
+          ],
+          "mean_pre_pair_accuracy": 0.834621578099839,
+          "mean_post_pair_accuracy": 0.8607085346215781,
+          "num_distilled": 1,
+          "num_improved": 1,
+          "bytes_uploaded": 48144,
+          "bytes_downloaded": 20520,
+          "compute_energy_kwh": 0.0009637182915096837
+        },
+        {
+          "batch": 2,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [],
+          "learners": [
+            "node_0"
+          ],
+          "mean_pre_pair_accuracy": 0.45829307568438005,
+          "mean_post_pair_accuracy": 0.7278582930756844,
+          "num_distilled": 1,
+          "num_improved": 1,
+          "bytes_uploaded": 0,
+          "bytes_downloaded": 20520,
+          "compute_energy_kwh": 0.0009762196214225573
+        },
+        {
+          "batch": 3,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_0",
+            "node_1"
+          ],
+          "learners": [
+            "node_0"
+          ],
+          "mean_pre_pair_accuracy": 0.7726247987117552,
+          "mean_post_pair_accuracy": 0.8682769726247987,
+          "num_distilled": 1,
+          "num_improved": 1,
+          "bytes_uploaded": 71664,
+          "bytes_downloaded": 23520,
+          "compute_energy_kwh": 0.0010065481947181885
+        },
+        {
+          "batch": 4,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [],
+          "learners": [
+            "node_0"
+          ],
+          "mean_pre_pair_accuracy": 0.7106280193236715,
+          "mean_post_pair_accuracy": 0.8019323671497585,
+          "num_distilled": 1,
+          "num_improved": 1,
+          "bytes_uploaded": 0,
+          "bytes_downloaded": 20520,
+          "compute_energy_kwh": 0.0009879462731183463
+        },
+        {
+          "batch": 5,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_0",
+            "node_1"
+          ],
+          "learners": [
+            "node_0"
+          ],
+          "mean_pre_pair_accuracy": 0.8247987117552334,
+          "mean_post_pair_accuracy": 0.8291465378421901,
+          "num_distilled": 1,
+          "num_improved": 1,
+          "bytes_uploaded": 71664,
+          "bytes_downloaded": 23520,
+          "compute_energy_kwh": 0.0010651678253353592
+        },
+        {
+          "batch": 6,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_0",
+            "node_1"
+          ],
+          "learners": [
+            "node_0"
+          ],
+          "mean_pre_pair_accuracy": 0.8433172302737519,
+          "mean_post_pair_accuracy": 0.8650563607085346,
+          "num_distilled": 1,
+          "num_improved": 1,
+          "bytes_uploaded": 71664,
+          "bytes_downloaded": 23520,
+          "compute_energy_kwh": 0.0012737969080520843
+        },
+        {
+          "batch": 7,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_0",
+            "node_1"
+          ],
+          "learners": [
+            "node_0"
+          ],
+          "mean_pre_pair_accuracy": 0.8412238325281803,
+          "mean_post_pair_accuracy": 0.8890499194847021,
+          "num_distilled": 1,
+          "num_improved": 1,
+          "bytes_uploaded": 71664,
+          "bytes_downloaded": 23520,
+          "compute_energy_kwh": 0.0011624737854277352
+        },
+        {
+          "batch": 8,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_0"
+          ],
+          "learners": [
+            "node_0",
+            "node_1"
+          ],
+          "mean_pre_pair_accuracy": 0.7246376811594203,
+          "mean_post_pair_accuracy": 0.9249597423510467,
+          "num_distilled": 2,
+          "num_improved": 2,
+          "bytes_uploaded": 48144,
+          "bytes_downloaded": 68664,
+          "compute_energy_kwh": 0.0015376364867563822
+        },
+        {
+          "batch": 9,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_1"
+          ],
+          "learners": [
+            "node_0"
+          ],
+          "mean_pre_pair_accuracy": 0.7595813204508857,
+          "mean_post_pair_accuracy": 0.820450885668277,
+          "num_distilled": 1,
+          "num_improved": 1,
+          "bytes_uploaded": 23520,
+          "bytes_downloaded": 23520,
+          "compute_energy_kwh": 0.0010347838240212933
+        },
+        {
+          "batch": 10,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_0",
+            "node_1"
+          ],
+          "learners": [
+            "node_0"
+          ],
+          "mean_pre_pair_accuracy": 0.8531400966183575,
+          "mean_post_pair_accuracy": 0.866183574879227,
+          "num_distilled": 1,
+          "num_improved": 1,
+          "bytes_uploaded": 71664,
+          "bytes_downloaded": 23520,
+          "compute_energy_kwh": 0.0010829079006101322
+        },
+        {
+          "batch": 11,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_0",
+            "node_1"
+          ],
+          "learners": [
+            "node_0"
+          ],
+          "mean_pre_pair_accuracy": 0.8684380032206118,
+          "mean_post_pair_accuracy": 0.9336553945249597,
+          "num_distilled": 1,
+          "num_improved": 1,
+          "bytes_uploaded": 71664,
+          "bytes_downloaded": 23520,
+          "compute_energy_kwh": 0.0011252713577452771
+        },
+        {
+          "batch": 12,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_1"
+          ],
+          "learners": [
+            "node_0"
+          ],
+          "mean_pre_pair_accuracy": 0.8183574879227054,
+          "mean_post_pair_accuracy": 0.8792270531400965,
+          "num_distilled": 1,
+          "num_improved": 1,
+          "bytes_uploaded": 23520,
+          "bytes_downloaded": 23520,
+          "compute_energy_kwh": 0.0009833834808754482
+        },
+        {
+          "batch": 13,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_0",
+            "node_1"
+          ],
+          "learners": [
+            "node_0"
+          ],
+          "mean_pre_pair_accuracy": 0.8792270531400965,
+          "mean_post_pair_accuracy": 0.8922705314009662,
+          "num_distilled": 1,
+          "num_improved": 1,
+          "bytes_uploaded": 71664,
+          "bytes_downloaded": 23520,
+          "compute_energy_kwh": 0.0011557725172082394
+        },
+        {
+          "batch": 14,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [],
+          "learners": [
+            "node_0"
+          ],
+          "mean_pre_pair_accuracy": 0.7421900161030596,
+          "mean_post_pair_accuracy": 0.8334943639291466,
+          "num_distilled": 1,
+          "num_improved": 1,
+          "bytes_uploaded": 0,
+          "bytes_downloaded": 20520,
+          "compute_energy_kwh": 0.0009263054957139606
+        },
+        {
+          "batch": 15,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_0"
+          ],
+          "learners": [
+            "node_0"
+          ],
+          "mean_pre_pair_accuracy": 0.8389694041867954,
+          "mean_post_pair_accuracy": 0.852012882447665,
+          "num_distilled": 1,
+          "num_improved": 1,
+          "bytes_uploaded": 48144,
+          "bytes_downloaded": 20520,
+          "compute_energy_kwh": 0.0008923646539793892
+        },
+        {
+          "batch": 16,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_1"
+          ],
+          "learners": [
+            "node_0"
+          ],
+          "mean_pre_pair_accuracy": 0.77487922705314,
+          "mean_post_pair_accuracy": 0.8966183574879227,
+          "num_distilled": 1,
+          "num_improved": 1,
+          "bytes_uploaded": 23520,
+          "bytes_downloaded": 23520,
+          "compute_energy_kwh": 0.0008171976511447527
+        },
+        {
+          "batch": 17,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_0",
+            "node_1"
+          ],
+          "learners": [
+            "node_0"
+          ],
+          "mean_pre_pair_accuracy": 0.8977455716586151,
+          "mean_post_pair_accuracy": 0.9238325281803543,
+          "num_distilled": 1,
+          "num_improved": 1,
+          "bytes_uploaded": 71664,
+          "bytes_downloaded": 23520,
+          "compute_energy_kwh": 0.0009110462164670031
+        },
+        {
+          "batch": 18,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [],
+          "learners": [
+            "node_0"
+          ],
+          "mean_pre_pair_accuracy": 0.7476650563607086,
+          "mean_post_pair_accuracy": 0.8607085346215781,
+          "num_distilled": 1,
+          "num_improved": 1,
+          "bytes_uploaded": 0,
+          "bytes_downloaded": 20520,
+          "compute_energy_kwh": 0.0007725566253141008
+        },
+        {
+          "batch": 19,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_1"
+          ],
+          "learners": [
+            "node_0"
+          ],
+          "mean_pre_pair_accuracy": 0.8380032206119162,
+          "mean_post_pair_accuracy": 0.9119162640901771,
+          "num_distilled": 1,
+          "num_improved": 1,
+          "bytes_uploaded": 23520,
+          "bytes_downloaded": 23520,
+          "compute_energy_kwh": 0.000860445773688783
+        },
+        {
+          "batch": 20,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [],
+          "learners": [
+            "node_0"
+          ],
+          "mean_pre_pair_accuracy": 0.7423371647509578,
+          "mean_post_pair_accuracy": 0.828544061302682,
+          "num_distilled": 1,
+          "num_improved": 1,
+          "bytes_uploaded": 0,
+          "bytes_downloaded": 20520,
+          "compute_energy_kwh": 0.0011027018880550453
+        },
+        {
+          "batch": 21,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_0",
+            "node_1"
+          ],
+          "learners": [
+            "node_0"
+          ],
+          "mean_pre_pair_accuracy": 0.857487922705314,
+          "mean_post_pair_accuracy": 0.87487922705314,
+          "num_distilled": 1,
+          "num_improved": 1,
+          "bytes_uploaded": 71664,
+          "bytes_downloaded": 23520,
+          "compute_energy_kwh": 0.001359904725911405
+        },
+        {
+          "batch": 22,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_0"
+          ],
+          "learners": [
+            "node_0"
+          ],
+          "mean_pre_pair_accuracy": 0.7535714285714286,
+          "mean_post_pair_accuracy": 0.7964285714285715,
+          "num_distilled": 1,
+          "num_improved": 1,
+          "bytes_uploaded": 46944,
+          "bytes_downloaded": 20520,
+          "compute_energy_kwh": 0.000806691843071851
+        }
+      ]
+    },
+    "knowledge_store": [
+      {
+        "node_id": "node_0",
+        "batch_idx": 22,
+        "size_bytes": 46944,
+        "uploaded_at": "2026-09-27T11:44:56.392988+00:00"
+      },
+      {
+        "node_id": "node_1",
+        "batch_idx": 21,
+        "size_bytes": 23520,
+        "uploaded_at": "2026-09-27T11:42:38.539929+00:00"
+      }
+    ],
+    "total_bytes_exchanged": 1648344
+  },
+  "efficientnet_lite0": {
+    "architecture": "efficientnet_lite0",
+    "params": 3390223,
+    "model_size_mb": 12.932674407958984,
+    "mesh_eval": {
+      "node_0": {
+        "crop_accuracy": 1.0,
+        "disease_accuracy": 0.9571428571428572,
+        "pair_accuracy": 0.9571428571428572,
+        "crop_macro_precision": 1.0,
+        "crop_macro_recall": 1.0,
+        "crop_macro_f1": 1.0,
+        "disease_macro_precision": 0.9444444444444444,
+        "disease_macro_recall": 0.9580701754385965,
+        "disease_macro_f1": 0.9453305712129243,
+        "pair_macro_precision": 0.9444444444444444,
+        "pair_macro_recall": 0.9580701754385965,
+        "pair_macro_f1": 0.9453305712129241
+      },
+      "node_1": {
+        "crop_accuracy": 1.0,
+        "disease_accuracy": 0.9375,
+        "pair_accuracy": 0.9375,
+        "crop_macro_precision": 1.0,
+        "crop_macro_recall": 1.0,
+        "crop_macro_f1": 1.0,
+        "disease_macro_precision": 0.9583333333333334,
+        "disease_macro_recall": 0.95,
+        "disease_macro_f1": 0.9494949494949495,
+        "pair_macro_precision": 0.9583333333333334,
+        "pair_macro_recall": 0.95,
+        "pair_macro_f1": 0.9494949494949495
+      }
+    },
+    "continual": {
+      "metric": "pair_accuracy",
+      "num_batches": 23,
+      "num_distillations": 2,
+      "num_improved": 1,
+      "mean_distill_gain": 0.022580645161290325,
+      "total_bytes_uploaded": 1308880,
+      "total_bytes_downloaded": 106048,
+      "total_bytes_exchanged": 1414928,
+      "total_compute_energy_kwh": 0.016510027345181373,
+      "per_batch": [
+        {
+          "batch": 0,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_0",
+            "node_1"
+          ],
+          "learners": [
+            "node_0",
+            "node_1"
+          ],
+          "mean_pre_pair_accuracy": 0.9141321044546851,
+          "mean_post_pair_accuracy": 0.9367127496159754,
+          "num_distilled": 2,
+          "num_improved": 1,
+          "bytes_uploaded": 106048,
+          "bytes_downloaded": 106048,
+          "compute_energy_kwh": 0.005044366426489308
+        },
+        {
+          "batch": 1,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_0",
+            "node_1"
+          ],
+          "learners": [],
+          "mean_pre_pair_accuracy": 0.9434782608695652,
+          "mean_post_pair_accuracy": 0.9434782608695652,
+          "num_distilled": 0,
+          "num_improved": 0,
+          "bytes_uploaded": 88048,
+          "bytes_downloaded": 0,
+          "compute_energy_kwh": 0.000488367278383243
+        },
+        {
+          "batch": 2,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [],
+          "learners": [],
+          "mean_pre_pair_accuracy": 0.871658615136876,
+          "mean_post_pair_accuracy": 0.871658615136876,
+          "num_distilled": 0,
+          "num_improved": 0,
+          "bytes_uploaded": 0,
+          "bytes_downloaded": 0,
+          "compute_energy_kwh": 0.0004336105041561286
+        },
+        {
+          "batch": 3,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_0"
+          ],
+          "learners": [],
+          "mean_pre_pair_accuracy": 0.9107890499194847,
+          "mean_post_pair_accuracy": 0.9107890499194847,
+          "num_distilled": 0,
+          "num_improved": 0,
+          "bytes_uploaded": 59408,
+          "bytes_downloaded": 0,
+          "compute_energy_kwh": 0.0005076158406498409
+        },
+        {
+          "batch": 4,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [],
+          "learners": [],
+          "mean_pre_pair_accuracy": 0.871658615136876,
+          "mean_post_pair_accuracy": 0.871658615136876,
+          "num_distilled": 0,
+          "num_improved": 0,
+          "bytes_uploaded": 0,
+          "bytes_downloaded": 0,
+          "compute_energy_kwh": 0.00044840540846335214
+        },
+        {
+          "batch": 5,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_0",
+            "node_1"
+          ],
+          "learners": [],
+          "mean_pre_pair_accuracy": 0.9434782608695652,
+          "mean_post_pair_accuracy": 0.9434782608695652,
+          "num_distilled": 0,
+          "num_improved": 0,
+          "bytes_uploaded": 88048,
+          "bytes_downloaded": 0,
+          "compute_energy_kwh": 0.0005372358501328273
+        },
+        {
+          "batch": 6,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_0"
+          ],
+          "learners": [],
+          "mean_pre_pair_accuracy": 0.9009661835748792,
+          "mean_post_pair_accuracy": 0.9009661835748792,
+          "num_distilled": 0,
+          "num_improved": 0,
+          "bytes_uploaded": 59408,
+          "bytes_downloaded": 0,
+          "compute_energy_kwh": 0.0005722271849298863
+        },
+        {
+          "batch": 7,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_0",
+            "node_1"
+          ],
+          "learners": [],
+          "mean_pre_pair_accuracy": 0.9391304347826087,
+          "mean_post_pair_accuracy": 0.9391304347826087,
+          "num_distilled": 0,
+          "num_improved": 0,
+          "bytes_uploaded": 88048,
+          "bytes_downloaded": 0,
+          "compute_energy_kwh": 0.0005900008087755266
+        },
+        {
+          "batch": 8,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_0",
+            "node_1"
+          ],
+          "learners": [],
+          "mean_pre_pair_accuracy": 0.9597423510466989,
+          "mean_post_pair_accuracy": 0.9597423510466989,
+          "num_distilled": 0,
+          "num_improved": 0,
+          "bytes_uploaded": 88048,
+          "bytes_downloaded": 0,
+          "compute_energy_kwh": 0.0005791270311256624
+        },
+        {
+          "batch": 9,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_1"
+          ],
+          "learners": [],
+          "mean_pre_pair_accuracy": 0.9293075684380032,
+          "mean_post_pair_accuracy": 0.9293075684380032,
+          "num_distilled": 0,
+          "num_improved": 0,
+          "bytes_uploaded": 28640,
+          "bytes_downloaded": 0,
+          "compute_energy_kwh": 0.0004814650902786665
+        },
+        {
+          "batch": 10,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_1"
+          ],
+          "learners": [],
+          "mean_pre_pair_accuracy": 0.9119162640901771,
+          "mean_post_pair_accuracy": 0.9119162640901771,
+          "num_distilled": 0,
+          "num_improved": 0,
+          "bytes_uploaded": 28640,
+          "bytes_downloaded": 0,
+          "compute_energy_kwh": 0.00047540817330085487
+        },
+        {
+          "batch": 11,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_0",
+            "node_1"
+          ],
+          "learners": [],
+          "mean_pre_pair_accuracy": 0.9695652173913043,
+          "mean_post_pair_accuracy": 0.9695652173913043,
+          "num_distilled": 0,
+          "num_improved": 0,
+          "bytes_uploaded": 88048,
+          "bytes_downloaded": 0,
+          "compute_energy_kwh": 0.0005804893719922224
+        },
+        {
+          "batch": 12,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_0"
+          ],
+          "learners": [],
+          "mean_pre_pair_accuracy": 0.9194847020933977,
+          "mean_post_pair_accuracy": 0.9194847020933977,
+          "num_distilled": 0,
+          "num_improved": 0,
+          "bytes_uploaded": 59408,
+          "bytes_downloaded": 0,
+          "compute_energy_kwh": 0.0005436812178629194
+        },
+        {
+          "batch": 13,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_1"
+          ],
+          "learners": [],
+          "mean_pre_pair_accuracy": 0.9521739130434783,
+          "mean_post_pair_accuracy": 0.9521739130434783,
+          "num_distilled": 0,
+          "num_improved": 0,
+          "bytes_uploaded": 28640,
+          "bytes_downloaded": 0,
+          "compute_energy_kwh": 0.0005133557166454751
+        },
+        {
+          "batch": 14,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_1"
+          ],
+          "learners": [],
+          "mean_pre_pair_accuracy": 0.9434782608695652,
+          "mean_post_pair_accuracy": 0.9434782608695652,
+          "num_distilled": 0,
+          "num_improved": 0,
+          "bytes_uploaded": 28640,
+          "bytes_downloaded": 0,
+          "compute_energy_kwh": 0.000531113755841024
+        },
+        {
+          "batch": 15,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_0",
+            "node_1"
+          ],
+          "learners": [],
+          "mean_pre_pair_accuracy": 0.9565217391304348,
+          "mean_post_pair_accuracy": 0.9565217391304348,
+          "num_distilled": 0,
+          "num_improved": 0,
+          "bytes_uploaded": 88048,
+          "bytes_downloaded": 0,
+          "compute_energy_kwh": 0.0005911641208660762
+        },
+        {
+          "batch": 16,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_0",
+            "node_1"
+          ],
+          "learners": [],
+          "mean_pre_pair_accuracy": 0.9521739130434783,
+          "mean_post_pair_accuracy": 0.9521739130434783,
+          "num_distilled": 0,
+          "num_improved": 0,
+          "bytes_uploaded": 88048,
+          "bytes_downloaded": 0,
+          "compute_energy_kwh": 0.0005539640164989553
+        },
+        {
+          "batch": 17,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_0"
+          ],
+          "learners": [],
+          "mean_pre_pair_accuracy": 0.9194847020933977,
+          "mean_post_pair_accuracy": 0.9194847020933977,
+          "num_distilled": 0,
+          "num_improved": 0,
+          "bytes_uploaded": 59408,
+          "bytes_downloaded": 0,
+          "compute_energy_kwh": 0.0005439150893681015
+        },
+        {
+          "batch": 18,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [],
+          "learners": [],
+          "mean_pre_pair_accuracy": 0.9293075684380032,
+          "mean_post_pair_accuracy": 0.9293075684380032,
+          "num_distilled": 0,
+          "num_improved": 0,
+          "bytes_uploaded": 0,
+          "bytes_downloaded": 0,
+          "compute_energy_kwh": 0.00048811664815371416
+        },
+        {
+          "batch": 19,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_1"
+          ],
+          "learners": [],
+          "mean_pre_pair_accuracy": 0.9086956521739131,
+          "mean_post_pair_accuracy": 0.9086956521739131,
+          "num_distilled": 0,
+          "num_improved": 0,
+          "bytes_uploaded": 28640,
+          "bytes_downloaded": 0,
+          "compute_energy_kwh": 0.00046542515111385905
+        },
+        {
+          "batch": 20,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_0"
+          ],
+          "learners": [],
+          "mean_pre_pair_accuracy": 0.9112388250319285,
+          "mean_post_pair_accuracy": 0.9112388250319285,
+          "num_distilled": 0,
+          "num_improved": 0,
+          "bytes_uploaded": 59408,
+          "bytes_downloaded": 0,
+          "compute_energy_kwh": 0.0005842365828415458
+        },
+        {
+          "batch": 21,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_0",
+            "node_1"
+          ],
+          "learners": [],
+          "mean_pre_pair_accuracy": 0.9293075684380032,
+          "mean_post_pair_accuracy": 0.9293075684380032,
+          "num_distilled": 0,
+          "num_improved": 0,
+          "bytes_uploaded": 88048,
+          "bytes_downloaded": 0,
+          "compute_energy_kwh": 0.0005569724881972147
+        },
+        {
+          "batch": 22,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_0"
+          ],
+          "learners": [],
+          "mean_pre_pair_accuracy": 0.9473214285714286,
+          "mean_post_pair_accuracy": 0.9473214285714286,
+          "num_distilled": 0,
+          "num_improved": 0,
+          "bytes_uploaded": 58208,
+          "bytes_downloaded": 0,
+          "compute_energy_kwh": 0.0003997635891149673
+        }
+      ]
+    },
+    "knowledge_store": [
+      {
+        "node_id": "node_0",
+        "batch_idx": 22,
+        "size_bytes": 58208,
+        "uploaded_at": "2026-09-27T11:45:39.170878+00:00"
+      },
+      {
+        "node_id": "node_1",
+        "batch_idx": 21,
+        "size_bytes": 28640,
+        "uploaded_at": "2026-09-27T11:43:31.943795+00:00"
+      }
+    ],
+    "total_bytes_exchanged": 1414928
+  },
+  "mobilevit_xxs": {
+    "architecture": "mobilevit_xxs",
+    "params": 955839,
+    "model_size_mb": 3.6462364196777344,
+    "mesh_eval": {
+      "node_0": {
+        "crop_accuracy": 1.0,
+        "disease_accuracy": 0.8285714285714286,
+        "pair_accuracy": 0.8285714285714286,
+        "crop_macro_precision": 1.0,
+        "crop_macro_recall": 1.0,
+        "crop_macro_f1": 1.0,
+        "disease_macro_precision": 0.7747619047619048,
+        "disease_macro_recall": 0.7767105263157895,
+        "disease_macro_f1": 0.757674286497816,
+        "pair_macro_precision": 0.7747619047619048,
+        "pair_macro_recall": 0.7767105263157895,
+        "pair_macro_f1": 0.7576742864978159
+      },
+      "node_1": {
+        "crop_accuracy": 1.0,
+        "disease_accuracy": 1.0,
+        "pair_accuracy": 1.0,
+        "crop_macro_precision": 1.0,
+        "crop_macro_recall": 1.0,
+        "crop_macro_f1": 1.0,
+        "disease_macro_precision": 1.0,
+        "disease_macro_recall": 1.0,
+        "disease_macro_f1": 1.0,
+        "pair_macro_precision": 1.0,
+        "pair_macro_recall": 1.0,
+        "pair_macro_f1": 1.0
+      }
+    },
+    "continual": {
+      "metric": "pair_accuracy",
+      "num_batches": 23,
+      "num_distillations": 2,
+      "num_improved": 2,
+      "mean_distill_gain": 0.026267281105990803,
+      "total_bytes_uploaded": 362704,
+      "total_bytes_downloaded": 44608,
+      "total_bytes_exchanged": 407312,
+      "total_compute_energy_kwh": 0.018491284400072576,
+      "per_batch": [
+        {
+          "batch": 0,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_0",
+            "node_1"
+          ],
+          "learners": [
+            "node_0",
+            "node_1"
+          ],
+          "mean_pre_pair_accuracy": 0.9087557603686636,
+          "mean_post_pair_accuracy": 0.9350230414746543,
+          "num_distilled": 2,
+          "num_improved": 2,
+          "bytes_uploaded": 44608,
+          "bytes_downloaded": 44608,
+          "compute_energy_kwh": 0.004817930626694997
+        },
+        {
+          "batch": 1,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [],
+          "learners": [],
+          "mean_pre_pair_accuracy": 0.8771336553945249,
+          "mean_post_pair_accuracy": 0.8771336553945249,
+          "num_distilled": 0,
+          "num_improved": 0,
+          "bytes_uploaded": 0,
+          "bytes_downloaded": 0,
+          "compute_energy_kwh": 0.0004896467915807064
+        },
+        {
+          "batch": 2,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_0"
+          ],
+          "learners": [],
+          "mean_pre_pair_accuracy": 0.9162640901771336,
+          "mean_post_pair_accuracy": 0.9162640901771336,
+          "num_distilled": 0,
+          "num_improved": 0,
+          "bytes_uploaded": 17168,
+          "bytes_downloaded": 0,
+          "compute_energy_kwh": 0.0006670473456447808
+        },
+        {
+          "batch": 3,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_0"
+          ],
+          "learners": [],
+          "mean_pre_pair_accuracy": 0.866183574879227,
+          "mean_post_pair_accuracy": 0.866183574879227,
+          "num_distilled": 0,
+          "num_improved": 0,
+          "bytes_uploaded": 17168,
+          "bytes_downloaded": 0,
+          "compute_energy_kwh": 0.0006110947739484416
+        },
+        {
+          "batch": 4,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [],
+          "learners": [],
+          "mean_pre_pair_accuracy": 0.880354267310789,
+          "mean_post_pair_accuracy": 0.880354267310789,
+          "num_distilled": 0,
+          "num_improved": 0,
+          "bytes_uploaded": 0,
+          "bytes_downloaded": 0,
+          "compute_energy_kwh": 0.0005613751114764535
+        },
+        {
+          "batch": 5,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_1"
+          ],
+          "learners": [],
+          "mean_pre_pair_accuracy": 0.9043478260869565,
+          "mean_post_pair_accuracy": 0.9043478260869565,
+          "num_distilled": 0,
+          "num_improved": 0,
+          "bytes_uploaded": 9440,
+          "bytes_downloaded": 0,
+          "compute_energy_kwh": 0.000585723888323661
+        },
+        {
+          "batch": 6,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_0"
+          ],
+          "learners": [],
+          "mean_pre_pair_accuracy": 0.8780998389694041,
+          "mean_post_pair_accuracy": 0.8780998389694041,
+          "num_distilled": 0,
+          "num_improved": 0,
+          "bytes_uploaded": 17168,
+          "bytes_downloaded": 0,
+          "compute_energy_kwh": 0.0006972413247614859
+        },
+        {
+          "batch": 7,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_1"
+          ],
+          "learners": [],
+          "mean_pre_pair_accuracy": 0.9217391304347826,
+          "mean_post_pair_accuracy": 0.9217391304347826,
+          "num_distilled": 0,
+          "num_improved": 0,
+          "bytes_uploaded": 9440,
+          "bytes_downloaded": 0,
+          "compute_energy_kwh": 0.0005985868233838944
+        },
+        {
+          "batch": 8,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_0",
+            "node_1"
+          ],
+          "learners": [],
+          "mean_pre_pair_accuracy": 0.9304347826086956,
+          "mean_post_pair_accuracy": 0.9304347826086956,
+          "num_distilled": 0,
+          "num_improved": 0,
+          "bytes_uploaded": 26608,
+          "bytes_downloaded": 0,
+          "compute_energy_kwh": 0.0006941823207179971
+        },
+        {
+          "batch": 9,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_0"
+          ],
+          "learners": [],
+          "mean_pre_pair_accuracy": 0.8879227053140096,
+          "mean_post_pair_accuracy": 0.8879227053140096,
+          "num_distilled": 0,
+          "num_improved": 0,
+          "bytes_uploaded": 17168,
+          "bytes_downloaded": 0,
+          "compute_energy_kwh": 0.0006462086089395517
+        },
+        {
+          "batch": 10,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_0",
+            "node_1"
+          ],
+          "learners": [],
+          "mean_pre_pair_accuracy": 0.9162640901771336,
+          "mean_post_pair_accuracy": 0.9162640901771336,
+          "num_distilled": 0,
+          "num_improved": 0,
+          "bytes_uploaded": 26608,
+          "bytes_downloaded": 0,
+          "compute_energy_kwh": 0.0006600941876469203
+        },
+        {
+          "batch": 11,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_1"
+          ],
+          "learners": [],
+          "mean_pre_pair_accuracy": 0.894524959742351,
+          "mean_post_pair_accuracy": 0.894524959742351,
+          "num_distilled": 0,
+          "num_improved": 0,
+          "bytes_uploaded": 9440,
+          "bytes_downloaded": 0,
+          "compute_energy_kwh": 0.0006190799537239792
+        },
+        {
+          "batch": 12,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [],
+          "learners": [],
+          "mean_pre_pair_accuracy": 0.857487922705314,
+          "mean_post_pair_accuracy": 0.857487922705314,
+          "num_distilled": 0,
+          "num_improved": 0,
+          "bytes_uploaded": 0,
+          "bytes_downloaded": 0,
+          "compute_energy_kwh": 0.0005586218687159365
+        },
+        {
+          "batch": 13,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_1"
+          ],
+          "learners": [],
+          "mean_pre_pair_accuracy": 0.8597423510466988,
+          "mean_post_pair_accuracy": 0.8597423510466988,
+          "num_distilled": 0,
+          "num_improved": 0,
+          "bytes_uploaded": 9440,
+          "bytes_downloaded": 0,
+          "compute_energy_kwh": 0.0006267592329335292
+        },
+        {
+          "batch": 14,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_0"
+          ],
+          "learners": [],
+          "mean_pre_pair_accuracy": 0.866183574879227,
+          "mean_post_pair_accuracy": 0.866183574879227,
+          "num_distilled": 0,
+          "num_improved": 0,
+          "bytes_uploaded": 17168,
+          "bytes_downloaded": 0,
+          "compute_energy_kwh": 0.0006504218888022488
+        },
+        {
+          "batch": 15,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_0"
+          ],
+          "learners": [],
+          "mean_pre_pair_accuracy": 0.8792270531400965,
+          "mean_post_pair_accuracy": 0.8792270531400965,
+          "num_distilled": 0,
+          "num_improved": 0,
+          "bytes_uploaded": 17168,
+          "bytes_downloaded": 0,
+          "compute_energy_kwh": 0.000673313346019279
+        },
+        {
+          "batch": 16,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_0",
+            "node_1"
+          ],
+          "learners": [],
+          "mean_pre_pair_accuracy": 0.9434782608695652,
+          "mean_post_pair_accuracy": 0.9434782608695652,
+          "num_distilled": 0,
+          "num_improved": 0,
+          "bytes_uploaded": 26608,
+          "bytes_downloaded": 0,
+          "compute_energy_kwh": 0.0006737305980632994
+        },
+        {
+          "batch": 17,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_0",
+            "node_1"
+          ],
+          "learners": [],
+          "mean_pre_pair_accuracy": 0.9380032206119162,
+          "mean_post_pair_accuracy": 0.9380032206119162,
+          "num_distilled": 0,
+          "num_improved": 0,
+          "bytes_uploaded": 26608,
+          "bytes_downloaded": 0,
+          "compute_energy_kwh": 0.0007085387369582649
+        },
+        {
+          "batch": 18,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_0",
+            "node_1"
+          ],
+          "learners": [],
+          "mean_pre_pair_accuracy": 0.9565217391304348,
+          "mean_post_pair_accuracy": 0.9565217391304348,
+          "num_distilled": 0,
+          "num_improved": 0,
+          "bytes_uploaded": 26608,
+          "bytes_downloaded": 0,
+          "compute_energy_kwh": 0.0006529794352011934
+        },
+        {
+          "batch": 19,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_1"
+          ],
+          "learners": [],
+          "mean_pre_pair_accuracy": 0.9217391304347826,
+          "mean_post_pair_accuracy": 0.9217391304347826,
+          "num_distilled": 0,
+          "num_improved": 0,
+          "bytes_uploaded": 9440,
+          "bytes_downloaded": 0,
+          "compute_energy_kwh": 0.0005732939309236458
+        },
+        {
+          "batch": 20,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [],
+          "learners": [],
+          "mean_pre_pair_accuracy": 0.8939974457215836,
+          "mean_post_pair_accuracy": 0.8939974457215836,
+          "num_distilled": 0,
+          "num_improved": 0,
+          "bytes_uploaded": 0,
+          "bytes_downloaded": 0,
+          "compute_energy_kwh": 0.0006048888356571071
+        },
+        {
+          "batch": 21,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_0",
+            "node_1"
+          ],
+          "learners": [],
+          "mean_pre_pair_accuracy": 0.9162640901771336,
+          "mean_post_pair_accuracy": 0.9162640901771336,
+          "num_distilled": 0,
+          "num_improved": 0,
+          "bytes_uploaded": 26608,
+          "bytes_downloaded": 0,
+          "compute_energy_kwh": 0.0006594390976661858
+        },
+        {
+          "batch": 22,
+          "nodes_present": [
+            "node_0",
+            "node_1"
+          ],
+          "nodes_absent": [],
+          "teachers": [
+            "node_1"
+          ],
+          "learners": [],
+          "mean_pre_pair_accuracy": 0.9142857142857144,
+          "mean_post_pair_accuracy": 0.9142857142857144,
+          "num_distilled": 0,
+          "num_improved": 0,
+          "bytes_uploaded": 8240,
+          "bytes_downloaded": 0,
+          "compute_energy_kwh": 0.0004610856722890167
+        }
+      ]
+    },
+    "knowledge_store": [
+      {
+        "node_id": "node_0",
+        "batch_idx": 21,
+        "size_bytes": 17168,
+        "uploaded_at": "2026-09-27T11:44:09.045176+00:00"
+      },
+      {
+        "node_id": "node_1",
+        "batch_idx": 22,
+        "size_bytes": 8240,
+        "uploaded_at": "2026-09-27T11:46:10.849803+00:00"
+      }
+    ],
+    "total_bytes_exchanged": 407312
+  }
+}
