@@ -311,7 +311,8 @@ def run_architecture(cfg, arch, dataset, stream, tracker, comm_estimator, device
                 b, batch_loaders,
                 probe_loader=build_probe_loader(cfg, dataset, probe_idx),
                 local_epochs={node.node_id: e for node, e in zip(present, epochs)},
-                lr=lr,
+                # training.round_lr: local-training LR for deployment rounds (batch >= 1); batch 0 keeps training.lr
+                lr=cfg.get("training.round_lr", lr) if b > 0 else lr,
                 distill_epochs=cfg.get("training.distill_epochs_per_round", 1),
                 distill_lr=cfg.get("training.distill_lr", 0.0005),
                 proto_weight=cfg.get("training.proto_weight", 0.5),
