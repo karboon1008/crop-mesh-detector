@@ -67,6 +67,8 @@ crop-mesh-detector/
 │   │   ├── knowledge_store.py    # the ONE shared knowledge database (SQLite)
 │   │   ├── continual.py          # per-batch continual mesh (EMA teacher/learner roles)
 │   │   └── mesh.py               # fixed-round all-to-all mesh (used by the scenarios)
+│   ├── detection/            # stage-1 leaf detector (SSDLite-MobileNetV3, COCO-initialised),
+│   │                         # VOC leaf-box dataset, mAP metrics, fine-tune/eval CLI
 │   ├── energy/
 │   │   └── tracker.py            # CodeCarbon compute-energy tracking +
 │   │                             # communication-cost estimator + sustainability report
@@ -268,6 +270,66 @@ python -m src.infer --camera --live
 
 Add `--output path/to/results.csv` to any of the above to also save the
 predictions to disk.
+
+### Field photos: two-stage leaf detection + classification
+
+The mesh classifiers are trained on PlantVillage, where each photo is one
+centred leaf on a plain background. A field photo has several leaves plus
+soil and stems, so `src/detection/` adds a **stage 1 leaf detector** in
+front of them: an SSDLite320-MobileNetV3 detector, started from
+torchvision's COCO weights and fine-tuned with a single "leaf" class. Each
+detected leaf is cut out as a padded square and handed to the unchanged
+crop/disease classifier (stage 2), giving one prediction per leaf.
+
+The detector is trained once and shipped to every node; it is **not** part
+of the mesh ("where is a leaf" isn't private farm knowledge). Prototypes,
+probe logits, aggregation, teacher/learner roles and the byte counts are
+all unchanged.
+
+1. **Get leaf boxes.** Any Pascal VOC folder works (each image with a
+   same-named `.xml`, as LabelImg / CVAT export it), e.g. the
+   [PlantDoc object-detection dataset](https://github.com/pratikkayal/PlantDoc-Object-Detection-Dataset)'s
+   `TRAIN/` and `TEST/` folders. Every box counts as "leaf", whatever its
+   label; annotations whose recorded `<size>` doesn't match the image are
+   rescaled.
+2. **Fine-tune and evaluate** (mAP@0.5, mAP@0.75, mAP@[0.5:0.95], and
+   precision/recall at the score threshold; compute energy tracked with
+   CodeCarbon):
+
+   ```bash
+   python -m src.detection.train_detector --train-dir data/PlantDoc-OD/TRAIN --test-dir data/PlantDoc-OD/TEST
+   python -m src.detection.train_detector --eval-only --test-dir data/PlantDoc-OD/TEST
+   ```
+
+   The best epoch (by mAP@0.5) goes to `outputs/detector/leaf_ssdlite.pt`,
+   and the per-epoch metrics to `outputs/detector/detector_metrics.json`.
+3. **Run it**:
+
+   ```bash
+   python -m src.infer --images field.jpg --detector outputs/detector/leaf_ssdlite.pt
+   python -m src.infer --camera --live --detector outputs/detector/leaf_ssdlite.pt
+   ```
+
+   Each leaf gets its own row with its box and detector score. If no leaf
+   is found, the whole frame is classified (`leaf_index` -1), so
+   PlantVillage-style close-ups still work.
+4. **Raspberry Pi**: export the detector next to the classifier bundle and
+   pass `--detector` to the service. The ONNX graph includes NMS, so the Pi
+   still needs only onnxruntime:
+
+   ```bash
+   python scripts/export_detector_for_pi.py --output-dir outputs/pi_export
+   python pi/inference_service.py --model-dir pi_export --detector pi_export/detector.onnx --camera opencv
+   ```
+
+   With `--detector`, the CSV log gets extra columns (`leaf_index, x1, y1,
+   x2, y2, detector_score`), so use a new `--log` file rather than one
+   written without it.
+
+Limits: this reports detection mAP only, not an end-to-end per-leaf
+disease accuracy (that would need field photos labelled with PlantVillage's
+own class names). SSDLite targets the Pi; the K210 would need a smaller
+YOLO-style detector.
 
 Everything — which architectures to run, node count, non-IID strategy,
 epochs/rounds, aggregation rule, radio energy assumptions, grid carbon

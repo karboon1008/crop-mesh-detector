@@ -16,6 +16,13 @@ window, press SPACE to capture and classify, 'q' to cancel):
 Live webcam classification (continuously classifies every --interval
 seconds, prediction overlaid on the preview window, 'q' to quit):
     python -m src.infer --camera --live
+
+Two-stage mode for field photos with several leaves: add --detector with a
+leaf-detector checkpoint (src/detection/train_detector.py). Each detected
+leaf is cropped and classified on its own, giving one result row per leaf
+(with its box); a photo with no detected leaf is classified whole:
+    python -m src.infer --images field.jpg --detector outputs/detector/leaf_ssdlite.pt
+    python -m src.infer --camera --live --detector outputs/detector/leaf_ssdlite.pt
 """
 
 from __future__ import annotations
@@ -29,6 +36,7 @@ import torch
 import torch.nn.functional as F
 from PIL import Image
 
+from src.detection.leaf_detector import LeafDetector, crop_leaves
 from src.predict import build_transform, load_model
 
 
@@ -62,26 +70,54 @@ def format_result(crop_classes, disease_classes, raw: dict, source: str) -> dict
 
 
 def print_result(result: dict) -> None:
+    where = ""
+    if "leaf_index" in result:
+        where = f" [leaf {result['leaf_index']} box {result['box']}]" if result["leaf_index"] >= 0 else " [no leaf detected, whole frame]"
     print(
-        f"{result['file']} -> {result['predicted_class']}  "
+        f"{result['file']}{where} -> {result['predicted_class']}  "
         f"(crop: {result['predicted_crop']} {result['crop_confidence']:.2%}, "
         f"disease: {result['predicted_disease']} {result['disease_confidence']:.2%})"
     )
 
 
-def classify_images(image_paths, model, transform, device, crop_classes, disease_classes) -> list[dict]:
-    results = []
-    for path in image_paths:
-        image = Image.open(path)
+def analyse(
+    image: Image.Image, model, transform, device, crop_classes, disease_classes, source: str,
+    detector: LeafDetector | None = None,
+) -> list[dict]:
+    """Without a detector: one result for the whole image (the original
+    behaviour). With one: one result per detected leaf crop, each with
+    its box and detector score; the whole frame if no leaf is found.
+    """
+    if detector is None:
         raw = classify(model, transform, device, image)
-        result = format_result(crop_classes, disease_classes, raw, str(path))
-        print_result(result)
+        return [format_result(crop_classes, disease_classes, raw, source)]
+
+    results = []
+    for leaf_index, (leaf, detection) in enumerate(crop_leaves(image, detector.detect(image))):
+        raw = classify(model, transform, device, leaf)
+        result = format_result(crop_classes, disease_classes, raw, source)
+        result["leaf_index"] = leaf_index if detection is not None else -1  # -1 = no leaf found, whole frame used
+        result["box"] = "" if detection is None else " ".join(f"{v:.0f}" for v in detection.box)
+        result["detector_score"] = "" if detection is None else round(detection.score, 4)
         results.append(result)
     return results
 
 
+def classify_images(
+    image_paths, model, transform, device, crop_classes, disease_classes, detector: LeafDetector | None = None
+) -> list[dict]:
+    results = []
+    for path in image_paths:
+        image = Image.open(path)
+        for result in analyse(image, model, transform, device, crop_classes, disease_classes, str(path), detector):
+            print_result(result)
+            results.append(result)
+    return results
+
+
 def run_camera(
-    model, transform, device, crop_classes, disease_classes, device_index: int, live: bool, interval: float
+    model, transform, device, crop_classes, disease_classes, device_index: int, live: bool, interval: float,
+    detector: LeafDetector | None = None,
 ) -> list[dict]:
     import cv2  # only imported when --camera is used, so --images-only use needs no camera deps
 
@@ -91,6 +127,7 @@ def run_camera(
 
     print("Live classification — press 'q' to quit." if live else "Press SPACE to capture and classify, 'q' to cancel.")
     results: list[dict] = []
+    latest: list[dict] = []  # results for the most recent classified frame, drawn on the preview
     last_classified = 0.0
     try:
         while True:
@@ -99,11 +136,19 @@ def run_camera(
                 raise RuntimeError("Failed to read a frame from the camera")
 
             display = frame.copy()
-            if results:
-                cv2.putText(
-                    display, results[-1]["predicted_class"], (10, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2,
-                )
+            for result in latest:
+                if result.get("box"):
+                    x1, y1, x2, y2 = (int(float(v)) for v in result["box"].split())
+                    cv2.rectangle(display, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                    cv2.putText(
+                        display, result["predicted_class"], (x1, max(y1 - 8, 15)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1,
+                    )
+                else:
+                    cv2.putText(
+                        display, result["predicted_class"], (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2,
+                    )
             cv2.imshow("crop-mesh-detector - laptop camera", display)
 
             key = cv2.waitKey(1 if live else 0) & 0xFF
@@ -115,10 +160,10 @@ def run_camera(
                 last_classified = time.time()
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 image = Image.fromarray(rgb)
-                raw = classify(model, transform, device, image)
-                result = format_result(crop_classes, disease_classes, raw, "camera")
-                print_result(result)
-                results.append(result)
+                latest = analyse(image, model, transform, device, crop_classes, disease_classes, "camera", detector)
+                for result in latest:
+                    print_result(result)
+                results.extend(latest)
                 if not live:
                     break
     finally:
@@ -139,6 +184,10 @@ def main():
     parser.add_argument("--arch", default=None, help="Override: which architecture's checkpoint to use")
     parser.add_argument("--node", default=None, help="Override: which node's checkpoint to use, e.g. node_0")
     parser.add_argument("--output", default=None, help="Optional CSV path to save results")
+    parser.add_argument("--detector", default=None,
+                        help="Leaf-detector checkpoint: detect leaves first and classify each crop")
+    parser.add_argument("--detector-threshold", type=float, default=0.5, help="Minimum leaf-detector score")
+    parser.add_argument("--max-leaves", type=int, default=10, help="Most leaves classified per image")
     args = parser.parse_args()
 
     if not args.images and not args.camera:
@@ -150,13 +199,19 @@ def main():
         Path(args.checkpoints_dir), Path(args.results), args.arch, args.node
     )
     transform = build_transform(image_size)
+    detector = None
+    if args.detector:
+        detector = LeafDetector.from_checkpoint(
+            Path(args.detector), device=device, score_threshold=args.detector_threshold, max_leaves=args.max_leaves
+        )
 
     if args.camera:
         results = run_camera(
-            model, transform, device, crop_classes, disease_classes, args.device_index, args.live, args.interval
+            model, transform, device, crop_classes, disease_classes, args.device_index, args.live, args.interval,
+            detector,
         )
     else:
-        results = classify_images(args.images, model, transform, device, crop_classes, disease_classes)
+        results = classify_images(args.images, model, transform, device, crop_classes, disease_classes, detector)
 
     if args.output and results:
         output_path = Path(args.output)
