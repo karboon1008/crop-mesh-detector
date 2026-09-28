@@ -40,7 +40,17 @@ open HiveMindFarmer.xcodeproj
 ```
 
 In Xcode, select the **HiveMindFarmer** target > Signing & Capabilities, and choose your team.
-Change the bundle id (`org.hivemind.farmer`) if it's taken. Then run on an iPhone or the simulator.
+A free Apple ID is enough. Change the bundle id (`org.hivemind.farmer`) if it's taken. Then run
+on an iPhone or the simulator.
+
+**With a free Apple ID, on a real iPhone:**
+- **First run:** turn on Settings > Privacy & Security > **Developer Mode** (the phone restarts),
+  and after installing, trust yourself under Settings > General > VPN & Device Management.
+- **7‑day expiry:** the app stops opening after 7 days. Plug the phone in and press Run again
+  to renew it, so do it the day before a demo.
+- **Push:** the project ships without the push entitlement, because free accounts can't sign
+  it. The demo's simulated notifications don't need it. Real APNs needs the paid account; see
+  *Real push notifications* below.
 
 > This app was written without access to a Mac, so it has not been compiled yet. Expect to
 > fix the odd compiler error on the first build.
@@ -95,5 +105,7 @@ new alerts when refreshed. To deliver real pushes:
    ```
    `use_sandbox: true` is for builds run from Xcode. TestFlight and App Store builds need `false`,
    and the entitlement set to `production`.
-3. **Run the app:** on a real iPhone (the simulator can't receive APNs pushes) with Demo mode off.
+3. **Enable push in the project:** add `CODE_SIGN_ENTITLEMENTS: HiveMindFarmer/HiveMindFarmer.entitlements`
+   to the target in `project.yml` (see the comment there) and run `xcodegen generate` again.
+4. **Run the app:** on a real iPhone (the simulator can't receive APNs pushes) with Demo mode off.
    The phone registers its token with the server automatically.

@@ -2,6 +2,11 @@
 #   brew install xcodegen
 #   cd mobile/ios && xcodegen generate && open HiveMindFarmer.xcodeproj
 # Set DEVELOPMENT_TEAM below (or in Xcode > Signing & Capabilities) to your Apple team id.
+#
+# Builds with a free Apple ID: the demo's simulated notifications are local and need no push
+# entitlement. For real APNs pushes (paid Apple Developer account), add this under the
+# target's settings.base and regenerate:
+#   CODE_SIGN_ENTITLEMENTS: HiveMindFarmer/HiveMindFarmer.entitlements
 name: HiveMindFarmer
 options:
   bundleIdPrefix: org.hivemind
@@ -24,7 +29,6 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: org.hivemind.farmer
         TARGETED_DEVICE_FAMILY: "1"
-        CODE_SIGN_ENTITLEMENTS: HiveMindFarmer/HiveMindFarmer.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: HiveMind Farmer
