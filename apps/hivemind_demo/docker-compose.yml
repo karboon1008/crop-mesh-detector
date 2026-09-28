@@ -1,0 +1,8 @@
+services:
+  hivemind-demo:
+    build: .
+    image: hivemind-demo
+    ports:
+      - "8502:8501"
+    volumes:
+      - ./data:/app/data   # detections.db stays on the host
