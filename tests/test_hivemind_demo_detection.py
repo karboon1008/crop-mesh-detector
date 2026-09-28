@@ -62,7 +62,7 @@ def test_crop_is_square_and_inside_photo():
 def test_draw_leaves_keeps_size_and_marks_boxes():
     image = Image.new("RGB", (300, 200), (255, 255, 255))
     leaves = [leaf_detection.Leaf((20, 40, 120, 160), 0.9), leaf_detection.Leaf((150, 30, 280, 180), 0.7)]
-    annotated = leaf_detection.draw_leaves(image, leaves, ["healthy", "diseased"])
+    annotated = leaf_detection.draw_leaves(image, leaves, ["healthy", "diseased"], style="diagnosis")
     assert annotated.size == image.size
     assert annotated.getpixel((20, 100)) == (0x2E, 0x7D, 0x32)  # healthy green edge
     assert annotated.getpixel((280, 100)) == (0xC6, 0x28, 0x28)  # diseased red edge
@@ -97,3 +97,19 @@ def test_exported_detector_loads_and_runs(tmp_path):
     for leaf in leaves:
         x1, y1, x2, y2 = leaf.box
         assert 0 <= x1 <= x2 <= 500 and 0 <= y1 <= y2 <= 400
+
+
+def test_detector_style_labels_every_box_red():
+    image = Image.new("RGB", (300, 200), (255, 255, 255))
+    leaves = [leaf_detection.Leaf((20, 0, 120, 160), 0.86), leaf_detection.Leaf((150, 60, 299, 180), 0.21)]
+    annotated = leaf_detection.draw_leaves(image, leaves)  # default style, no tiers needed
+    red = (0xFF, 0x3B, 0x1F)
+    assert annotated.getpixel((20, 100)) == red and annotated.getpixel((299, 120)) == red
+    # The top-edge box's tag moves inside it; the other's sits above its top edge.
+    def red_share(box):
+        pixels = [annotated.getpixel((x, y)) for x in range(box[0], box[2]) for y in range(box[1], box[3])]
+        return sum(px == red for px in pixels) / len(pixels)
+
+    assert red_share((24, 4, 40, 10)) > 0.15  # inside the top box, under its top edge
+    assert red_share((154, 50, 170, 56)) > 0.15  # above the second box
+    assert red_share((154, 64, 170, 70)) == 0.0  # not inside the second box

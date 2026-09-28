@@ -110,26 +110,47 @@ def crop_leaf(image: Image.Image, leaf: Leaf) -> Image.Image:
     return image.convert("RGB").crop(square_crop_box(leaf.box, image.size))
 
 
-def draw_leaves(image: Image.Image, leaves: list[Leaf], tiers: list[str]) -> Image.Image:
-    """The photo with each leaf boxed and numbered (1, 2, ...), coloured by
-    its result tier, matching the numbered result cards.
+DETECTOR_BOX_COLOR = "#ff3b1f"
+
+
+def draw_leaves(
+    image: Image.Image, leaves: list[Leaf], tiers: list[str] | None = None, style: str = "detector"
+) -> Image.Image:
+    """The photo with every leaf boxed and labelled on a filled tag.
+
+    style="detector": red boxes labelled "leaf 0.86" (the detector's own
+    view: what it found and how sure it is). style="diagnosis": boxes
+    numbered 1, 2, ... to match the result cards and coloured by each
+    leaf's result tier (needs `tiers`).
+
+    Lower-scoring leaves are drawn first so the most confident leaves'
+    labels end up on top where boxes overlap.
     """
     annotated = image.convert("RGB").copy()
     draw = ImageDraw.Draw(annotated)
     line = max(2, round(min(annotated.size) / 150))
-    font_size = max(14, round(min(annotated.size) / 20))
+    font_size = max(14, round(min(annotated.size) / 22))
     try:
         font = ImageFont.load_default(size=font_size)
     except TypeError:  # Pillow < 10.1 has no sized default font
         font = ImageFont.load_default()
-    for number, (leaf, tier) in enumerate(zip(leaves, tiers), start=1):
-        color = TIER_COLORS.get(tier, "#1565c0")
+
+    tiers = tiers or [None] * len(leaves)
+    numbered = list(enumerate(zip(leaves, tiers), start=1))
+    for number, (leaf, tier) in sorted(numbered, key=lambda item: item[1][0].score):
+        if style == "diagnosis":
+            color, label = TIER_COLORS.get(tier, "#1565c0"), str(number)
+        else:
+            color, label = DETECTOR_BOX_COLOR, f"leaf {leaf.score:.2f}"
         x1, y1, x2, y2 = leaf.box
         draw.rectangle((x1, y1, x2, y2), outline=color, width=line)
-        label = str(number)
         tx1, ty1, tx2, ty2 = draw.textbbox((0, 0), label, font=font)
         pad = line
-        tag = (x1, max(y1 - (ty2 - ty1) - 2 * pad, 0))
-        draw.rectangle((tag[0], tag[1], tag[0] + (tx2 - tx1) + 2 * pad, tag[1] + (ty2 - ty1) + 2 * pad), fill=color)
-        draw.text((tag[0] + pad - tx1, tag[1] + pad - ty1), label, fill="white", font=font)
+        tag_w, tag_h = (tx2 - tx1) + 2 * pad, (ty2 - ty1) + 2 * pad
+        # Tag sits on the box's top edge; at the top of the photo it moves
+        # inside the box, and it never runs off the right-hand side.
+        tag_x = min(x1, annotated.size[0] - tag_w)
+        tag_y = y1 - tag_h if y1 - tag_h >= 0 else y1
+        draw.rectangle((tag_x, tag_y, tag_x + tag_w, tag_y + tag_h), fill=color)
+        draw.text((tag_x + pad - tx1, tag_y + pad - ty1), label, fill="white", font=font)
     return annotated

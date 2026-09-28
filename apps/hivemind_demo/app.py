@@ -88,6 +88,10 @@ with st.sidebar:
                                 help="Stage 1 finds each leaf; stage 2 classifies each crop with the farm model.")
         leaf_threshold = st.slider("Leaf confidence threshold", 0.1, 0.9, detector.default_threshold, 0.05,
                                    disabled=not find_leaves)
+        box_style = st.radio("Boxes show", ["detector", "diagnosis"], horizontal=True, disabled=not find_leaves,
+                             format_func={"detector": "Leaf + score", "diagnosis": "Result number"}.get,
+                             help="Leaf + score: red boxes labelled like 'leaf 0.86'. "
+                                  "Result number: numbered to match the cards, coloured healthy/diseased/uncertain.")
         map_text = f", mAP@0.5 {100 * detector.map_50:.1f}% on held-out field photos" if detector.map_50 is not None else ""
         st.caption(f"Stage 1: SSDLite-MobileNetV3 leaf detector (COCO-initialised, fine-tuned on leaf "
                    f"boxes{map_text}). It is shared by every farm and not part of the mesh.")
@@ -154,8 +158,9 @@ with right:
         if results:
             if leaves:
                 found = f"{len(leaves)} leaf found" if len(leaves) == 1 else f"{len(leaves)} leaves found"
-                photo_slot.image(leaf_detection.draw_leaves(image, leaves, [r["tier"] for r in results]),
-                                 caption=f"{found} (numbers match the results)", width="stretch")
+                note = "numbers match the results" if box_style == "diagnosis" else "results below are in the same order, best score first"
+                photo_slot.image(leaf_detection.draw_leaves(image, leaves, [r["tier"] for r in results], box_style),
+                                 caption=f"{found} ({note})", width="stretch")
             else:
                 photo_slot.image(image, caption="What the model sees (no leaf found)", width="stretch")
             counts = {tier: sum(r["tier"] == tier for r in results) for tier in TIER_STYLE}
@@ -164,7 +169,7 @@ with right:
                 color, label = TIER_STYLE[result["tier"]]
                 thumb, card = st.columns([1, 3])
                 thumb.image(target, caption=f"Leaf {number}" if leaves else "Whole photo", width="stretch")
-                score = f" · leaf score {leaves[number - 1].score * 100:.0f}%" if leaves else ""
+                score = f" · leaf {leaves[number - 1].score:.2f}" if leaves else ""
                 card.markdown(
                     f"""
                     <div style="padding:0.8em;border-radius:0.5em;background-color:{color};color:white;margin-bottom:0.6em;">
