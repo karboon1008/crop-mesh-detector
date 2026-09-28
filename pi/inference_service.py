@@ -20,14 +20,25 @@ pointing at detector.onnx from scripts/export_detector_for_pi.py. Each
 detected leaf is cropped and classified, and logged as its own row with
 its box; a frame with no detected leaf is classified whole (leaf_index -1):
     python inference_service.py --model-dir pi_export --detector pi_export/detector.onnx --camera opencv
+
+Farmer alerts: add --report-url (services/alerts/) to send every diseased
+leaf, with the node's coordinates and the leaf photo, to the alerts service,
+which pushes it to the farmer's iPhone. Reports that fail (no signal in the
+field) are queued and retried on the next frame:
+    python inference_service.py --model-dir pi_export --camera opencv \
+        --report-url http://alerts.local:8080 --node-id node_0 --node-key <key> --lat 4.47212 --lon 101.37913
 """
 
 from __future__ import annotations
 
 import argparse
+import base64
+import collections
 import csv
+import io
 import json
 import time
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -166,6 +177,71 @@ def classify(session, input_name: str, image: Image.Image, manifest: dict) -> tu
     return crop_idx, float(crop_probs[crop_idx]), disease_idx, float(disease_probs[disease_idx])
 
 
+REPORT_MIN_CONFIDENCE = 0.6  # same bar as the app's "diseased" tier; the service re-checks it
+
+
+class AlertReporter:
+    """Sends diseased detections and heartbeats to the farmer alerts service.
+    Never raises into the camera loop: failed reports wait in a bounded queue
+    (oldest dropped first) and are retried before each new one.
+    """
+
+    def __init__(self, url: str, node_id: str, node_key: str, latitude=None, longitude=None,
+                 heartbeat_s: float = 300.0, max_queue: int = 200):
+        self.url = url.rstrip("/")
+        self.node_id = node_id
+        self.node_key = node_key
+        self.latitude = latitude
+        self.longitude = longitude
+        self.heartbeat_s = heartbeat_s
+        self.queue: collections.deque = collections.deque(maxlen=max_queue)
+        self._last_heartbeat = 0.0
+
+    def _post(self, path: str, body: dict) -> bool:
+        request = urllib.request.Request(
+            f"{self.url}{path}", data=json.dumps(body).encode(), method="POST",
+            headers={"Content-Type": "application/json", "X-Node-Key": self.node_key},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=5) as response:
+                return 200 <= response.status < 300
+        except Exception as e:  # offline, DNS, 5xx...: keep it for later
+            print(f"[alerts] could not reach {self.url}{path}: {e}")
+            return False
+
+    def _position(self) -> dict:
+        if self.latitude is None or self.longitude is None:
+            return {}
+        return {"latitude": self.latitude, "longitude": self.longitude}
+
+    def report(self, crop: str, crop_conf: float, disease: str, disease_conf: float,
+               leaf_image: Image.Image, captured_at: str) -> None:
+        if disease == "healthy" or min(crop_conf, disease_conf) < REPORT_MIN_CONFIDENCE:
+            return
+        thumb = leaf_image.convert("RGB").copy()
+        thumb.thumbnail((480, 480))
+        buf = io.BytesIO()
+        thumb.save(buf, format="JPEG", quality=80)
+        self.queue.append({
+            "node_id": self.node_id, "crop": crop, "disease": disease,
+            "crop_confidence": round(crop_conf, 4), "disease_confidence": round(disease_conf, 4),
+            "captured_at": captured_at, "image_jpeg_b64": base64.b64encode(buf.getvalue()).decode(),
+            **self._position(),
+        })
+
+    def flush(self) -> None:
+        """Sends queued reports oldest first; stops at the first failure so order is kept."""
+        while self.queue:
+            if not self._post("/api/detections", self.queue[0]):
+                return
+            self.queue.popleft()
+
+    def maybe_heartbeat(self) -> None:
+        if time.time() - self._last_heartbeat >= self.heartbeat_s:
+            if self._post("/api/nodes/heartbeat", {"node_id": self.node_id, **self._position()}):
+                self._last_heartbeat = time.time()
+
+
 LOG_HEADER = ["timestamp", "predicted_crop", "crop_confidence", "predicted_disease", "disease_confidence", "latency_ms"]
 DETECTOR_LOG_HEADER = LOG_HEADER + ["leaf_index", "x1", "y1", "x2", "y2", "detector_score"]
 
@@ -196,7 +272,14 @@ def main():
     parser.add_argument("--detector-threshold", type=float, default=None,
                         help="Minimum leaf score (default: detector_manifest.json's score_threshold)")
     parser.add_argument("--max-leaves", type=int, default=10)
+    parser.add_argument("--report-url", default=None, help="Farmer alerts service base URL (services/alerts/)")
+    parser.add_argument("--node-id", default=None, help="This node's id in the alerts service config")
+    parser.add_argument("--node-key", default=None, help="This node's X-Node-Key in the alerts service config")
+    parser.add_argument("--lat", type=float, default=None, help="This node's latitude (else the service's configured one)")
+    parser.add_argument("--lon", type=float, default=None, help="This node's longitude")
     args = parser.parse_args()
+    if args.report_url and not (args.node_id and args.node_key):
+        parser.error("--report-url needs --node-id and --node-key")
 
     model_dir = Path(args.model_dir)
     manifest = json.loads((model_dir / "manifest.json").read_text())
@@ -226,6 +309,11 @@ def main():
                 f"(different columns); pass a different --log."
             )
 
+    reporter = None
+    if args.report_url:
+        reporter = AlertReporter(args.report_url, args.node_id, args.node_key, args.lat, args.lon)
+        print(f"Reporting diseased leaves to {args.report_url} as {args.node_id}.")
+
     camera = build_camera(args)
 
     try:
@@ -243,12 +331,12 @@ def main():
                     targets = [(image.crop(square_crop_box(box, image.size)), (i, box, score))
                                for i, (box, score) in enumerate(leaves)] or [(image, None)]
 
-                predictions = [(classify(session, input_name, target, manifest), leaf) for target, leaf in targets]
+                predictions = [(classify(session, input_name, target, manifest), leaf, target) for target, leaf in targets]
                 # Latency covers the whole frame: detection plus every leaf's classification.
                 latency_ms = (time.time() - start) * 1000
                 timestamp = datetime.now(timezone.utc).isoformat()
 
-                for (crop_idx, crop_conf, disease_idx, disease_conf), leaf in predictions:
+                for (crop_idx, crop_conf, disease_idx, disease_conf), leaf, target in predictions:
                     row = [
                         timestamp,
                         manifest["crop_classes"][crop_idx],
@@ -265,7 +353,13 @@ def main():
                             row += [leaf_index, *(round(v, 1) for v in box), round(score, 4)]
                     print(row)
                     writer.writerow(row)
+                    if reporter is not None:
+                        reporter.report(manifest["crop_classes"][crop_idx], crop_conf,
+                                        manifest["disease_classes"][disease_idx], disease_conf, target, timestamp)
                 f.flush()
+                if reporter is not None:
+                    reporter.maybe_heartbeat()
+                    reporter.flush()
 
                 if args.once:
                     break
