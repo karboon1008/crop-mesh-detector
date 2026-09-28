@@ -15,6 +15,7 @@ from PIL import Image
 
 import db
 import inference
+import leaf_detection
 
 HERE = Path(__file__).resolve().parent
 DB_PATH = HERE / "data" / "detections.db"
@@ -47,6 +48,14 @@ def get_session(path: str):
     return inference.create_session(HERE / path)
 
 
+@st.cache_resource
+def get_detector():
+    return leaf_detection.load_detector()
+
+
+detector = get_detector()
+
+
 with st.sidebar:
     st.header("Model")
     best = max(MODELS, key=lambda m: m["heldout_acc"])
@@ -69,6 +78,20 @@ with st.sidebar:
     st.caption("Each farm trained only on its own photos; farms shared class prototypes and "
                "probe-set predictions, never images or weights.")
 
+    st.header("Leaf detection")
+    if detector is None:
+        find_leaves = False
+        st.caption("Off: no leaf detector in models/detector/. Without it, the whole (zoomed) photo "
+                   "is classified as one leaf. See README.md to add one.")
+    else:
+        find_leaves = st.toggle("Find every leaf first (two-stage)", value=True,
+                                help="Stage 1 finds each leaf; stage 2 classifies each crop with the farm model.")
+        leaf_threshold = st.slider("Leaf confidence threshold", 0.1, 0.9, detector.default_threshold, 0.05,
+                                   disabled=not find_leaves)
+        map_text = f", mAP@0.5 {100 * detector.map_50:.1f}% on held-out field photos" if detector.map_50 is not None else ""
+        st.caption(f"Stage 1: SSDLite-MobileNetV3 leaf detector (COCO-initialised, fine-tuned on leaf "
+                   f"boxes{map_text}). It is shared by every farm and not part of the mesh.")
+
 try:
     session = get_session(chosen["path"])
 except (FileNotFoundError, ValueError) as e:
@@ -83,7 +106,15 @@ with left:
     with camera_tab:
         captured = st.camera_input("Capture a leaf")
     photo = uploaded or captured
-    if photo is not None:
+    if photo is not None and find_leaves:
+        image = Image.open(photo).convert("RGB")
+        zoom = None
+        leaves = leaf_detection.detect_leaves(detector, image, leaf_threshold)
+        if not leaves:
+            st.warning("No leaf found at this threshold, so the whole photo is classified as one leaf. "
+                       "Try a lower threshold, or turn leaf detection off and use the zoom.")
+        photo_slot = st.empty()  # filled once each leaf's result (and box colour) is known
+    elif photo is not None:
         # The model was trained on PlantVillage photos: one leaf filling the frame on a plain
         # background. A webcam shot is mostly background, which the model misreads (e.g. as
         # strawberry leaf scorch), so zoom into the centre where the leaf is.
@@ -99,6 +130,51 @@ with right:
     st.subheader("Result")
     if photo is None:
         st.info("Upload a leaf photo (or take one) to see the prediction.")
+    elif find_leaves:
+        photo_id = f"{getattr(photo, 'file_id', photo.name)}@leaves@{leaf_threshold}@{chosen['path']}"
+        if st.session_state.get("last_photo_id") != photo_id:
+            try:
+                targets = [leaf_detection.crop_leaf(image, leaf) for leaf in leaves] or [image]
+                results = [inference.predict(session, target) for target in targets]
+            except Exception as e:
+                st.error(f"Could not run detection on this photo: {e}")
+                st.session_state.pop("last_leaf_results", None)  # never show another photo's results
+            else:
+                captured_at = datetime.now().isoformat(timespec="seconds")
+                for result in results:  # one logged detection per leaf
+                    db.save_detection(
+                        DB_PATH, captured_at,
+                        result["predicted_crop"], result["crop_confidence"],
+                        result["predicted_disease"], result["disease_confidence"], result["tier"],
+                    )
+                st.session_state["last_photo_id"] = photo_id
+                st.session_state["last_leaf_results"] = (targets, results)
+
+        targets, results = st.session_state.get("last_leaf_results", ([], []))
+        if results:
+            if leaves:
+                found = f"{len(leaves)} leaf found" if len(leaves) == 1 else f"{len(leaves)} leaves found"
+                photo_slot.image(leaf_detection.draw_leaves(image, leaves, [r["tier"] for r in results]),
+                                 caption=f"{found} (numbers match the results)", width="stretch")
+            else:
+                photo_slot.image(image, caption="What the model sees (no leaf found)", width="stretch")
+            counts = {tier: sum(r["tier"] == tier for r in results) for tier in TIER_STYLE}
+            st.markdown(" · ".join(f"**{n}** {TIER_STYLE[t][1].lower()}" for t, n in counts.items() if n))
+            for number, (target, result) in enumerate(zip(targets, results), start=1):
+                color, label = TIER_STYLE[result["tier"]]
+                thumb, card = st.columns([1, 3])
+                thumb.image(target, caption=f"Leaf {number}" if leaves else "Whole photo", width="stretch")
+                score = f" · leaf score {leaves[number - 1].score * 100:.0f}%" if leaves else ""
+                card.markdown(
+                    f"""
+                    <div style="padding:0.8em;border-radius:0.5em;background-color:{color};color:white;margin-bottom:0.6em;">
+                        <b style="font-size:1.1em;">{number}. {label}</b>{score}<br>
+                        <b>Crop:</b> {pretty(result['predicted_crop'])} ({result['crop_confidence'] * 100:.1f}%)<br>
+                        <b>Condition:</b> {pretty(result['predicted_disease'])} ({result['disease_confidence'] * 100:.1f}%)
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
     else:
         photo_id = f"{getattr(photo, 'file_id', photo.name)}@{zoom}@{chosen['path']}"
         if st.session_state.get("last_photo_id") != photo_id:

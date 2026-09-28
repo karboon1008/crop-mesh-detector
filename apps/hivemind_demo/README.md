@@ -42,7 +42,46 @@ farm 0.
 Each farm mostly saw its own mix of crops, so farm models differ a lot on crops they rarely saw.
 The sample images were checked on the default model only.
 
+## Two-stage mode: find every leaf, then classify each one
+
+The farm models only ever saw lab photos of one leaf on a plain background. For a field
+photo with several leaves, the app can run a **leaf detector first** (stage 1): it boxes
+every leaf, crops each one to a padded square, and the chosen farm model classifies each
+crop (stage 2). The result shows the photo with numbered boxes coloured healthy / diseased /
+uncertain, and one result card per leaf. Each leaf is logged as its own detection.
+
+The detector is SSDLite320-MobileNetV3: COCO-pretrained weights, fine-tuned with a single
+"leaf" class. It is shared by every farm and is **not** part of the mesh, so nothing about
+the HiveMind knowledge sharing changes.
+
+**Turning it on.** The app looks for `models/detector/detector.onnx` +
+`models/detector/detector_manifest.json`. Without them, the sidebar says leaf detection is off
+and the app works exactly as before (centre-zoom, one leaf). To build them, from the repo root
+on a machine with the PlantDoc object-detection dataset (any Pascal VOC folder of leaf boxes
+works; every box counts as "leaf"):
+
+```bash
+pip install -r requirements.txt   # the repo's training requirements (torch, torchvision)
+python -m src.detection.train_detector --train-dir <PlantDoc>/TRAIN --test-dir <PlantDoc>/TEST
+python scripts/export_detector_for_pi.py --output-dir apps/hivemind_demo/models/detector
+```
+
+Training starts from torchvision's COCO weights (downloaded on first run), keeps the epoch
+with the best mAP@0.5 on `--test-dir`, and writes `outputs/detector/detector_metrics.json`.
+The export writes both files straight into the app; its mAP@0.5 and score threshold appear
+in the sidebar. Restart the app (or `docker compose up --build`) to pick it up.
+
+**Controls** (sidebar, only shown once a detector is present):
+- **Find every leaf first**: switch between two-stage and the original single-leaf view.
+- **Leaf confidence threshold**: lower it if leaves are missed, raise it if background is
+  boxed. If nothing passes, the whole photo is classified as one leaf, with a warning.
+
 ## Demo tips
+
+- **Two-stage mode:** show a photo with several leaves and point out the numbered boxes and
+  per-leaf verdicts. The per-leaf crops still include some background, so the
+  PlantVillage-trained classifier is less reliable on them than on lab photos. Rehearse with
+  the photos you plan to show.
 
 - **Using the camera:** hold the leaf close so it fills the frame, ideally against plain
   white paper. Then move the **"Zoom to the centre"** slider until the leaf fills the

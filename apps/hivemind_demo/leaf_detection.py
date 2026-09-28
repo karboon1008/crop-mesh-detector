@@ -1,0 +1,135 @@
+"""Stage 1 of the two-stage demo: find every leaf in a photo, so each one can
+be classified on its own by the HiveMind farm model (stage 2).
+
+The farm models only ever saw PlantVillage photos: one leaf filling the
+frame on a plain background. A field or webcam photo has several leaves and
+lots of background, which they misread. The leaf detector (SSDLite320-
+MobileNetV3, COCO-initialised, fine-tuned with one "leaf" class; see
+src/detection/) finds each leaf, and each padded square crop then looks like
+a PlantVillage photo to the classifier.
+
+Pure ONNX Runtime + Pillow, no torch, like inference.py. The detector is
+optional: the app runs without it (centre-zoom only) until
+models/detector/detector.onnx exists. Build it with:
+    python -m src.detection.train_detector --train-dir <PlantDoc>/TRAIN --test-dir <PlantDoc>/TEST
+    python scripts/export_detector_for_pi.py --output-dir apps/hivemind_demo/models/detector
+"""
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from pathlib import Path
+
+import numpy as np
+import onnxruntime as ort
+from PIL import Image, ImageDraw, ImageFont
+
+DETECTOR_DIR = Path(__file__).resolve().parent / "models" / "detector"
+
+TIER_COLORS = {"healthy": "#2e7d32", "diseased": "#c62828", "uncertain": "#ef6c00"}
+
+
+@dataclass
+class Leaf:
+    box: tuple[float, float, float, float]  # x1, y1, x2, y2 in the photo's pixels
+    score: float
+
+
+@dataclass
+class Detector:
+    session: ort.InferenceSession
+    manifest: dict
+
+    @property
+    def default_threshold(self) -> float:
+        return float(self.manifest.get("score_threshold", 0.5))
+
+    @property
+    def map_50(self) -> float | None:
+        metrics = self.manifest.get("metrics") or {}
+        return metrics.get("map_50")
+
+
+def load_detector(detector_dir: Path = DETECTOR_DIR) -> Detector | None:
+    """The detector in `detector_dir`, or None if it hasn't been exported
+    there (the app then runs single-leaf mode only).
+    """
+    onnx_path = detector_dir / "detector.onnx"
+    manifest_path = detector_dir / "detector_manifest.json"
+    if not onnx_path.exists() or not manifest_path.exists():
+        return None
+    return Detector(ort.InferenceSession(str(onnx_path)), json.loads(manifest_path.read_text()))
+
+
+def detect_leaves(
+    detector: Detector, image: Image.Image, score_threshold: float, max_leaves: int = 10,
+    min_box_fraction: float = 0.02,
+) -> list[Leaf]:
+    """Leaves in `image`, best first. The exported graph takes a 320x320
+    RGB image in [0, 1] (it normalises internally, and NMS is already in
+    it) and returns boxes in 320x320 pixels, rescaled here to the photo.
+    Boxes whose short side is under `min_box_fraction` of the photo's are
+    dropped: too small to classify once upscaled.
+    """
+    image = image.convert("RGB")
+    size = detector.manifest["image_size"]
+    arr = (np.asarray(image.resize((size, size), Image.BILINEAR), dtype=np.float32) / 255.0).transpose(2, 0, 1)
+    boxes, scores, labels = detector.session.run(None, {detector.session.get_inputs()[0].name: arr})
+
+    width, height = image.size
+    sx, sy = width / size, height / size
+    min_side = min_box_fraction * min(width, height)
+    leaves = []
+    for box, score, label in zip(boxes, scores, labels):
+        if int(label) != detector.manifest["leaf_label"] or float(score) < score_threshold:
+            continue
+        x1, y1, x2, y2 = float(box[0]) * sx, float(box[1]) * sy, float(box[2]) * sx, float(box[3]) * sy
+        if min(x2 - x1, y2 - y1) < min_side:
+            continue
+        leaves.append(Leaf((x1, y1, x2, y2), float(score)))
+    leaves.sort(key=lambda leaf: leaf.score, reverse=True)
+    return leaves[:max_leaves]
+
+
+def square_crop_box(box, image_size, pad_fraction: float = 0.1) -> tuple[int, int, int, int]:
+    """Same as src/detection/leaf_detector.py:square_crop_box: a padded
+    square around the leaf, clamped to the photo. The classifier squashes
+    its input to a square, and PlantVillage leaves sit in a square frame
+    with a margin, so a square crop avoids stretching the leaf.
+    """
+    width, height = image_size
+    x1, y1, x2, y2 = box
+    cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+    side = min(max(x2 - x1, y2 - y1) * (1 + 2 * pad_fraction), width, height)
+    left = min(max(cx - side / 2, 0), width - side)
+    top = min(max(cy - side / 2, 0), height - side)
+    return int(round(left)), int(round(top)), int(round(left + side)), int(round(top + side))
+
+
+def crop_leaf(image: Image.Image, leaf: Leaf) -> Image.Image:
+    return image.convert("RGB").crop(square_crop_box(leaf.box, image.size))
+
+
+def draw_leaves(image: Image.Image, leaves: list[Leaf], tiers: list[str]) -> Image.Image:
+    """The photo with each leaf boxed and numbered (1, 2, ...), coloured by
+    its result tier, matching the numbered result cards.
+    """
+    annotated = image.convert("RGB").copy()
+    draw = ImageDraw.Draw(annotated)
+    line = max(2, round(min(annotated.size) / 150))
+    font_size = max(14, round(min(annotated.size) / 20))
+    try:
+        font = ImageFont.load_default(size=font_size)
+    except TypeError:  # Pillow < 10.1 has no sized default font
+        font = ImageFont.load_default()
+    for number, (leaf, tier) in enumerate(zip(leaves, tiers), start=1):
+        color = TIER_COLORS.get(tier, "#1565c0")
+        x1, y1, x2, y2 = leaf.box
+        draw.rectangle((x1, y1, x2, y2), outline=color, width=line)
+        label = str(number)
+        tx1, ty1, tx2, ty2 = draw.textbbox((0, 0), label, font=font)
+        pad = line
+        tag = (x1, max(y1 - (ty2 - ty1) - 2 * pad, 0))
+        draw.rectangle((tag[0], tag[1], tag[0] + (tx2 - tx1) + 2 * pad, tag[1] + (ty2 - ty1) + 2 * pad), fill=color)
+        draw.text((tag[0] + pad - tx1, tag[1] + pad - ty1), label, fill="white", font=font)
+    return annotated
