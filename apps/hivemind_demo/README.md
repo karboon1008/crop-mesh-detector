@@ -54,14 +54,18 @@ The detector is SSDLite320-MobileNetV3: COCO-pretrained weights, fine-tuned with
 "leaf" class. It is shared by every farm and is **not** part of the mesh, so nothing about
 the HiveMind knowledge sharing changes.
 
-**Turning it on.** The app looks for `models/detector/detector.onnx` +
-`models/detector/detector_manifest.json`. Without them, the sidebar says leaf detection is off
-and the app works exactly as before (centre-zoom, one leaf). To build them, from the repo root
-on a machine with the PlantDoc object-detection dataset (any Pascal VOC folder of leaf boxes
-works; every box counts as "leaf"):
+**Included.** `models/detector/` ships the trained detector: fine-tuned on the PlantDoc
+object-detection set (2,344 training photos), with **mAP@0.5 89.0%** (precision 85%, recall 81% at
+the 0.5 threshold) on its 236 held-out field photos. It takes ~10-20 ms per photo on a laptop
+CPU. The same files are in `outputs/pi_export/` for the Raspberry Pi. Without them, the sidebar
+says leaf detection is off, and the app works exactly as before (centre-zoom, one leaf).
+
+**Retraining it.** From the repo root (`scripts/download_plantdoc_od.py` fetches the dataset;
+any Pascal VOC folder of leaf boxes works, and every box counts as "leaf"):
 
 ```bash
 pip install -r requirements.txt   # the repo's training requirements (torch, torchvision)
+python scripts/download_plantdoc_od.py
 python -m src.detection.train_detector --train-dir <PlantDoc>/TRAIN --test-dir <PlantDoc>/TEST
 python scripts/export_detector_for_pi.py --output-dir apps/hivemind_demo/models/detector
 ```
