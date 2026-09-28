@@ -1,0 +1,41 @@
+# XcodeGen spec for the HiveMind Farmer iOS app.
+#   brew install xcodegen
+#   cd mobile/ios && xcodegen generate && open HiveMindFarmer.xcodeproj
+# Set DEVELOPMENT_TEAM below (or in Xcode > Signing & Capabilities) to your Apple team id.
+name: HiveMindFarmer
+options:
+  bundleIdPrefix: org.hivemind
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    DEVELOPMENT_TEAM: ""
+targets:
+  HiveMindFarmer:
+    type: application
+    platform: iOS
+    sources:
+      - path: HiveMindFarmer
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.hivemind.farmer
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_ENTITLEMENTS: HiveMindFarmer/HiveMindFarmer.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: HiveMind Farmer
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
+        INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: "Shows how far you are from a sick plant and guides you to it."
+    info:
+      path: HiveMindFarmer/Info.plist
+      properties:
+        UIBackgroundModes: [remote-notification]
+        # The demo server runs over plain HTTP on the local network. Use HTTPS in production.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+          NSAllowsArbitraryLoads: true

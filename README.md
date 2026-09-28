@@ -400,6 +400,17 @@ partition, or set `energy.fallback_power_watts` in `config.yaml` to a
 realistic figure for that node type — the default (15W) models a laptop CPU
 and will badly undercount a GPU-class HPC node.
 
+## Farmer mobile app and alerts
+
+`mobile/ios/` is a SwiftUI iPhone app for farmers. When a field camera finds a disease it gets a
+push notification with the plant's coordinates, a map and walking directions, what to do
+first, and buttons to mark the alert treated or a false alarm. `services/alerts/` (FastAPI +
+SQLite) receives detections from the Pi (`pi/inference_service.py --report-url`), merges
+repeat detections into one alert, pushes through APNs (or dry-run), and warns neighbouring
+farms with a rounded location only. See [`mobile/ios/README.md`](mobile/ios/README.md) to build
+and demo it, and [`docs/farmer_mobile_app.md`](docs/farmer_mobile_app.md) for the design and
+suggested next features.
+
 ## Design choices worth knowing about
 
 - **Shared backbone, two heads** (crop type + disease), not two separate
