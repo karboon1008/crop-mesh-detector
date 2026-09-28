@@ -105,7 +105,8 @@ new alerts when refreshed. To deliver real pushes:
    ```
    `use_sandbox: true` is for builds run from Xcode. TestFlight and App Store builds need `false`,
    and the entitlement set to `production`.
-3. **Enable push in the project:** add `CODE_SIGN_ENTITLEMENTS: HiveMindFarmer/HiveMindFarmer.entitlements`
-   to the target in `project.yml` (see the comment there) and run `xcodegen generate` again.
+3. **Enable push in the project:** add `CODE_SIGN_ENTITLEMENTS: push/HiveMindFarmer.entitlements`
+   and the `remote-notification` background mode to the target in `project.yml` (see the comment
+   there), and run `xcodegen generate` again.
 4. **Run the app:** on a real iPhone (the simulator can't receive APNs pushes) with Demo mode off.
    The phone registers its token with the server automatically.

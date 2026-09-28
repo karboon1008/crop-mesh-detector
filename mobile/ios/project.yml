@@ -4,9 +4,10 @@
 # Set DEVELOPMENT_TEAM below (or in Xcode > Signing & Capabilities) to your Apple team id.
 #
 # Builds with a free Apple ID: the demo's simulated notifications are local and need no push
-# entitlement. For real APNs pushes (paid Apple Developer account), add this under the
-# target's settings.base and regenerate:
-#   CODE_SIGN_ENTITLEMENTS: HiveMindFarmer/HiveMindFarmer.entitlements
+# entitlement. For real APNs pushes (paid Apple Developer account), add these under the
+# target's settings.base / info.properties and regenerate:
+#   CODE_SIGN_ENTITLEMENTS: push/HiveMindFarmer.entitlements
+#   UIBackgroundModes: [remote-notification]
 name: HiveMindFarmer
 options:
   bundleIdPrefix: org.hivemind
@@ -38,7 +39,6 @@ targets:
     info:
       path: HiveMindFarmer/Info.plist
       properties:
-        UIBackgroundModes: [remote-notification]
         # The demo server runs over plain HTTP on the local network. Use HTTPS in production.
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
