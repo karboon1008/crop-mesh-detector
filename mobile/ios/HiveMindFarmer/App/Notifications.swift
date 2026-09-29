@@ -7,9 +7,9 @@ import UserNotifications
 final class AppRouter: ObservableObject {
     static let shared = AppRouter()
 
-    enum Tab: Hashable { case alerts, map, fields, settings }
+    enum Tab: Hashable { case home, alerts, map, fields, settings }
 
-    @Published var tab: Tab = .alerts
+    @Published var tab: Tab = .home
     @Published var alertPath: [Int] = []
 
     func openAlert(_ id: Int) {

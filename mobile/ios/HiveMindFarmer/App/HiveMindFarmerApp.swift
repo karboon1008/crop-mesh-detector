@@ -17,7 +17,7 @@ struct HiveMindFarmerApp: App {
                 .environmentObject(settings)
                 .environmentObject(router)
                 .environmentObject(location)
-                .tint(Color.accentColor)
+                .tint(Theme.brand)
                 .task { await store.refresh() }
         }
         .onChange(of: scenePhase) { _, phase in

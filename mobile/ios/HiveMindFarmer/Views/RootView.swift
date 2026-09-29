@@ -6,6 +6,9 @@ struct RootView: View {
 
     var body: some View {
         TabView(selection: $router.tab) {
+            HomeView()
+                .tabItem { Label("Home", systemImage: "house.fill") }
+                .tag(AppRouter.Tab.home)
             AlertsView()
                 .tabItem { Label("Alerts", systemImage: "exclamationmark.bubble.fill") }
                 .badge(store.newAlertCount)
