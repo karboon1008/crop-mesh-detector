@@ -220,9 +220,9 @@ struct HomeView: View {
 
 // MARK: - Disease coverage
 
-/// The area a disease covers, estimated from where it was detected: the outline around every
-/// detection position plus a margin, or, with fewer than three distinct positions, a circle
-/// that grows with how often it was seen.
+/// The area a disease covers, estimated from where it was detected: a circle that grows with
+/// how often it was seen (and reaches every detection), or, when the detections spread wider
+/// than that, the outline around them plus a margin.
 struct DiseaseCoverage: Identifiable {
     let alert: DiseaseAlert
     let center: CLLocationCoordinate2D
@@ -249,25 +249,37 @@ struct DiseaseCoverage: Identifiable {
         let local = points.map { CGPoint(x: ($0.longitude - center.longitude) * metresPerLon,
                                          y: ($0.latitude - center.latitude) * metresPerLat) }
         let hull = Self.convexHull(local)
+        let spread = Double(local.map { hypot($0.x, $0.y) }.max() ?? 0)
+        let circleRadius = max(spread + Self.margin, min(15 + 4 * Double(alert.detectionCount), 60))
+        let circleArea = Double.pi * circleRadius * circleRadius
 
+        var polygon: (outline: [CLLocationCoordinate2D], radius: Double, area: Double)?
         if hull.count >= 3 {
             let grown = hull.map { p -> CGPoint in
                 let d = hypot(p.x, p.y)
                 let scale = d == 0 ? 1 : (d + CGFloat(Self.margin)) / d
                 return CGPoint(x: p.x * scale, y: p.y * scale)
             }
-            outline = grown.map { CLLocationCoordinate2D(latitude: center.latitude + $0.y / metresPerLat,
-                                                         longitude: center.longitude + $0.x / metresPerLon) }
-            radius = Double(grown.map { hypot($0.x, $0.y) }.max() ?? 0)
             let twiceArea = zip(grown, Array(grown.dropFirst()) + [grown[0]])
                 .reduce(CGFloat(0)) { $0 + ($1.0.x * $1.1.y - $1.1.x * $1.0.y) }
-            areaM2 = Double(abs(twiceArea)) / 2
+            polygon = (
+                grown.map { CLLocationCoordinate2D(latitude: center.latitude + Double($0.y) / metresPerLat,
+                                                   longitude: center.longitude + Double($0.x) / metresPerLon) },
+                Double(grown.map { hypot($0.x, $0.y) }.max() ?? 0),
+                Double(abs(twiceArea)) / 2
+            )
+        }
+
+        // the outline only when it says more than the detection count does, so a disease
+        // seen more often never looks smaller
+        if let polygon, polygon.area > circleArea {
+            outline = polygon.outline
+            radius = polygon.radius
+            areaM2 = polygon.area
         } else {
-            let spread = Double(local.map { hypot($0.x, $0.y) }.max() ?? 0)
-            let byCount = min(15 + 4 * Double(alert.detectionCount), 60)
             outline = nil
-            radius = max(spread + Self.margin, byCount)
-            areaM2 = .pi * radius * radius
+            radius = circleRadius
+            areaM2 = circleArea
         }
     }
 
