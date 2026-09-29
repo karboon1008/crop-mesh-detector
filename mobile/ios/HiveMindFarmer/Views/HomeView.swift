@@ -289,9 +289,14 @@ struct DiseaseCoverage: Identifiable {
 
     /// Andrew's monotone chain, counter-clockwise, without repeated points.
     private static func convexHull(_ points: [CGPoint]) -> [CGPoint] {
-        let sorted = Array(Set(points.map { SIMD2(Double($0.x), Double($0.y)) }))
-            .sorted { $0.x != $1.x ? $0.x < $1.x : $0.y < $1.y }
-            .map { CGPoint(x: $0.x, y: $0.y) }
+        var seen = Set<SIMD2<Double>>()
+        var unique: [CGPoint] = []
+        for p in points where seen.insert(SIMD2<Double>(Double(p.x), Double(p.y))).inserted {
+            unique.append(p)
+        }
+        let sorted = unique.sorted { (a: CGPoint, b: CGPoint) -> Bool in
+            a.x != b.x ? a.x < b.x : a.y < b.y
+        }
         guard sorted.count >= 3 else { return sorted }
         func cross(_ o: CGPoint, _ a: CGPoint, _ b: CGPoint) -> CGFloat {
             (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
