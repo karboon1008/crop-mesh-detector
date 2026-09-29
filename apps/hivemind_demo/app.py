@@ -6,6 +6,7 @@ Run in Docker: docker compose up --build   -> http://localhost:8502
 """
 from __future__ import annotations
 
+import io
 import json
 from datetime import datetime
 from pathlib import Path
@@ -16,6 +17,7 @@ from PIL import Image
 import db
 import inference
 import leaf_detection
+import phone_alerts
 from live_camera import live_camera
 
 HERE = Path(__file__).resolve().parent
@@ -105,6 +107,29 @@ with st.sidebar:
         st.caption(f"Stage 1: SSDLite-MobileNetV3 leaf detector (COCO-initialised, fine-tuned on leaf "
                    f"boxes{map_text}). It is shared by every farm and not part of the mesh.")
 
+    st.header("Phone alerts")
+    alerts_on = st.toggle("Alert my phone when a disease is found", value=True,
+                          help="Sends a push notification through the free ntfy app, with the diagnosis, "
+                               "the field's coordinates, a Navigate button and the photo.")
+    ntfy_server = phone_alerts.default_server()
+    ntfy_topic = st.text_input("ntfy topic", phone_alerts.default_topic(HERE / "data"),
+                               help="Anyone who knows this name can read the alerts, so keep it long and random.")
+    default_name, default_lat, default_lon = phone_alerts.default_field()
+    field_name = st.text_input("Field name", default_name)
+    lat_col, lon_col = st.columns(2)
+    field_lat = lat_col.number_input("Latitude", -90.0, 90.0, default_lat, format="%.5f")
+    field_lon = lon_col.number_input("Longitude", -180.0, 180.0, default_lon, format="%.5f")
+    st.caption(f"**On the phone:** install the free **ntfy** app, tap **+** and subscribe to "
+               f"`{ntfy_topic}` (server {ntfy_server.removeprefix('https://')}). Allow notifications.")
+    if st.button("Send a test alert"):
+        try:
+            phone_alerts.send(ntfy_server, ntfy_topic, "HiveMind test alert",
+                              f"Phone alerts work. Field: {field_name} ({field_lat:.5f}, {field_lon:.5f})",
+                              field_lat, field_lon, field_name)
+            st.success("Test alert sent. Check the phone.")
+        except Exception as e:
+            st.error(f"Could not send: {e}")
+
     collect_mode = False
     if detector is not None:
         st.header("Retraining photos")
@@ -117,6 +142,24 @@ with st.sidebar:
             collect_folder = st.text_input("Folder name", "room").strip() or "room"
             collect_folder = "".join(c for c in collect_folder if c.isalnum() or c in "-_") or "room"
             collect_dir = NEGATIVES_DIR / collect_folder
+
+def send_phone_alert(results: list[dict], image: Image.Image) -> None:
+    """One ntfy push per diagnosed photo that has at least one diseased leaf."""
+    if not alerts_on or not ntfy_topic:
+        return
+    alert = phone_alerts.build_alert(results, field_name, field_lat, field_lon)
+    if alert is None:
+        return
+    photo = image.convert("RGB")
+    photo.thumbnail((1280, 1280))
+    buf = io.BytesIO()
+    photo.save(buf, format="JPEG", quality=85)
+    try:
+        phone_alerts.send(ntfy_server, ntfy_topic, *alert, field_lat, field_lon, field_name, buf.getvalue())
+        st.toast("Phone alert sent", icon="📱")
+    except Exception as e:  # no internet etc.: the diagnosis still shows, only the push is lost
+        st.warning(f"Phone alert not sent: {e}")
+
 
 try:
     session = get_session(chosen["path"])
@@ -208,6 +251,9 @@ with right:
                     )
                 st.session_state["last_photo_id"] = photo_id
                 st.session_state["last_leaf_results"] = (targets, results)
+                alert_photo = (leaf_detection.draw_leaves(image, leaves, [r["tier"] for r in results], box_style)
+                               if leaves else image)
+                send_phone_alert(results, alert_photo)
 
         targets, results = st.session_state.get("last_leaf_results", ([], []))
         if results:
@@ -250,6 +296,7 @@ with right:
                 )
                 st.session_state["last_photo_id"] = photo_id
                 st.session_state["last_result"] = result
+                send_phone_alert([result], image)
 
         result = st.session_state.get("last_result")
         if result is not None:

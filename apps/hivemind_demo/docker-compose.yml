@@ -6,3 +6,9 @@ services:
       - "8502:8501"
     volumes:
       - ./data:/app/data   # detections.db stays on the host
+    environment:           # phone alerts (ntfy); all optional, the sidebar can change them too
+      NTFY_SERVER: ${NTFY_SERVER:-https://ntfy.sh}
+      NTFY_TOPIC: ${NTFY_TOPIC:-}      # empty: a random topic is created once in data/ntfy_topic.txt
+      FIELD_NAME: ${FIELD_NAME:-Tomato greenhouse A}
+      FIELD_LAT: ${FIELD_LAT:-4.47212}
+      FIELD_LON: ${FIELD_LON:-101.37913}

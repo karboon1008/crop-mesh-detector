@@ -181,3 +181,47 @@ def test_live_camera_flags_collect_frames(monkeypatch):
     photo = live_camera.live_camera(detector, 0.5, collect=True, collected=12, collect_target=400)
     assert photo.collect and photo.file_id == "camera-5"
     assert (seen["collect"], seen["collected"], seen["collect_target"], seen["collect_interval_ms"]) == (True, 12, 400, 500)
+
+
+def test_phone_alert_text_and_ntfy_request(tmp_path, monkeypatch):
+    import http.server
+    import threading
+
+    import phone_alerts
+
+    healthy = {"tier": "healthy", "predicted_crop": "Tomato", "predicted_disease": "healthy", "disease_confidence": 0.99}
+    sick = {"tier": "diseased", "predicted_crop": "Pepper,_bell", "predicted_disease": "Bacterial_spot",
+            "disease_confidence": 0.81}
+    assert phone_alerts.build_alert([healthy], "A", 1.0, 2.0) is None  # nothing diseased: no alert
+    title, message = phone_alerts.build_alert([healthy, sick], "Greenhouse A", 4.47212, 101.37913)
+    assert title == "Disease detected: Pepper bell bacterial spot"
+    assert "1. Pepper bell: Bacterial spot (81%)" in message and "(4.47212, 101.37913)" in message
+    assert "," not in phone_alerts.maps_url(4.1, 101.2, "x").split("?", 1)[1]  # commas would break Actions
+
+    seen = {}
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_PUT(self):
+            seen.update(method="PUT", path=self.path, headers=dict(self.headers),
+                        body=self.rfile.read(int(self.headers["Content-Length"])))
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.handle_request, daemon=True).start()
+    phone_alerts.send(f"http://127.0.0.1:{server.server_port}", "hm-topic", title, message, 4.47212, 101.37913,
+                      "Greenhouse A", image_jpeg=b"\xff\xd8jpeg")
+    server.server_close()
+    assert seen["method"] == "PUT" and seen["path"] == "/hm-topic" and seen["body"] == b"\xff\xd8jpeg"
+    assert seen["headers"]["Title"] == title and "\\n" in seen["headers"]["Message"]
+    assert seen["headers"]["Actions"].startswith("view, Navigate to field, https://maps.apple.com/")
+
+    monkeypatch.delenv("NTFY_TOPIC", raising=False)
+    topic = phone_alerts.default_topic(tmp_path)
+    assert topic.startswith("hivemind-farm-") and len(topic) > 20
+    assert phone_alerts.default_topic(tmp_path) == topic  # kept across restarts
+    monkeypatch.setenv("NTFY_TOPIC", "from-env")
+    assert phone_alerts.default_topic(tmp_path) == "from-env"

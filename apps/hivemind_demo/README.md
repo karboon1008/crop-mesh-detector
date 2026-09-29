@@ -125,6 +125,29 @@ Each epoch prints mAP@0.5 and the false-alarm rate on the held-out negatives. Th
 the one with the best mAP@0.5 x (1 - false-alarm rate). Photos you then use to test the demo
 must not be in the negatives folder, or the "after" number will look better than it is.
 
+## Phone alerts (ntfy, free)
+
+When a photo or camera capture has a **diseased** leaf, the dashboard sends a push notification to
+your phone through **ntfy** (https://ntfy.sh), a free push service. No Apple developer account is
+needed, and it works with the phone locked. The notification has:
+- the diagnosis of each diseased leaf,
+- the field's name and coordinates, and tapping it opens Apple Maps there,
+- a **Navigate to field** button,
+- the photo with the leaves boxed.
+
+**Set it up once:**
+1. On the phone, install **ntfy** (free, App Store / Google Play).
+2. On the dashboard, the sidebar's **Phone alerts** section shows a topic like
+   `hivemind-farm-3fa9c1b2d4`. In the ntfy app, tap **+**, enter that topic (server
+   `ntfy.sh`), and allow notifications.
+3. Press **Send a test alert**. The phone should buzz within a second or two.
+
+Set the field's name and coordinates in the same section (default: a demo greenhouse in Cameron
+Highlands), or in `docker-compose.yml` via `FIELD_NAME`, `FIELD_LAT`, `FIELD_LON`. The topic is
+created once and kept in `data/ntfy_topic.txt`; set `NTFY_TOPIC` to fix it. Anyone who knows the
+topic can read the alerts on ntfy.sh, so keep it long and random. The dashboard needs internet
+access to send.
+
 ## Live camera
 
 With leaf detection on, **Use the camera** is a live view: the leaf detector runs in the browser

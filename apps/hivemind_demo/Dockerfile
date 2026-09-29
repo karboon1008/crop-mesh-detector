@@ -4,7 +4,7 @@ FROM python:3.11-slim
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY app.py inference.py db.py leaf_detection.py live_camera.py ./
+COPY app.py inference.py db.py leaf_detection.py live_camera.py phone_alerts.py ./
 COPY live_camera_web ./live_camera_web
 COPY models ./models
 EXPOSE 8501
