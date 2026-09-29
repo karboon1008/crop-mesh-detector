@@ -205,7 +205,6 @@ with st.sidebar:
             help="Each farm's final model. The percentage is its held-out accuracy "
                  "(crop and condition both right on unseen photos).",
         )
-        st.markdown(f"**Held-out accuracy:** {chosen['heldout_acc']:.1%}  \n**Size:** {chosen['size_mb']} MB")
         if chosen["path"] != BEST["path"]:
             st.caption(f"★ The most accurate model is {model_name(BEST)} ({BEST['heldout_acc']:.1%}).")
 
