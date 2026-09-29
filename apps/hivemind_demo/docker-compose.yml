@@ -29,3 +29,12 @@ services:
       - "8080:8080"        # the iPhone app (Simulator: http://localhost:8080)
     volumes:
       - ./data/alerts:/app/services/alerts/data   # alerts.db stays on the host
+
+  # HiveMind Studio, the interactive 3D hive: http://localhost:8503
+  # Start it on its own with: docker compose up studio
+  studio:
+    image: nginx:1.27-alpine
+    ports:
+      - "8503:80"
+    volumes:
+      - ./studio:/usr/share/nginx/html:ro

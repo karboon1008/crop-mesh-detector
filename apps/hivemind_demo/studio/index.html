@@ -1,0 +1,1568 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- HiveMind Studio: a standalone copy of the interactive 3D hive demo. three.js is bundled in vendor/, so the
+     3D view works offline; the Google fonts fall back to system fonts without internet. -->
+<style>html, body { margin: 0; } img { max-width: 100%; } [hidden] { display: none !important; }</style>
+<title>HiveMind Studio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: control room — config rail on the left, live 3D hive on the right, the append-only knowledge table and its provenance below. */
+:root {
+  --bg: #0E1C15;          /* night field */
+  --panel: #152920;       /* raised panel */
+  --panel-2: #1C352A;     /* inset / hover */
+  --line: #2C4A3B;        /* hairlines */
+  --fg: #EEF2E9;          /* primary text */
+  --muted: #A9C1B3;       /* secondary text */
+  --honey: #EBB43F;       /* the hive accent */
+  --honey-ink: #1B1405;   /* text on honey */
+  --ok: #6FCB8F;
+  --warn: #F08A5D;
+  --font-display: 'Bricolage Grotesque', 'Trebuchet MS', sans-serif;
+  --font-body: 'IBM Plex Sans', Arial, sans-serif;
+  --font-mono: 'IBM Plex Mono', 'Courier New', monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.5; padding-inline: 20px; padding-block: 20px 40px; }
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; }
+button, input, select { font: inherit; }
+:focus-visible { outline: 2px solid var(--honey); outline-offset: 2px; }
+.wrap { max-width: 1440px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
+
+header.top { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px 24px; }
+header.top h1 { font-size: clamp(28px, 4vw, 44px); font-weight: 700; letter-spacing: -0.5px; }
+header.top h1 span { color: var(--honey); }
+header.top p { margin: 4px 0 0; color: var(--muted); max-width: 70ch; }
+.pill { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; color: var(--muted); font-size: 13px; }
+.pill b { color: var(--fg); font-weight: 600; }
+
+.main { display: grid; grid-template-columns: minmax(300px, 380px) minmax(0, 1fr); gap: 20px; align-items: start; }
+@media (max-width: 900px) { .main { grid-template-columns: minmax(0, 1fr); } .stage { position: relative; top: 0; } }
+[hidden] { display: none !important; }
+
+.rail { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.card h2 { font-size: 17px; font-weight: 700; display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.card h2 small { font-family: var(--font-body); font-weight: 400; font-size: 12px; color: var(--muted); }
+.label { font-size: 12px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--muted); }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.help { font-size: 13px; color: var(--muted); margin: 0; }
+
+select, input[type=text] { background: var(--panel-2); color: var(--fg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; min-width: 0; flex: 1; }
+
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { display: inline-flex; flex-direction: column; gap: 2px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; cursor: grab; user-select: none; color: var(--fg); text-align: left; }
+.chip:active { cursor: grabbing; }
+.chip b { font-size: 14px; }
+.chip span { font-size: 12px; color: var(--muted); font-family: var(--font-mono); }
+.chip[aria-pressed="true"] { border-color: var(--honey); box-shadow: 0 0 0 1px var(--honey) inset; }
+
+.dropzone { border: 1.5px dashed var(--line); border-radius: 12px; padding: 14px; display: flex; align-items: center; justify-content: space-between; gap: 10px; transition: border-color .15s, background .15s; }
+.dropzone.over { border-color: var(--honey); background: rgba(235,180,63,.08); }
+.dropzone .slot b { font-family: var(--font-display); font-size: 18px; }
+.dropzone .slot { display: flex; flex-direction: column; min-width: 0; }
+
+.slider { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 4px 12px; align-items: center; }
+.slider output { font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--honey); font-size: 15px; }
+.slider input[type=range] { grid-column: 1 / -1; width: 100%; accent-color: var(--honey); }
+.wma-bars { display: flex; align-items: end; gap: 4px; height: 44px; }
+.wma-bars div { flex: 1; background: var(--honey); border-radius: 3px 3px 0 0; opacity: .85; min-height: 2px; }
+.wma-axis { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); font-family: var(--font-mono); }
+
+.upload { border: 1.5px dashed var(--line); border-radius: 12px; padding: 14px; text-align: center; color: var(--muted); cursor: pointer; transition: border-color .15s, background .15s; }
+.upload.over { border-color: var(--honey); background: rgba(235,180,63,.08); }
+.upload strong { color: var(--fg); }
+.thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 8px; }
+.thumb { position: relative; border-radius: 8px; overflow: hidden; aspect-ratio: 1; max-width: 100%; background: var(--panel-2); border: 1px solid var(--line); }
+.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.thumb .tag { position: absolute; left: 4px; right: 4px; bottom: 4px; font-size: 11px; font-family: var(--font-mono); border-radius: 5px; padding: 1px 4px; text-align: center; }
+.thumb .tag.ok { background: var(--ok); color: #0C2415; }
+.thumb .tag.no { background: var(--warn); color: #2A0E03; }
+.tally { display: flex; gap: 14px; font-size: 13px; color: var(--muted); }
+.tally b { color: var(--fg); font-variant-numeric: tabular-nums; }
+
+.btn { border: 0; border-radius: 10px; padding: 11px 14px; font-weight: 600; cursor: pointer; }
+.btn.primary { background: var(--honey); color: var(--honey-ink); }
+.btn.primary:disabled { opacity: .45; cursor: not-allowed; }
+.btn.ghost { background: transparent; color: var(--fg); border: 1px solid var(--line); }
+.btn.ghost:hover { background: var(--panel-2); }
+.why { font-size: 12px; color: var(--warn); min-height: 1em; margin: 0; }
+
+.stage { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 12px); background: linear-gradient(180deg, #A9D6EE 0%, #C9E3DC 45%, #4E7F3A 100%); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; height: min(72vh, 680px); min-height: 380px; min-width: 0; }
+.stage canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+.stage.over { box-shadow: 0 0 0 2px var(--honey) inset; }
+.overlay { position: absolute; inset: 0; pointer-events: none; }
+.nlabel { position: absolute; transform: translate(-50%, -100%); font-size: 11px; font-family: var(--font-mono); white-space: nowrap; color: var(--fg); background: rgba(14,28,21,.72); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; }
+.nlabel.me { border-color: var(--honey); color: var(--honey); }
+.plotlabel.me { background: var(--honey); color: var(--honey-ink); border-color: #8A5A10; }
+.plotlabel { position: absolute; transform: translate(-50%, -100%); background: #8A5A2B; color: #FFF3DC; border: 2px solid #5E3B18; border-radius: 5px; padding: 1px 8px; font-family: var(--font-display); font-weight: 700; font-size: 12px; white-space: nowrap; box-shadow: 0 2px 0 #5E3B18; }
+.hublabel { position: absolute; transform: translate(-50%, -100%); font-family: var(--font-display); font-weight: 700; color: var(--honey-ink); background: var(--honey); border-radius: 999px; padding: 2px 10px; font-size: 13px; white-space: nowrap; }
+.stage-hud { position: absolute; left: 14px; top: 14px; display: flex; flex-direction: column; gap: 8px; pointer-events: none; max-width: calc(100% - 28px); }
+.stage-hud .pill { background: rgba(14,28,21,.8); }
+.stage-actions { position: absolute; right: 14px; bottom: 14px; display: flex; gap: 8px; flex-wrap: wrap; justify-content: end; }
+.stage-actions .btn { background: rgba(21,41,32,.92); color: var(--fg); border: 1px solid var(--line); }
+.stage-actions .btn:hover { border-color: var(--honey); }
+.inspector { position: absolute; left: 14px; bottom: 14px; background: rgba(21,41,32,.94); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; width: min(300px, calc(100% - 28px)); font-size: 13px; display: flex; flex-direction: column; gap: 4px; }
+.inspector h3 { font-size: 15px; }
+.inspector dl { display: grid; grid-template-columns: auto minmax(0,1fr); gap: 2px 10px; margin: 0; }
+.inspector dt { color: var(--muted); }
+.inspector dd { margin: 0; font-family: var(--font-mono); overflow-wrap: anywhere; }
+.legend { position: absolute; right: 14px; top: 92px; display: flex; flex-direction: column; gap: 4px; background: rgba(14,28,21,.8); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; font-size: 12px; max-width: 46%; }
+.legend div { display: flex; align-items: center; gap: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.search { position: absolute; right: 14px; top: 14px; display: flex; flex-wrap: wrap; gap: 6px; width: min(360px, calc(100% - 28px)); justify-content: end; }
+.search input { flex: 1; min-width: 0; background: rgba(14,28,21,.88); color: var(--fg); border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; }
+.search input:focus { border-color: var(--honey); }
+.search .btn { padding: 9px 14px; }
+.search-msg { flex-basis: 100%; margin: 0; text-align: right; font-size: 12px; color: #1B2A20; font-weight: 600; min-height: 1em; text-shadow: 0 1px 0 rgba(255,255,255,.5); }
+.spot { position: absolute; width: 86px; height: 86px; transform: translate(-50%, -50%); pointer-events: none; animation: spotin .5s ease-out; }
+.spot i { position: absolute; width: 22px; height: 22px; border: 3px solid var(--honey); filter: drop-shadow(0 0 4px rgba(235,180,63,.9)); }
+.spot i:nth-child(1) { left: 0; top: 0; border-right: 0; border-bottom: 0; }
+.spot i:nth-child(2) { right: 0; top: 0; border-left: 0; border-bottom: 0; }
+.spot i:nth-child(3) { left: 0; bottom: 0; border-right: 0; border-top: 0; }
+.spot i:nth-child(4) { right: 0; bottom: 0; border-left: 0; border-top: 0; }
+.spot span { position: absolute; left: 50%; top: -30px; transform: translateX(-50%); background: var(--honey); color: var(--honey-ink); font: 600 12px var(--font-mono); border-radius: 6px; padding: 2px 8px; white-space: nowrap; }
+@keyframes spotin { from { transform: translate(-50%, -50%) scale(2.2); opacity: 0; } to { transform: translate(-50%, -50%) scale(1); opacity: 1; } }
+.spot.pulse i { animation: spotpulse 1s ease-in-out infinite; }
+@keyframes spotpulse { 50% { opacity: .45; } }
+.addpanel { position: absolute; right: 14px; bottom: 70px; width: min(320px, calc(100% - 28px)); background: rgba(21,41,32,.97); border: 1px solid var(--line); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.addpanel h3 { font-size: 16px; }
+.addpanel label { color: var(--muted); font-size: 12px; }
+.addpanel input, .addpanel select { width: 100%; background: var(--panel-2); color: var(--fg); border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; }
+.addpanel .col { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+@media (prefers-reduced-motion: reduce) { .spot, .spot.pulse i { animation: none; } }
+.btn.sm { padding: 5px 10px; font-size: 12px; }
+tr.editing td { background: rgba(235,180,63,.12); }
+.editor { border: 1px solid var(--honey); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 8px; background: var(--panel-2); }
+.editor-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 12px; }
+.editor h3 { font-size: 16px; }
+.editor-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
+.editor .col { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.editor label { font-size: 12px; color: var(--muted); }
+.editor input, .editor select { width: 100%; }
+.btn.danger { background: #C8553A; color: #FFF6EE; }
+.btn.danger:hover { background: #B04429; }
+.insp-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+.insp-actions .btn { padding: 8px 12px; }
+.farmcard { position: absolute; left: 0; top: 0; width: 290px; background: rgba(21,41,32,.97); border: 2px solid var(--honey); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; box-shadow: 0 10px 30px rgba(0,0,0,.35); z-index: 2; }
+.farmcard h3 { font-size: 16px; }
+.farmcard > label { color: var(--muted); font-size: 12px; }
+.farmcard input[type=text], .farmcard select { width: 100%; background: var(--panel-2); color: var(--fg); border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; }
+.farmcard .row select { flex: 1; }
+.farmcard .newdom { display: flex; flex-direction: column; gap: 4px; border-left: 2px solid var(--honey); padding-left: 10px; }
+.farmcard .newdom label { color: var(--muted); font-size: 12px; }
+.farmcard .newdom input { width: 100%; background: var(--panel-2); color: var(--fg); border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; }
+.farmcard .slider label { font-size: 13px; }
+.sw { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+
+.lower { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+@media (max-width: 1100px) { .lower { grid-template-columns: minmax(0, 1fr); } }
+
+.tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; max-height: 460px; overflow-y: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; min-width: 1080px; }
+td.mono, td:nth-child(3), td:nth-child(4) { white-space: nowrap; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+th { position: sticky; top: 0; background: var(--panel); font-weight: 600; color: var(--muted); font-size: 12px; letter-spacing: .6px; text-transform: uppercase; z-index: 1; }
+td.mono, .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+tr.new td { animation: flash 1.4s ease-out; }
+@keyframes flash { from { background: rgba(235,180,63,.22); } to { background: transparent; } }
+.dom { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.proto { display: inline-flex; align-items: center; gap: 1px; height: 22px; vertical-align: middle; }
+.proto i { display: block; width: 3px; border-radius: 1px; }
+.size { color: var(--muted); font-size: 12px; }
+.size b { color: var(--fg); font-weight: 500; }
+.badge { font-size: 11px; border: 1px solid var(--honey); color: var(--honey); border-radius: 999px; padding: 1px 8px; white-space: nowrap; }
+
+.shares { display: flex; flex-direction: column; gap: 8px; }
+.share { display: grid; grid-template-columns: minmax(0, 150px) minmax(0,1fr) 54px; gap: 8px; align-items: center; font-size: 13px; }
+.share .bar { height: 10px; background: var(--panel-2); border-radius: 5px; overflow: hidden; }
+.share .bar i { display: block; height: 100%; border-radius: 5px; }
+.share .who { font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.share .pct { font-family: var(--font-mono); text-align: right; font-variant-numeric: tabular-nums; }
+.meter { display: flex; flex-direction: column; gap: 6px; }
+.meter .track { height: 12px; background: var(--panel-2); border-radius: 6px; overflow: hidden; }
+.meter .track i { display: block; height: 100%; background: var(--honey); border-radius: 6px; transition: width .4s; }
+.log { font-family: var(--font-mono); font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; max-height: 150px; overflow-y: auto; margin: 0; padding: 0; list-style: none; }
+.log li b { color: var(--fg); font-weight: 500; }
+.note { font-size: 12px; color: var(--muted); }
+@media (prefers-reduced-motion: reduce) { tr.new td { animation: none; } }
+</style>
+
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1>Hive<span>Mind</span> Studio</h1>
+      <p>One station to set up a node, choose its backbone, threshold and weighting, add photos from its domain, and watch the knowledge join the hive, tagged with where it came from.</p>
+    </div>
+    <div class="row">
+      <span class="pill">Round <b id="roundPill">3</b></span>
+      <span class="pill">Nodes <b id="nodePill">8</b></span>
+      <span class="pill">Rows <b id="rowPill">0</b></span>
+      <span class="pill">Simulated data</span>
+    </div>
+  </header>
+
+  <div class="main">
+    <aside class="rail">
+      <section class="card" aria-labelledby="h-node">
+        <h2 id="h-node">Your node <small class="mono" id="myId">you-studio-08</small></h2>
+        <div class="label">Domain</div>
+        <div class="row">
+          <label class="label" for="crop" hidden>Crop</label>
+          <select id="crop"></select>
+          <label class="label" for="setting" hidden>Setting</label>
+          <select id="setting"></select>
+        </div>
+        <label for="tag" class="help">Optional region or custom tag</label>
+        <input type="text" id="tag" placeholder="e.g. Taiwan" maxlength="28">
+        <p class="help" id="domainNote"></p>
+      </section>
+
+      <section class="card" aria-labelledby="h-bb">
+        <h2 id="h-bb">Backbone <small>drag onto your node or any bee in 3D</small></h2>
+        <div class="chips" id="bbChips"></div>
+        <div class="dropzone" id="bbDrop">
+          <div class="slot"><span class="label">Your node runs</span><b id="bbName">Drop a backbone here</b><span class="size" id="bbMeta">or tap a card</span></div>
+          <button class="btn ghost" id="bbClear" type="button">Clear</button>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="h-tune">
+        <h2 id="h-tune">Tuning</h2>
+        <div class="slider">
+          <label for="thr">Confidence threshold</label><output id="thrOut" for="thr">0.60</output>
+          <input type="range" id="thr" min="0.30" max="0.95" step="0.01" value="0.60">
+        </div>
+        <p class="help">Photos the model is less sure about than this are left out of your prototypes, so weak guesses don't pollute the hive.</p>
+        <div class="slider">
+          <label for="wma">WMA decay per round</label><output id="wmaOut" for="wma">0.85</output>
+          <input type="range" id="wma" min="0.50" max="0.99" step="0.01" value="0.85">
+        </div>
+        <div class="wma-bars" id="wmaBars" aria-hidden="true"></div>
+        <div class="wma-axis"><span>this round</span><span>7 rounds ago</span></div>
+        <p class="help">Weight of a knowledge version = samples × decay<sup>age</sup>. Old versions fade but are never deleted.</p>
+      </section>
+
+      <section class="card" aria-labelledby="h-up">
+        <h2 id="h-up">Photos from your domain</h2>
+        <label class="upload" id="upload" for="file">
+          <strong>Drop leaf photos here</strong> or click to choose. They stay in this browser; only knowledge is published.
+        </label>
+        <input type="file" id="file" accept="image/*" multiple hidden>
+        <div class="tally"><span>Accepted <b id="accN">0</b></span><span>Below threshold <b id="rejN">0</b></span></div>
+        <div class="thumbs" id="thumbs"></div>
+        <button class="btn primary" id="publish" type="button">Publish my knowledge</button>
+        <p class="why" id="why"></p>
+      </section>
+    </aside>
+
+    <section class="stage" id="stage" aria-label="3D view of the hive: each bee is a node. Drag to rotate, scroll to zoom, click a bee to inspect it.">
+      <canvas id="gl"></canvas>
+      <div class="overlay" id="overlay"></div>
+      <div class="stage-hud">
+        <span class="pill">Each farm is a node with one bee · drag to rotate · click a farm or bee</span>
+      </div>
+      <form class="search" id="searchForm" role="search">
+        <label for="mindSearch" class="sr">Search a Mind ID to run manual learning</label>
+        <input type="search" id="mindSearch" list="mindIds" placeholder="Search a Mind ID to learn from the hive" autocomplete="off">
+        <button class="btn primary" type="submit">Learn</button>
+        <datalist id="mindIds"></datalist>
+        <p class="search-msg" id="searchMsg" aria-live="polite"></p>
+      </form>
+      <div class="spot" id="spot" hidden aria-hidden="true"><i></i><i></i><i></i><i></i><span id="spotLabel"></span></div>
+      <div class="inspector" id="inspector" hidden></div>
+      <form class="farmcard" id="farmCard" hidden>
+        <h3>Set up your new farm</h3>
+        <label for="fcId">Mind ID</label>
+        <input type="text" id="fcId" maxlength="24" required>
+        <label for="fcCrop">Domain</label>
+        <div class="row"><select id="fcCrop" aria-label="Crop"></select><select id="fcSetting" aria-label="Setting"></select></div>
+        <div class="newdom" id="fcCropNewWrap" hidden>
+          <label for="fcCropNew">New crop</label>
+          <input type="text" id="fcCropNew" maxlength="20" placeholder="e.g. Durian">
+          <label for="fcConds">Conditions it can have (comma separated)</label>
+          <input type="text" id="fcConds" maxlength="120" placeholder="e.g. Healthy, Leaf spot, Fruit rot">
+        </div>
+        <div class="newdom" id="fcSettingNewWrap" hidden>
+          <label for="fcSettingNew">New setting</label>
+          <input type="text" id="fcSettingNew" maxlength="20" placeholder="e.g. Orchard">
+        </div>
+        <label for="fcModel">Model</label>
+        <select id="fcModel"></select>
+        <div class="slider"><label for="fcThr">Threshold</label><output id="fcThrOut" for="fcThr">0.60</output><input type="range" id="fcThr" min="0.30" max="0.95" step="0.01" value="0.60"></div>
+        <div class="slider"><label for="fcWma">WMA α</label><output id="fcWmaOut" for="fcWma">0.85</output><input type="range" id="fcWma" min="0.50" max="0.99" step="0.01" value="0.85"></div>
+        <p class="why" id="fcWhy"></p>
+        <div class="row"><button class="btn primary" type="submit">Start farming</button><button class="btn ghost" type="button" id="fcCancel">Remove farm</button></div>
+      </form>
+      <div class="stage-actions">
+        <button class="btn" id="addFarm" type="button">+ Add farm</button>
+      </div>
+    </section>
+  </div>
+
+  <div class="lower">
+    <section class="card" aria-labelledby="h-db">
+      <h2 id="h-db">Hive knowledge table <span class="badge">append-only · never overwritten</span></h2>
+      <div class="row">
+        <label for="fDomain" class="help">Domain</label>
+        <select id="fDomain"></select>
+        <label for="fBackbone" class="help">Backbone</label>
+        <select id="fBackbone"></select>
+      </div>
+      <form class="editor" id="rowEditor" hidden>
+        <div class="editor-head"><h3>Edit node <span class="mono" id="edWho"></span></h3><span class="note" id="edCount"></span></div>
+        <div class="editor-fields">
+          <div class="col"><label for="edId">Mind ID</label><input type="text" id="edId" maxlength="24" required></div>
+          <div class="col"><label for="edCrop">Crop</label><select id="edCrop"></select></div>
+          <div class="col"><label for="edSetting">Setting</label><select id="edSetting"></select></div>
+        </div>
+        <p class="note">A new Mind ID renames every version from this node. A new domain applies from now on; earlier versions keep the domain they were learned in.</p>
+        <p class="why" id="edWhy"></p>
+        <div class="row"><button class="btn primary" type="submit">Save changes</button><button class="btn ghost" type="button" id="edCancel">Cancel</button></div>
+      </form>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Version</th><th>Mind ID (node_id)</th><th>domain</th><th>backbone</th><th>prototype</th><th>logits</th><th>samples</th><th>stored</th><th><span class="sr">Edit</span></th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+      <p class="note">Prototypes are stored as int8 with one scale per class; logits keep the top 3 classes per probe image. The float32 size is shown for comparison.</p>
+    </section>
+
+    <div class="rail">
+      <section class="card" aria-labelledby="h-src">
+        <h2 id="h-src">Where the knowledge comes from</h2>
+        <div class="row">
+          <label for="cDomain" class="help">Domain</label>
+          <select id="cDomain"></select>
+        </div>
+        <div class="label">Prototypes · same backbone only</div>
+        <div class="row"><label for="cBackbone" class="help">Backbone</label><select id="cBackbone"></select></div>
+        <div class="shares" id="protoShares"></div>
+        <div class="label">Logits · every backbone in the domain</div>
+        <div class="shares" id="logitShares"></div>
+        <p class="note">Shares are the WMA weights: each version's samples × decay<sup>age</sup>, summed per source node.</p>
+      </section>
+
+      <section class="card" aria-labelledby="h-store">
+        <h2 id="h-store">Storage</h2>
+        <div class="meter">
+          <div class="row" style="justify-content:space-between"><span class="help">As float32</span><span class="mono" id="rawSize">0 KB</span></div>
+          <div class="track"><i id="rawBar" style="width:100%"></i></div>
+          <div class="row" style="justify-content:space-between"><span class="help">Stored (int8 + top-3)</span><span class="mono" id="cmpSize">0 KB</span></div>
+          <div class="track"><i id="cmpBar" style="width:10%"></i></div>
+        </div>
+        <p class="help" id="saving"></p>
+      </section>
+
+      <section class="card" aria-labelledby="h-log">
+        <h2 id="h-log">Activity</h2>
+        <ul class="log" id="log"></ul>
+      </section>
+    </div>
+  </div>
+</div>
+
+<script src="vendor/three.min.js"></script>
+<script>
+(() => {
+  // ---------- model of the hive ----------
+  const BACKBONES = {
+    efficientnet_lite0: { name: 'EfficientNet-Lite0', dim: 1280, mb: 13.6 },
+    mobilenet_v3_small: { name: 'MobileNetV3-Small', dim: 1024, mb: 6.1 },
+    mobilevit_xxs:      { name: 'MobileViT-XXS',     dim: 320,  mb: 2.6 },
+  };
+  const CROPS = {
+    Tomato: ['Healthy', 'Late blight', 'Early blight', 'Leaf mold', 'Septoria leaf spot', 'Bacterial spot', 'Target spot', 'Spider mites', 'Yellow leaf curl virus', 'Mosaic virus'],
+    Apple:  ['Healthy', 'Apple scab', 'Black rot', 'Cedar apple rust'],
+    Corn:   ['Healthy', 'Common rust', 'Northern leaf blight', 'Gray leaf spot'],
+    Pepper: ['Healthy', 'Bacterial spot'],
+    Potato: ['Healthy', 'Early blight', 'Late blight'],
+    Grape:  ['Healthy', 'Black rot', 'Esca', 'Leaf blight'],
+  };
+  const SETTINGS = ['Field', 'Greenhouse', 'Lab', 'Drone'];
+  const PROBE_N = 2000, CLASS_N = 35;
+  const PALETTE = ['#6FCB8F', '#6BB6F0', '#E88FB8', '#B79CF2', '#F08A5D', '#9ED6D0', '#D9D27A', '#F2A7A0', '#8FB0F7'];
+
+  const domainColor = {};
+  function colorFor(domain) {
+    if (!domainColor[domain]) domainColor[domain] = PALETTE[Object.keys(domainColor).length % PALETTE.length];
+    return domainColor[domain];
+  }
+  function hashStr(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
+  function rng(seed) { let a = seed >>> 0; return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+  const cropOf = d => d.split(' · ')[0];
+  const settingOf = d => d.split(' · ')[1];
+
+  const state = {
+    round: 3,
+    nodes: [
+      { id: 'tw-tainan-01',  domain: 'Tomato · Field',      backbone: 'mobilenet_v3_small' },
+      { id: 'tw-chiayi-02',  domain: 'Tomato · Field',      backbone: 'efficientnet_lite0' },
+      { id: 'my-cameron-03', domain: 'Tomato · Greenhouse', backbone: 'mobilevit_xxs' },
+      { id: 'jp-aomori-04',  domain: 'Apple · Field',       backbone: 'efficientnet_lite0' },
+      { id: 'us-iowa-05',    domain: 'Corn · Drone',        backbone: 'mobilenet_v3_small' },
+      { id: 'uni-lab-06',    domain: 'Apple · Lab',         backbone: 'mobilevit_xxs' },
+      { id: 'in-pune-07',    domain: 'Pepper · Field',      backbone: 'mobilevit_xxs' },
+      { id: 'you-studio-08', domain: 'Tomato · Field',      backbone: null, me: true },
+    ].map(n => ({ threshold: 0.6, alpha: 0.85, ...n })),
+    rows: [],
+    photos: [],   // {name, url, conf, cls, ok}
+    threshold: 0.60,
+    decay: 0.85,
+  };
+  const me = () => state.nodes.find(n => n.me);
+  const nodeById = id => state.nodes.find(n => n.id === id);
+
+  function sizes(domain, backbone) {
+    const k = 1 + CROPS[cropOf(domain)].length;           // crop + its conditions the node knows
+    const dim = BACKBONES[backbone].dim;
+    const raw = k * dim * 4 + PROBE_N * CLASS_N * 4;      // float32 prototypes + full logits
+    const stored = k * (dim + 4) + PROBE_N * 3 * 2;       // int8 + scale per class, top-3 (index + int8) per probe image
+    return { k, raw, stored };
+  }
+  function makeRow(node, samples, perClass) {
+    const s = sizes(node.domain, node.backbone);
+    const r = rng(hashStr(node.id + state.round + samples));
+    const proto = Array.from({ length: 22 }, () => r() * 2 - 1);
+    const classes = CROPS[cropOf(node.domain)];
+    const ranked = perClass
+      ? Object.entries(perClass).sort((a, b) => b[1] - a[1]).map(e => e[0])
+      : classes.slice().sort(() => r() - 0.5);
+    return {
+      version: state.rows.length + 1, round: state.round, node_id: node.id, domain: node.domain, backbone: node.backbone,
+      samples, proto, top: ranked.slice(0, 3), classes: s.k, raw: s.raw, stored: s.stored, fresh: true,
+    };
+  }
+
+  // example history so the page opens in a working state
+  (function seed() {
+    for (let round = 1; round <= 3; round++) {
+      state.round = round;
+      state.nodes.filter(n => !n.me).forEach(n => {
+        const r = rng(hashStr(n.id + round));
+        if (r() < 0.85) state.rows.push({ ...makeRow(n, 40 + Math.floor(r() * 160)), fresh: false });
+      });
+    }
+    state.rows.forEach((row, i) => row.version = i + 1);
+  })();
+
+  // ---------- helpers ----------
+  const $ = id => document.getElementById(id);
+  const fmtKB = b => b >= 1e6 ? (b / 1e6).toFixed(2) + ' MB' : (b / 1e3).toFixed(1) + ' KB';
+  function log(html) {
+    const li = document.createElement('li');
+    li.innerHTML = `<span>r${state.round}</span> ${html}`;
+    $('log').prepend(li);
+    while ($('log').children.length > 40) $('log').lastChild.remove();
+  }
+  function wmaWeight(row) { return row.samples * Math.pow(state.decay, state.round - row.round); }
+
+  // ---------- controls ----------
+  Object.keys(CROPS).forEach(c => $('crop').add(new Option(c, c)));
+  SETTINGS.forEach(s => $('setting').add(new Option(s, s)));
+  function myDomain() {
+    const tag = $('tag').value.trim();
+    return `${$('crop').value} · ${$('setting').value}${tag ? ' · ' + tag : ''}`;
+  }
+  // keep crop · setting as the first two parts, so a custom tag still maps to a crop's classes
+  function setMyDomain() {
+    const n = me(); const d = myDomain();
+    if (n.domain !== d) { n.domain = d; colorFor(d); log(`<b>${n.id}</b> moved to domain <b>${d}</b>`); refreshAll(); }
+    const peers = state.nodes.filter(x => !x.me && x.domain === d).length;
+    const related = state.nodes.filter(x => !x.me && x.domain !== d && (cropOf(x.domain) === cropOf(d) || settingOf(x.domain) === settingOf(d))).length;
+    $('domainNote').textContent = `${peers} node${peers === 1 ? '' : 's'} share this domain; ${related} related node${related === 1 ? '' : 's'} (same crop or same setting) share at half weight.`;
+    reclassify();
+  }
+  ['crop', 'setting'].forEach(id => $(id).addEventListener('change', setMyDomain));
+  $('tag').addEventListener('change', setMyDomain);
+
+  Object.entries(BACKBONES).forEach(([key, b]) => {
+    const el = document.createElement('button');
+    el.type = 'button'; el.className = 'chip'; el.draggable = true; el.dataset.bb = key;
+    el.innerHTML = `<b>${b.name}</b><span>${b.dim}-d · ${b.mb} MB</span>`;
+    el.addEventListener('dragstart', e => { e.dataTransfer.setData('text/plain', 'bb:' + key); e.dataTransfer.effectAllowed = 'copy'; });
+    el.addEventListener('click', () => assignBackbone(me(), key));
+    $('bbChips').append(el);
+  });
+  function assignBackbone(node, key) {
+    if (node.backbone === key) return;
+    node.backbone = key;
+    log(`<b>${node.id}</b> now runs <b>${key ? BACKBONES[key].name : 'no backbone'}</b>`);
+    refreshAll();
+  }
+  const drop = $('bbDrop');
+  drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+  drop.addEventListener('drop', e => {
+    e.preventDefault(); drop.classList.remove('over');
+    const d = e.dataTransfer.getData('text/plain');
+    if (d.startsWith('bb:')) assignBackbone(me(), d.slice(3));
+  });
+  $('bbClear').addEventListener('click', () => assignBackbone(me(), null));
+
+  $('thr').addEventListener('input', e => { state.threshold = +e.target.value; $('thrOut').textContent = state.threshold.toFixed(2); reclassify(); });
+  $('wma').addEventListener('input', e => { state.decay = +e.target.value; $('wmaOut').textContent = state.decay.toFixed(2); drawWma(); renderShares(); });
+  function drawWma() {
+    $('wmaBars').innerHTML = Array.from({ length: 8 }, (_, age) => `<div style="height:${Math.max(4, Math.pow(state.decay, age) * 100)}%"></div>`).join('');
+  }
+
+  // photos: simulated diagnosis, deterministic per file
+  const up = $('upload');
+  ['dragover', 'dragenter'].forEach(ev => up.addEventListener(ev, e => { e.preventDefault(); up.classList.add('over'); }));
+  up.addEventListener('dragleave', () => up.classList.remove('over'));
+  up.addEventListener('drop', e => { e.preventDefault(); up.classList.remove('over'); addFiles(e.dataTransfer.files); });
+  $('file').addEventListener('change', e => { addFiles(e.target.files); e.target.value = ''; });
+  function addFiles(list) {
+    const files = [...list].filter(f => f.type.startsWith('image/')).slice(0, 40);
+    if (!files.length) { $('why').textContent = 'Those files are not images. Add JPG or PNG leaf photos.'; return; }
+    files.forEach(f => {
+      const h = hashStr(f.name + f.size);
+      state.photos.push({ name: f.name, url: URL.createObjectURL(f), conf: 0.35 + (h % 600) / 1000, h });
+    });
+    log(`added <b>${files.length}</b> photo${files.length === 1 ? '' : 's'} to <b>${me().id}</b>`);
+    reclassify();
+  }
+  function reclassify() {
+    const classes = CROPS[cropOf(me().domain)];
+    state.photos.forEach(p => { p.cls = classes[p.h % classes.length]; p.ok = p.conf >= state.threshold; });
+    $('thumbs').innerHTML = state.photos.map(p => `<div class="thumb" title="${p.name}: ${p.cls}, ${(p.conf * 100).toFixed(0)}%"><img src="${p.url}" alt="${p.name}"><span class="tag ${p.ok ? 'ok' : 'no'}">${(p.conf * 100).toFixed(0)}% ${p.ok ? 'kept' : 'skip'}</span></div>`).join('');
+    $('accN').textContent = state.photos.filter(p => p.ok).length;
+    $('rejN').textContent = state.photos.filter(p => !p.ok).length;
+    updatePublish();
+  }
+  function updatePublish() {
+    const n = me(); const ok = state.photos.filter(p => p.ok).length;
+    let why = '';
+    if (!n.backbone) why = 'Choose a backbone for your node first.';
+    else if (!state.photos.length) why = 'Add photos from your domain to publish knowledge.';
+    else if (!ok) why = 'No photo passes the threshold. Lower it or add clearer photos.';
+    $('publish').disabled = !!why;
+    $('why').textContent = why;
+  }
+  $('publish').addEventListener('click', () => {
+    const n = me(); const kept = state.photos.filter(p => p.ok);
+    const perClass = {}; kept.forEach(p => perClass[p.cls] = (perClass[p.cls] || 0) + 1);
+    const row = makeRow(n, kept.length, perClass);
+    state.rows.push(row);
+    fly(n.id, 'hub', colorFor(n.domain), n.domain);
+    log(`<b>${n.id}</b> published v${row.version}: ${kept.length} samples, ${row.classes} class prototypes (${fmtKB(row.stored)})`);
+    refreshAll();
+  });
+
+  // ---------- table, provenance, storage ----------
+  function fillSelect(sel, items, keep, allLabel) {
+    const prev = keep ?? sel.value;
+    sel.innerHTML = '';
+    if (allLabel) sel.add(new Option(allLabel, ''));
+    items.forEach(([v, l]) => sel.add(new Option(l, v)));
+    if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
+  }
+  function renderFilters() {
+    const domains = [...new Set(state.nodes.map(n => n.domain).concat(state.rows.map(r => r.domain)))].filter(Boolean);
+    fillSelect($('fDomain'), domains.map(d => [d, d]), null, 'All domains');
+    fillSelect($('fBackbone'), Object.entries(BACKBONES).map(([k, b]) => [k, b.name]), null, 'All backbones');
+    const withRows = [...new Set(state.rows.map(r => r.domain))];
+    fillSelect($('cDomain'), withRows.map(d => [d, d]), $('cDomain').value || me().domain);
+    fillSelect($('cBackbone'), Object.entries(BACKBONES).map(([k, b]) => [k, b.name]), $('cBackbone').value || 'mobilenet_v3_small');
+  }
+  ['fDomain', 'fBackbone'].forEach(id => $(id).addEventListener('change', renderTable));
+  ['cDomain', 'cBackbone'].forEach(id => $(id).addEventListener('change', renderShares));
+
+  function protoBars(v) {
+    return `<span class="proto" aria-label="prototype preview">${v.map(x => `<i style="height:${4 + Math.abs(x) * 18}px;background:${x >= 0 ? 'var(--honey)' : 'var(--muted)'}"></i>`).join('')}</span>`;
+  }
+  let editId = null;
+  Object.keys(CROPS).forEach(c => $('edCrop').add(new Option(c, c)));
+  SETTINGS.forEach(v => $('edSetting').add(new Option(v, v)));
+  $('rows').addEventListener('click', e => {
+    const b = e.target.closest('[data-edit]'); if (!b) return;
+    const n = nodeById(b.dataset.edit); if (!n) return;
+    editId = n.id;
+    $('edWho').textContent = n.id; $('edId').value = n.id; $('edWhy').textContent = '';
+    if (n.domain) { $('edCrop').value = cropOf(n.domain); $('edSetting').value = settingOf(n.domain); }
+    const v = state.rows.filter(r => r.node_id === n.id).length;
+    $('edCount').textContent = `${v} version${v === 1 ? '' : 's'} in the table · now ${n.domain || 'no domain'}`;
+    $('rowEditor').hidden = false; renderTable(); $('edId').focus();
+  });
+  $('edCancel').addEventListener('click', () => { editId = null; $('rowEditor').hidden = true; renderTable(); });
+  $('rowEditor').addEventListener('submit', e => {
+    e.preventDefault();
+    const n = nodeById(editId); if (!n) { $('edWhy').textContent = 'This farm is no longer in the hive.'; return; }
+    const oldId = n.id, newId = $('edId').value.trim().toLowerCase();
+    const newDomain = `${$('edCrop').value} · ${$('edSetting').value}`;
+    if (!/^[a-z0-9-]{3,24}$/.test(newId)) { $('edWhy').textContent = 'Mind ID: use 3–24 lowercase letters, digits or dashes.'; return; }
+    if (newId !== oldId && nodeById(newId)) { $('edWhy').textContent = `${newId} is already in the hive. Pick another Mind ID.`; return; }
+    const changes = [];
+    if (newId !== oldId) {
+      renameNode(oldId, newId);
+      state.rows.forEach(r => { if (r.node_id === oldId) r.node_id = newId; });
+      changes.push(`renamed <b>${oldId}</b> to <b>${newId}</b>`);
+    }
+    if (newDomain !== n.domain) {
+      const was = n.domain || 'no domain';
+      n.domain = newDomain; colorFor(newDomain);
+      if (n.me) { $('crop').value = cropOf(newDomain); $('setting').value = settingOf(newDomain); $('tag').value = ''; }
+      changes.push(`moved <b>${newId}</b> from ${was} to <b>${newDomain}</b>`);
+    }
+    editId = null; $('rowEditor').hidden = true;
+    if (!changes.length) { renderTable(); return; }
+    log(changes.join('; '));
+    selected = newId; refreshAll(); if (n.me) setMyDomain(); spot(newId, 3000);
+    if (farms[newId]) levelUp(() => farms[newId].center.clone().setY(0.2), false);
+  });
+  function renderTable() {
+    const fd = $('fDomain').value, fb = $('fBackbone').value;
+    const rows = state.rows.filter(r => (!fd || r.domain === fd) && (!fb || r.backbone === fb)).slice(-80).reverse();
+    $('rows').innerHTML = rows.length ? rows.map(r => `
+      <tr class="${r.fresh ? 'new' : ''}${editId && r.node_id === editId ? ' editing' : ''}">
+        <td class="mono">v${r.version} · r${r.round}</td>
+        <td class="mono">${r.node_id}</td>
+        <td><span class="dom"><span class="sw" style="background:${colorFor(r.domain)}"></span>${r.domain}</span></td>
+        <td>${BACKBONES[r.backbone].name}</td>
+        <td>${protoBars(r.proto)} <span class="size">${r.classes}×${BACKBONES[r.backbone].dim}</span></td>
+        <td class="size">top-3: <b>${r.top.join(', ')}</b></td>
+        <td class="mono">${r.samples}</td>
+        <td class="size"><b>${fmtKB(r.stored)}</b><br>vs ${fmtKB(r.raw)}</td>
+        <td>${nodeById(r.node_id) && !nodeById(r.node_id).leaving ? `<button type="button" class="btn ghost sm" data-edit="${r.node_id}" aria-label="Edit node ${r.node_id}">Edit</button>` : '<span class="size">farm removed</span>'}</td>
+      </tr>`).join('') : `<tr><td colspan="9" class="help">No knowledge for this filter yet. Publish from your node or run manual learning.</td></tr>`;
+    state.rows.forEach(r => r.fresh = false);
+  }
+  function shareList(rows) {
+    const byNode = {};
+    rows.forEach(r => byNode[r.node_id] = (byNode[r.node_id] || 0) + wmaWeight(r));
+    const total = Object.values(byNode).reduce((a, b) => a + b, 0);
+    if (!total) return '<p class="help">No versions yet for this combination.</p>';
+    return Object.entries(byNode).sort((a, b) => b[1] - a[1]).map(([id, w]) => {
+      const n = nodeById(id); const pct = w / total * 100;
+      return `<div class="share"><span class="who" title="${id}">${id}${n && n.me ? ' (you)' : ''}</span><span class="bar"><i style="width:${pct}%;background:${colorFor(n ? n.domain : '')}"></i></span><span class="pct">${pct.toFixed(0)}%</span></div>`;
+    }).join('');
+  }
+  function renderShares() {
+    const d = $('cDomain').value, b = $('cBackbone').value;
+    $('protoShares').innerHTML = shareList(state.rows.filter(r => r.domain === d && r.backbone === b));
+    $('logitShares').innerHTML = shareList(state.rows.filter(r => r.domain === d));
+  }
+  function renderStorage() {
+    const raw = state.rows.reduce((a, r) => a + r.raw, 0), st = state.rows.reduce((a, r) => a + r.stored, 0);
+    $('rawSize').textContent = fmtKB(raw); $('cmpSize').textContent = fmtKB(st);
+    $('cmpBar').style.width = (raw ? st / raw * 100 : 0) + '%';
+    $('saving').textContent = raw ? `${state.rows.length} versions kept, ${(raw / st).toFixed(1)}× smaller than float32. Older versions can be compacted into the WMA consensus without losing their source.` : '';
+  }
+  function renderLegend() { return;
+    const domains = [...new Set(state.nodes.map(n => n.domain))];
+    $('legend').innerHTML = domains.map(d => `<div><span class="sw" style="background:${colorFor(d)}"></span>${d}</div>`).join('');
+  }
+  function refreshAll() {
+    $('roundPill').textContent = state.round; $('nodePill').textContent = state.nodes.length; $('rowPill').textContent = state.rows.length;
+    const n = me();
+    $('bbName').textContent = n.backbone ? BACKBONES[n.backbone].name : 'Drop a backbone here';
+    $('bbMeta').textContent = n.backbone ? `${BACKBONES[n.backbone].dim}-d features · ${BACKBONES[n.backbone].mb} MB model` : 'or tap a card';
+    document.querySelectorAll('#bbChips .chip').forEach(c => c.setAttribute('aria-pressed', String(c.dataset.bb === n.backbone)));
+    renderFilters(); renderTable(); renderShares(); renderStorage(); renderLegend(); updatePublish(); updateScene(); renderInspector(); renderMindIds();
+  }
+
+  // ---------- 3D farm ----------
+  // A farming-game scene: the Hive DB honeycomb sits on a tree stump in the middle, one field per
+  // crop surrounds it, and every bee (a node) flies between its crop's field and the hive.
+  const stage = $('stage'), canvas = $('gl'), overlay = $('overlay');
+  let renderer, scene, camera, root, hub, face, raycaster, pointer;
+  const combCells = [], drips = [];
+  const meshes = {}; const labels = {}; const packets = [];
+  let selected = null;
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const has3D = typeof THREE !== 'undefined';
+  const CROP_LIST = Object.keys(CROPS);
+  const PLOT_R = 8.4, PLOT_HALF = 1.7, GROUND_Y = -0.6;
+  const HIVE_TOP = 3.4;
+  const farms = {};
+
+  function samplesOf(id) { return state.rows.filter(r => r.node_id === id).reduce((a, r) => a + r.samples, 0); }
+
+  // Crop plants for the fields around the hive (tomato, apple, corn, pepper, potato, grape).
+  const M = c => new THREE.MeshStandardMaterial({ color: c, roughness: 0.55 });
+  const GREEN = 0x4f9a3a, STEM = 0x3e7d2e, BARK = 0x6b4a2b;
+  function leaf(x, y, z, ry, s = 1) {
+    const l = new THREE.Mesh(new THREE.SphereGeometry(0.3, 14, 10), M(GREEN));
+    l.scale.set(1.1 * s, 0.08, 0.5 * s); l.position.set(x, y, z); l.rotation.set(0, ry, 0.35); return l;
+  }
+  function stem(h, r = 0.045, color = STEM) {
+    const st = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.8, r, h, 8), M(color)); st.position.y = h / 2; return st;
+  }
+  function makeCrop(crop) {
+    const g = new THREE.Group();
+    if (crop === 'Tomato') {
+      g.add(stem(1.0)); g.add(leaf(0.25, 0.45, 0, 0)); g.add(leaf(-0.25, 0.7, 0.05, Math.PI));
+      [[0.2, 0.55, 0.15], [-0.18, 0.35, -0.1], [0.05, 0.85, -0.18]].forEach(([x, y, z]) => {
+        const t = new THREE.Mesh(new THREE.SphereGeometry(0.2, 18, 14), M(0xd83b2d)); t.scale.y = 0.85; t.position.set(x, y, z); g.add(t);
+        const cal = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.06, 6), M(GREEN)); cal.position.set(x, y + 0.18, z); g.add(cal);
+      });
+    } else if (crop === 'Apple') {
+      const a = new THREE.Mesh(new THREE.SphereGeometry(0.38, 22, 18), M(0xc8302c)); a.scale.y = 0.9; a.position.y = 0.42; g.add(a);
+      const st = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.03, 0.22, 6), M(BARK)); st.position.y = 0.82; g.add(st);
+      g.add(leaf(0.16, 0.86, 0, 0.3, 0.7));
+    } else if (crop === 'Corn') {
+      g.add(stem(1.3, 0.06)); g.add(leaf(0.3, 0.35, 0, 0, 1.2)); g.add(leaf(-0.3, 0.7, 0, Math.PI, 1.2)); g.add(leaf(0.2, 1.05, 0.1, 0.6, 1));
+      const cob = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.1, 0.55, 12), M(0xf2c94c)); cob.position.set(0.13, 0.75, 0.05); cob.rotation.z = -0.35; g.add(cob);
+      const husk = new THREE.Mesh(new THREE.ConeGeometry(0.15, 0.5, 8, 1, true), M(0x8fbf5a)); husk.position.set(0.1, 0.68, 0.05); husk.rotation.z = Math.PI - 0.35; g.add(husk);
+    } else if (crop === 'Pepper') {
+      g.add(stem(0.8)); g.add(leaf(0.22, 0.6, 0, 0)); g.add(leaf(-0.22, 0.45, 0, Math.PI));
+      [[0.18, 0.3, 0.08, 0xd8412f], [-0.16, 0.42, -0.08, 0x3f9a3a]].forEach(([x, y, z, c]) => {
+        const pep = new THREE.Group(); pep.position.set(x, y, z);
+        [[0.07, 0.07], [-0.07, 0.07], [0.07, -0.07], [-0.07, -0.07]].forEach(([dx, dz]) => {
+          const lobe = new THREE.Mesh(new THREE.SphereGeometry(0.13, 14, 12), M(c)); lobe.scale.y = 1.4; lobe.position.set(dx, 0, dz); pep.add(lobe);
+        });
+        const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.04, 0.1, 6), M(STEM)); cap.position.y = 0.2; pep.add(cap);
+        g.add(pep);
+      });
+    } else if (crop === 'Potato') {
+      [[0, 0], [0.8, 1], [1.6, 0], [2.4, 1], [3.2, 0], [4.0, 1], [4.8, 0], [5.6, 1]].forEach(([a, up]) => g.add(leaf(Math.cos(a) * 0.25, 0.35 + up * 0.18, Math.sin(a) * 0.25, -a, 0.8)));
+      g.add(stem(0.5));
+      [[0.3, 0.08, 0.1], [-0.25, 0.06, -0.15]].forEach(([x, y, z]) => {
+        const t = new THREE.Mesh(new THREE.SphereGeometry(0.17, 14, 12), M(0xb08a57)); t.scale.set(1.3, 0.8, 1); t.position.set(x, y, z); g.add(t);
+      });
+    } else if (crop === 'Grape') {
+      g.add(stem(1.0, 0.05, BARK)); g.add(leaf(0.25, 0.95, 0, 0, 1.3));
+      const rows = [4, 3, 3, 2, 1];
+      rows.forEach((n, ri) => {
+        for (let k = 0; k < n; k++) {
+          const a = k / n * Math.PI * 2 + ri;
+          const gr = new THREE.Mesh(new THREE.SphereGeometry(0.09, 12, 10), M(0x6a3d8f));
+          gr.position.set(Math.cos(a) * 0.04 * n, 0.85 - ri * 0.14, Math.sin(a) * 0.04 * n); g.add(gr);
+        }
+      });
+    } else {
+      g.add(stem(0.8)); g.add(leaf(0.22, 0.5, 0, 0)); g.add(leaf(-0.22, 0.65, 0, Math.PI));
+    }
+    return g;
+  }
+
+  const WOOD = 0xa9794a;
+  // One farm per Mind ID, always spread evenly around the hive. The ring widens when farms would crowd.
+  let ground = null, groundTarget = 17;
+  const tufts = [];
+  function layoutFarms(instant) {
+    const ids = state.nodes.filter(n => farms[n.id] && !n.leaving).map(n => n.id);
+    const N = Math.max(1, ids.length);
+    const r = Math.max(PLOT_R, N * 5.2 / (2 * Math.PI));
+    ids.forEach((id, i) => {
+      const f = farms[id]; f.ta = i / N * Math.PI * 2 + Math.PI / 2; f.tr = r;
+      if (instant || f.angle === undefined) { f.angle = f.ta; f.r = f.tr; placeFarm(f); }
+    });
+    groundTarget = Math.max(17, r + PLOT_HALF + 3.5);
+    if (instant && ground) ground.scale.setScalar(groundTarget / 17);
+    // keep grass tufts off the farms' new spots
+    tufts.forEach(t => { t.visible = !ids.some(id => Math.hypot(t.position.x - Math.cos(farms[id].ta) * r, t.position.z - Math.sin(farms[id].ta) * r) < 2.6); });
+  }
+  function placeFarm(f) {
+    const a = f.angle, r = f.r;
+    f.center.set(Math.cos(a) * r, GROUND_Y, Math.sin(a) * r);
+    f.g.position.x = f.center.x; f.g.position.z = f.center.z; f.g.rotation.y = -a + Math.PI / 2;
+    const len = Math.max(0.1, r - PLOT_HALF - 3.2), mid = 3.2 + len / 2;
+    f.path.scale.y = len; f.path.rotation.z = -a + Math.PI / 2;
+    f.path.position.set(Math.cos(a) * mid, GROUND_Y + 0.01, Math.sin(a) * mid);
+  }
+  function buildFarm(n, animate) {
+    const center = new THREE.Vector3(0, GROUND_Y, 0);
+    const g = new THREE.Group(); g.position.copy(center); g.userData.id = n.id; root.add(g);
+    const soil = new THREE.Mesh(new THREE.BoxGeometry(PLOT_HALF * 2, 0.22, PLOT_HALF * 2), M(0x7b5230)); soil.position.y = 0.05; g.add(soil);
+    for (let row = -1; row <= 1; row++) {
+      const furrow = new THREE.Mesh(new THREE.BoxGeometry(PLOT_HALF * 1.9, 0.08, 0.34), M(0x6a4526)); furrow.position.set(0, 0.2, row * 1.05); g.add(furrow);
+    }
+    const plants = new THREE.Group(); plants.position.y = 0.2; g.add(plants);
+    // a low fence, open on the side facing the hive
+    const post = new THREE.CylinderGeometry(0.05, 0.06, 0.55, 6), wood = M(WOOD);
+    const edge = PLOT_HALF + 0.25;
+    for (let k = -4; k <= 4; k++) {
+      const t = k / 4 * edge;
+      [[t, edge], [edge, t], [-edge, t]].forEach(([x, z]) => { const pst = new THREE.Mesh(post, wood); pst.position.set(x, 0.28, z); g.add(pst); });
+    }
+    [[0, edge, 0], [edge, 0, Math.PI / 2], [-edge, 0, Math.PI / 2]].forEach(([x, z, ry]) => {
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(edge * 2, 0.06, 0.05), wood); rail.position.set(x, 0.42, z); rail.rotation.y = ry; g.add(rail);
+    });
+    // dirt path from the farm to the stump
+    const path = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 1), M(0xd9b98a));
+    path.rotation.x = -Math.PI / 2; root.add(path);
+    const sign = document.createElement('div'); sign.className = 'plotlabel'; overlay.append(sign);
+    farms[n.id] = { g, plants, path, sign, center, grow: animate ? 0 : 1, plantGrow: 1, cropKey: undefined };
+    layoutFarms(false);
+    setFarmCrop(n.id);
+    if (animate) g.scale.setScalar(0.001);
+  }
+  function setFarmCrop(id) {
+    const n = nodeById(id), f = farms[id]; if (!n || !f) return;
+    const crop = n.domain ? cropOf(n.domain) : null;
+    if (f.cropKey === crop) return;
+    while (f.plants.children.length) f.plants.remove(f.plants.children[0]);
+    for (let row = -1; row <= 1; row++) for (let col = -1; col <= 1; col++) {
+      let plant;
+      if (crop) { plant = makeCrop(crop); plant.scale.setScalar(0.85); }
+      else { plant = new THREE.Group(); plant.add(stem(0.25)); plant.add(leaf(0.1, 0.22, 0, 0, 0.35)); plant.add(leaf(-0.1, 0.26, 0, Math.PI, 0.35)); }  // seedlings until set up
+      plant.position.set(col * 1.05, 0, row * 1.05); plant.rotation.y = hashStr(id + row + col) % 628 / 100;
+      f.plants.add(plant);
+    }
+    f.cropKey = crop; f.plantGrow = 0;
+  }
+  function removeFarm(id) {
+    const f = farms[id]; if (!f) return;
+    root.remove(f.g); root.remove(f.path); f.sign.remove(); delete farms[id];
+    layoutFarms(false);
+    if (meshes[id]) { root.remove(meshes[id]); delete meshes[id]; }
+    if (labels[id]) { labels[id].remove(); delete labels[id]; }
+  }
+  // where a bee hovers over its farm, stored relative to the farm so the bee moves with it
+  const UP = new THREE.Vector3(0, 1, 0);
+  function fieldOffset(seed) { const r = rng(seed); return new THREE.Vector3((r() - 0.5) * 2.2, GROUND_Y + 1.9 + r() * 0.4, (r() - 0.5) * 2.2); }
+  function farmPoint(id, off) {
+    const f = farms[id]; if (!f) return new THREE.Vector3(0, HIVE_TOP, 0);
+    return f.center.clone().add(off.clone().setY(0).applyAxisAngle(UP, -f.angle)).setY(off.y);
+  }
+  function fieldPoint(id, seed) { return farmPoint(id, fieldOffset(seed)); }
+  function hivePoint(seed) {
+    const r = rng(seed), a = r() * Math.PI * 2, rad = 1.2 + r() * 1.4;
+    return new THREE.Vector3(Math.cos(a) * rad, HIVE_TOP + r() * 0.5, Math.sin(a) * rad);
+  }
+
+  function initScene() {
+    renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    scene = new THREE.Scene();
+    scene.fog = new THREE.Fog(0xb9d6c6, 32, 58);
+    camera = new THREE.PerspectiveCamera(42, 1, 0.1, 120);
+    root = new THREE.Group(); scene.add(root);
+    scene.add(new THREE.HemisphereLight(0xe4f4ff, 0x5f8a33, 0.85));
+    const sun = new THREE.DirectionalLight(0xfff0d0, 0.85); sun.position.set(8, 14, 6); scene.add(sun);
+    const glow = new THREE.PointLight(0xebb43f, 0.9, 10); glow.position.set(0, 4.5, 0); scene.add(glow);
+
+    // meadow with grass tufts
+    ground = new THREE.Mesh(new THREE.CircleGeometry(17, 72), M(0x3d7a2c));
+    ground.rotation.x = -Math.PI / 2; ground.position.y = GROUND_Y; root.add(ground);
+    const tuft = new THREE.ConeGeometry(0.08, 0.35, 5), grass = M(0x2c5c20);
+    const tr = rng(7);
+    for (let k = 0; k < 160; k++) {
+      const a = tr() * Math.PI * 2, rad = 3.4 + tr() * 13;
+      const x = Math.cos(a) * rad, z = Math.sin(a) * rad;
+      const t = new THREE.Mesh(tuft, grass); t.position.set(x, GROUND_Y + 0.15, z); root.add(t); tufts.push(t);
+    }
+
+    // tree stump the hive sits on
+    const stump = new THREE.Mesh(new THREE.CylinderGeometry(2.7, 3.1, 0.75, 24), M(0x7a5534)); stump.position.y = GROUND_Y + 0.37; root.add(stump);
+    const rings = new THREE.Mesh(new THREE.CircleGeometry(2.68, 24), M(0xc49a63)); rings.rotation.x = -Math.PI / 2; rings.position.y = GROUND_Y + 0.76; root.add(rings);
+
+    // Hive DB: a domed honeycomb, a collective of cells. Each domain owns a wedge of cells;
+    // cells fill with honey as that domain stores knowledge versions.
+    hub = new THREE.Group(); hub.scale.setScalar(1.25); hub.position.y = 0.9; root.add(hub);
+    const CELL_R = 0.42, SPACING = CELL_R * 1.8;
+    const cellGeo = new THREE.CylinderGeometry(CELL_R, CELL_R, 1, 6);
+    for (let q = -3; q <= 3; q++) for (let r = -3; r <= 3; r++) {
+      const ringN = Math.max(Math.abs(q), Math.abs(r), Math.abs(-q - r));
+      if (ringN > 3) continue;
+      const x = SPACING * (q + r / 2), z = SPACING * 0.866 * r;
+      const h = 2.3 - ringN * 0.5 + (hashStr(q + ',' + r) % 20) / 100;
+      const cell = new THREE.Mesh(cellGeo, new THREE.MeshStandardMaterial({ color: 0xf6d45e, emissive: 0x000000, roughness: 0.5, metalness: 0 }));
+      cell.scale.y = h; cell.position.set(x, -0.6 + h / 2, z); cell.rotation.y = Math.PI / 6;
+      cell.userData = { ring: ringN, angle: Math.atan2(z, x), flash: 0, lit: false };
+      hub.add(cell); combCells.push(cell);
+    }
+    const honey = new THREE.MeshStandardMaterial({ color: 0xffcf2e, emissive: 0x9a7000, emissiveIntensity: 0.5, roughness: 0.2 });
+    combCells.filter(c => c.userData.ring === 2).forEach((c, k) => {
+      if (k % 2) return;
+      const drip = new THREE.Mesh(new THREE.SphereGeometry(0.09, 12, 10), honey);
+      drip.scale.set(1, 1.8, 1);
+      drip.userData = { x: c.position.x * 1.12, z: c.position.z * 1.12, top: c.position.y + c.scale.y / 2, t: (k * 0.37) % 1 };
+      hub.add(drip); drips.push(drip);
+    });
+    // a friendly face that always looks at the viewer
+    face = new THREE.Group(); face.scale.setScalar(1.45); face.visible = false;  // face removed: the hive stays plain
+    const ink = new THREE.MeshStandardMaterial({ color: 0x3a2610, roughness: 0.3 });
+    const shine = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    const blush = new THREE.MeshBasicMaterial({ color: 0xff9fb0, transparent: true, opacity: 0.85 });
+    [-1, 1].forEach(side => {
+      const eye = new THREE.Mesh(new THREE.SphereGeometry(0.3, 20, 16), ink); eye.scale.set(0.85, 1.1, 0.45); eye.position.set(side * 0.62, 0.25, 0); face.add(eye);
+      const hi = new THREE.Mesh(new THREE.SphereGeometry(0.09, 10, 8), shine); hi.position.set(side * 0.62 + 0.09, 0.4, 0.14); face.add(hi);
+      const hi2 = new THREE.Mesh(new THREE.SphereGeometry(0.045, 8, 6), shine); hi2.position.set(side * 0.62 - 0.07, 0.16, 0.14); face.add(hi2);
+      const cheek = new THREE.Mesh(new THREE.CircleGeometry(0.22, 20), blush); cheek.scale.set(1.3, 0.8, 1); cheek.position.set(side * 1.05, -0.15, 0.05); face.add(cheek);
+      (face.userData.eyes = face.userData.eyes || []).push(eye, hi, hi2);
+    });
+    const smile = new THREE.Mesh(new THREE.TorusGeometry(0.28, 0.055, 10, 28, Math.PI), ink);
+    smile.rotation.z = Math.PI; smile.position.set(0, -0.12, 0); face.add(smile);
+    const hl = document.createElement('div'); hl.className = 'hublabel'; hl.textContent = 'Hive DB'; hl.hidden = true; overlay.append(hl); labels.hub = hl;  // no label on the hive
+
+    state.nodes.forEach(n => buildFarm(n, false));
+    layoutFarms(true);
+    raycaster = new THREE.Raycaster(); pointer = new THREE.Vector2();
+    resize(); addInteraction(); updateScene(); requestAnimationFrame(tick);
+  }
+
+  // Every bee looks the same: yellow and black stripes. The pollen it carries shows its domain colour.
+  // Built along +z (head forward) so lookAt() turns it towards where it flies.
+  const DARK = 0x1d1a12, BEE_YELLOW = 0xf2c230;
+  function makeBee(id) {
+    const bee = new THREE.Group(); bee.userData.id = id;
+    const body = new THREE.MeshStandardMaterial({ color: BEE_YELLOW, roughness: 0.5, emissive: 0x000000 });
+    const dark = new THREE.MeshStandardMaterial({ color: DARK, roughness: 0.7 });
+    const abdomen = new THREE.Mesh(new THREE.SphereGeometry(0.5, 24, 18), body);
+    abdomen.scale.set(0.9, 0.85, 1.35); abdomen.position.z = -0.45; bee.add(abdomen);
+    [-0.2, -0.55, -0.88].forEach((z, k) => {
+      const band = new THREE.Mesh(new THREE.TorusGeometry([0.44, 0.42, 0.3][k], 0.07, 10, 28), dark);
+      band.position.z = z; band.scale.set(0.95, 0.9, 1); bee.add(band);
+    });
+    const stinger = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.28, 10), dark);
+    stinger.rotation.x = -Math.PI / 2; stinger.position.z = -1.2; bee.add(stinger);
+    const thorax = new THREE.Mesh(new THREE.SphereGeometry(0.36, 20, 16), new THREE.MeshStandardMaterial({ color: 0x3a3221, roughness: 0.9 }));
+    thorax.position.z = 0.22; bee.add(thorax);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.28, 20, 16), dark); head.position.z = 0.62; bee.add(head);
+    const pollen = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6, emissive: 0x000000 });
+    [-1, 1].forEach(side => {
+      const eye = new THREE.Mesh(new THREE.SphereGeometry(0.1, 12, 10), new THREE.MeshStandardMaterial({ color: 0x0a0a08, roughness: 0.2, metalness: 0.3 }));
+      eye.position.set(side * 0.17, 0.06, 0.78); bee.add(eye);
+      const ant = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.42, 6), dark);
+      ant.position.set(side * 0.1, 0.34, 0.8); ant.rotation.set(0.6, 0, side * -0.35); bee.add(ant);
+      const tip = new THREE.Mesh(new THREE.SphereGeometry(0.04, 8, 6), dark); tip.position.set(side * 0.18, 0.52, 0.93); bee.add(tip);
+      const basket = new THREE.Mesh(new THREE.SphereGeometry(0.12, 12, 10), pollen); basket.position.set(side * 0.3, -0.3, 0.02); bee.add(basket);
+      const pivot = new THREE.Group(); pivot.position.set(side * 0.12, 0.3, 0.18);
+      const wing = new THREE.Mesh(new THREE.CircleGeometry(0.5, 24), new THREE.MeshBasicMaterial({ color: 0xf4fbff, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false }));
+      wing.scale.set(1, 0.55, 1); wing.rotation.x = -Math.PI / 2; wing.position.set(side * 0.45, 0, -0.1);
+      pivot.add(wing); pivot.userData.side = side; bee.add(pivot);
+      (bee.userData.wings = bee.userData.wings || []).push(pivot);
+    });
+    bee.userData.body = body; bee.userData.pollen = pollen; bee.userData.phase = hashStr(id) % 628 / 100;
+    return bee;
+  }
+
+  // flight between the bee's field and the hive: hover over the crop, fly in, hover at the comb, fly back
+  function startLeg(bee, n, now) {
+    const f = bee.userData.fl, seed = hashStr(n.id + now.toFixed(0));
+    const crop = cropOf(n.domain);
+    if (f.state === 'joining') {
+      f.state = 'atPlot'; f.anchor = f.to.clone(); f.dur = 2.5; f.crop = crop; f.t = 0;
+      n.joining = false; levelUp(beePos(n.id), false);
+      log(`<b>${n.id}</b>'s bee landed on its farm`);
+      return;
+    }
+    if (f.state === 'toHive') { f.state = 'atHive'; f.anchor = f.to.clone(); f.dur = 1.0 + (seed % 80) / 100; }
+    else if (f.state === 'atHive' || (f.state === 'atPlot' && n.backbone && f.crop !== crop)) {
+      f.state = 'toPlot'; f.from = bee.position.clone(); f.off = fieldOffset(seed); f.to = farmPoint(n.id, f.off); f.dur = 3 + (seed % 150) / 100;
+    } else if (f.state === 'toPlot') { f.state = 'atPlot'; f.anchor = f.to.clone(); f.dur = 1.6 + (seed % 200) / 100; f.crop = crop; }
+    else if (f.state === 'atPlot' && n.backbone) {
+      f.state = 'toHive'; f.from = bee.position.clone(); f.to = hivePoint(seed); f.dur = 3 + (seed % 150) / 100;
+    } else { f.state = 'atPlot'; f.off = fieldOffset(seed); f.anchor = farmPoint(n.id, f.off); f.dur = 2.5; f.crop = crop; }  // no backbone: rests over its field
+    if (f.from && (f.state === 'toHive' || f.state === 'toPlot')) {
+      const mid = f.from.clone().add(f.to).multiplyScalar(0.5); mid.y += 2.2;
+      mid.add(new THREE.Vector3(((seed % 100) / 100 - 0.5) * 3, 0, (((seed >> 8) % 100) / 100 - 0.5) * 3));
+      f.curve = new THREE.QuadraticBezierCurve3(f.from, mid, f.to);
+    }
+    f.t = 0;
+  }
+
+  function updateScene() {
+    if (!has3D || !scene) return;
+    updateComb();
+    state.nodes.forEach(n => {
+      if (!farms[n.id]) buildFarm(n, false);
+      setFarmCrop(n.id);
+      const f0 = farms[n.id];
+      f0.sign.textContent = n.domain ? `${cropOf(n.domain)} farm · ${n.id}` : `New farm · ${n.id}`;
+      f0.sign.classList.toggle('me', !!n.me);
+      if (n.hideBee) return;  // the bee appears once the new farm has grown
+      let m = meshes[n.id];
+      if (!m) {
+        m = makeBee(n.id); root.add(m); meshes[n.id] = m;
+        const off0 = fieldOffset(hashStr(n.id)), start = farmPoint(n.id, off0);
+        m.position.copy(start);
+        m.userData.fl = { off: off0, state: 'atPlot', anchor: start.clone(), t: hashStr(n.id) % 100 / 100, dur: 1 + hashStr(n.id) % 300 / 100, crop: cropOf(n.domain) };
+        if (n.joining) {
+          // a new bee arrives slowly from the edge of the meadow, glowing
+          const pl = farms[n.id];
+          const from = new THREE.Vector3(-Math.cos(pl.angle) * 12, 5.5, -Math.sin(pl.angle) * 12);  // far side of the hive, so it flies towards the viewer
+          const mid = from.clone().add(start).multiplyScalar(0.5); mid.y += 3;
+          m.position.copy(from);
+          m.userData.fl = { off: off0, state: 'joining', from, to: start, curve: new THREE.QuadraticBezierCurve3(from, mid, start), t: 0, dur: 5.5, crop: cropOf(n.domain) };
+          aura(n.id, 9);
+        }
+        const lab = document.createElement('div'); lab.className = 'nlabel' + (n.me ? ' me' : ''); overlay.append(lab); labels[n.id] = lab;
+        if (n.me) {
+          const halo = new THREE.Mesh(new THREE.TorusGeometry(1.25, 0.05, 8, 32), new THREE.MeshBasicMaterial({ color: 0xebb43f }));
+          halo.rotation.x = Math.PI / 2; halo.position.y = -0.55; m.add(halo);
+        }
+      }
+      m.userData.fl.crop = cropOf(n.domain);
+      m.scale.setScalar(0.5 + Math.min(0.25, Math.log10(1 + samplesOf(n.id)) * 0.09));
+      m.userData.pollen.color.set(n.backbone ? colorFor(n.domain) : '#d8d2c0');
+      m.userData.body.emissive.set(selected === n.id ? 0x4a3a00 : 0x000000);
+      labels[n.id].textContent = `${n.id} · ${n.backbone ? BACKBONES[n.backbone].name : 'no backbone'}`;
+      labels[n.id].hidden = !(n.me || selected === n.id);
+    });
+  }
+
+  function updateComb() {
+    if (!combCells.length) return;
+    const domains = [...new Set(state.rows.map(r => r.domain))].sort();
+    const outer = combCells.filter(c => c.userData.ring > 0);
+    const D = Math.max(1, domains.length);
+    domains.forEach((d, di) => {
+      // this domain's wedge of cells, inner ones first
+      const lo = -Math.PI + di * 2 * Math.PI / D, hi = lo + 2 * Math.PI / D;
+      const mine = outer.filter(c => c.userData.angle >= lo && c.userData.angle < hi).sort((a, b) => a.userData.ring - b.userData.ring);
+      const versions = state.rows.filter(r => r.domain === d).length;
+      const lit = Math.min(mine.length, Math.ceil(versions / 2));
+      const col = new THREE.Color(colorFor(d));
+      mine.forEach((c, k) => {
+        c.userData.domain = d; c.userData.lit = k < lit;
+        c.material.color.set(k < lit ? 0xffcc1f : 0xf6d45e);  // all yellow: cells holding knowledge glow brighter
+      });
+    });
+    const core = combCells.find(c => c.userData.ring === 0);
+    core.material.color.set(0xffc61a); core.userData.lit = true;
+  }
+  function flashDomain(d) {
+    const cells = combCells.filter(c => c.userData.domain === d && c.userData.lit);
+    const c = cells[cells.length - 1] || combCells.find(x => x.userData.ring === 0);
+    c.userData.flash = 1;
+  }
+
+  function fly(from, to, color, domain, onArrive) {
+    if (!has3D || !scene) return;
+    const hubPt = new THREE.Vector3(0, HIVE_TOP, 0);
+    const a = from === 'hub' ? hubPt.clone() : meshes[from].position.clone();
+    const b = to === 'hub' ? hubPt.clone() : meshes[to].position.clone();
+    const mid = a.clone().add(b).multiplyScalar(0.5); mid.y += 3;
+    const curve = new THREE.QuadraticBezierCurve3(a, mid, b);
+    [0, 0.12].forEach((lag, k) => {
+      const geo = k === 0 ? new THREE.OctahedronGeometry(0.2) : new THREE.SphereGeometry(0.15, 12, 12);
+      const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color }));
+      root.add(mesh);
+      packets.push({ mesh, curve, t: -lag, speed: reduced ? 1 : 0.9, onArrive: k === 0 ? () => { if (to === 'hub' && domain) flashDomain(domain); if (onArrive) onArrive(); } : null });
+    });
+  }
+
+  function resize() {
+    const w = stage.clientWidth, h = stage.clientHeight;
+    renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
+  }
+  let yaw = 0.4, pitch = 0.66, dist = 27;
+  let yawTarget = null;
+  function placeCamera() {
+    camera.position.set(Math.sin(yaw) * Math.cos(pitch) * dist, Math.sin(pitch) * dist, Math.cos(yaw) * Math.cos(pitch) * dist);
+    camera.lookAt(0, 0.6, 0);
+  }
+  function addInteraction() {
+    let dragging = false, moved = 0, lx = 0, ly = 0;
+    canvas.addEventListener('pointerdown', e => { dragging = true; moved = 0; lx = e.clientX; ly = e.clientY; canvas.setPointerCapture(e.pointerId); });
+    canvas.addEventListener('pointermove', e => {
+      if (!dragging) return;
+      const dx = e.clientX - lx, dy = e.clientY - ly; lx = e.clientX; ly = e.clientY; moved += Math.abs(dx) + Math.abs(dy);
+      yawTarget = null; yaw -= dx * 0.006; pitch = Math.min(1.35, Math.max(0.2, pitch + dy * 0.004));
+    });
+    canvas.addEventListener('pointerup', e => { dragging = false; if (moved < 6) pick(e.clientX, e.clientY); });
+    canvas.addEventListener('wheel', e => { e.preventDefault(); dist = Math.min(52, Math.max(13, dist + e.deltaY * 0.01)); }, { passive: false });
+    // drop a backbone onto any node in the 3D view
+    stage.addEventListener('dragover', e => { e.preventDefault(); stage.classList.add('over'); });
+    stage.addEventListener('dragleave', () => stage.classList.remove('over'));
+    stage.addEventListener('drop', e => {
+      e.preventDefault(); stage.classList.remove('over');
+      const d = e.dataTransfer.getData('text/plain');
+      if (!d.startsWith('bb:')) return;
+      const id = hit(e.clientX, e.clientY) || me().id;
+      assignBackbone(nodeById(id), d.slice(3)); selected = id; renderInspector(); updateScene();
+    });
+    addEventListener('resize', resize);
+  }
+  function hit(x, y) {
+    const rect = canvas.getBoundingClientRect();
+    pointer.set(((x - rect.left) / rect.width) * 2 - 1, -((y - rect.top) / rect.height) * 2 + 1);
+    raycaster.setFromCamera(pointer, camera);
+    const found = raycaster.intersectObjects(Object.values(meshes).concat(Object.values(farms).map(f => f.g)), true)[0];
+    let o = found && found.object;
+    while (o && !o.userData.id) o = o.parent;
+    return o ? o.userData.id : null;
+  }
+  function pick(x, y) { selected = hit(x, y); confirmDel = null; renderInspector(); updateScene(); }
+  let confirmDel = null;
+  function renderInspector() {
+    const box = $('inspector'); const n = selected && nodeById(selected);
+    if (!n) { box.hidden = true; return; }
+    const rows = state.rows.filter(r => r.node_id === n.id);
+    box.hidden = false;
+    box.innerHTML = `<h3>${n.id}${n.me ? ' (you)' : ''}</h3><dl>
+      <dt>Mind ID</dt><dd>${n.id}</dd>
+      <dt>domain</dt><dd>${n.domain || 'not set yet'}</dd>
+      <dt>model</dt><dd>${n.backbone ? BACKBONES[n.backbone].name : 'none yet'}</dd>
+      <dt>threshold</dt><dd>${(n.me ? state.threshold : n.threshold).toFixed(2)}</dd>
+      <dt>WMA α</dt><dd>${(n.me ? state.decay : n.alpha).toFixed(2)}</dd>
+      <dt>versions</dt><dd>${rows.length}</dd>
+      <dt>samples</dt><dd>${rows.reduce((a, r) => a + r.samples, 0)}</dd>
+      <dt>learned from hive</dt><dd>${n.received || 0}×</dd></dl>
+      <span class="note">Drag a backbone card onto this bee to change it.</span>
+      <div class="insp-actions">${n.me ? '<span class="note">This is your farm. Change it in the panel on the left; it cannot be deleted.</span>'
+        : n.leaving ? '<span class="note">Removing this farm…</span>'
+        : confirmDel === n.id ? `<span class="note">Delete ${n.id} and its bee? Its knowledge versions stay in the hive.</span><div class="row"><button type="button" class="btn danger" id="delYes">Delete farm</button><button type="button" class="btn ghost" id="delNo">Keep</button></div>`
+        : '<button type="button" class="btn ghost" id="delFarm">Delete farm</button>'}</div>`;
+    const del = $('delFarm'), yes = $('delYes'), no = $('delNo');
+    if (del) del.onclick = () => { confirmDel = n.id; renderInspector(); };
+    if (no) no.onclick = () => { confirmDel = null; renderInspector(); };
+    if (yes) yes.onclick = () => deleteFarm(n.id);
+  }
+
+  const clock = { last: performance.now() };
+  const ease = t => t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+  const prev = new THREE.Vector3(), ahead = new THREE.Vector3();
+  function tick(now) {
+    const dt = Math.min(0.05, (now - clock.last) / 1000); clock.last = now;
+    if (!reduced) { hub.rotation.y += dt * 0.05; const b = 1 + Math.sin(now / 700) * 0.025; hub.scale.set(1.25 / Math.sqrt(b), 1.25 * b, 1.25 / Math.sqrt(b)); }
+    if (face) {
+      const dir = new THREE.Vector3(camera.position.x, 0, camera.position.z).normalize();
+      face.position.set(dir.x * 2.9, 1.7 + (hub.scale.y - 1.25) * 3, dir.z * 2.9);
+      face.lookAt(camera.position.x, face.position.y + (camera.position.y - face.position.y) * 0.25, camera.position.z);
+      const blink = !reduced && (now % 4200) < 140 ? 0.12 : 1;
+      face.userData.eyes.forEach((e, k) => { e.scale.y = (k % 3 === 0 ? 1.1 : 1) * blink; });
+    }
+    combCells.forEach(c => {
+      const f = c.userData.flash; if (f > 0) c.userData.flash = Math.max(0, f - dt * 0.8);
+      const glow = c.userData.lit ? 0.35 + (reduced ? 0 : Math.sin(now / 900 + c.userData.angle * 2) * 0.08) : 0;
+      c.material.emissive.setRGB(0.55, 0.36, 0.05); c.material.emissiveIntensity = glow + c.userData.flash * 1.4;
+    });
+    drips.forEach(dp => {
+      const u = dp.userData; if (!reduced) u.t = (u.t + dt * 0.25) % 1;
+      dp.position.set(u.x, u.top - 0.05 - u.t * u.top * 0.9, u.z);
+      dp.scale.set(1 - u.t * 0.3, 1.8 + u.t, 1 - u.t * 0.3);
+    });
+    // bees fly between their field and the hive
+    state.nodes.forEach(n => {
+      const bee = meshes[n.id]; if (!bee) return;
+      const f = bee.userData.fl, ph = bee.userData.phase;
+      prev.copy(bee.position);
+      if (n.frozen) {
+        if (!f.frozenAt) f.frozenAt = bee.position.clone();
+        bee.position.set(f.frozenAt.x, f.frozenAt.y + Math.sin(now / 400) * 0.05, f.frozenAt.z);
+        bee.userData.wings.forEach(wg => { wg.rotation.z = wg.userData.side * (0.25 + Math.sin(now / 30 + ph) * 0.6); });
+        return;
+      } else if (f.frozenAt) f.frozenAt = null;
+      if (n.leaving) {
+        bee.position.y += dt * 4; bee.position.x *= 1 + dt * 0.35; bee.position.z *= 1 + dt * 0.35;
+        bee.userData.wings.forEach(wg => { wg.rotation.z = wg.userData.side * (0.25 + Math.sin(now / 25 + ph) * 0.6); });
+        return;
+      }
+      if (reduced) { bee.position.copy(f.anchor || bee.position); return; }
+      if (f.off && farms[n.id]) {
+        const tp = farmPoint(n.id, f.off);
+        if (f.state === 'atPlot') f.anchor.copy(tp);
+        else if ((f.state === 'toPlot' || f.state === 'joining') && f.curve) f.curve.v2.copy(tp);
+      }
+      f.t += dt / f.dur;
+      if (f.t >= 1) startLeg(bee, n, now);
+      if (f.state === 'toHive' || f.state === 'toPlot' || f.state === 'joining') {
+        bee.position.copy(f.curve.getPoint(ease(Math.min(1, f.t))));
+        bee.position.y += Math.sin(now / 160 + ph) * 0.06;
+      } else {
+        const w = now / 700 + ph;
+        bee.position.set(f.anchor.x + Math.cos(w) * 0.45, f.anchor.y + Math.sin(w * 1.7) * 0.15, f.anchor.z + Math.sin(w) * 0.45);
+      }
+      ahead.copy(bee.position).sub(prev);
+      if (ahead.lengthSq() > 1e-7) { ahead.setY(ahead.y * 0.3).add(bee.position); bee.lookAt(ahead); }
+      bee.userData.wings.forEach(wg => { wg.rotation.z = wg.userData.side * (0.25 + Math.sin(now / 30 + ph) * 0.6); });
+    });
+    if (yawTarget !== null) {
+      const d = Math.atan2(Math.sin(yawTarget - yaw), Math.cos(yawTarget - yaw));
+      yaw += d * Math.min(1, dt * 2.5); if (Math.abs(d) < 0.002) yawTarget = null;
+    }
+    updateEffects(dt); updateAuras(dt, now);
+    placeCamera();
+    for (let i = packets.length - 1; i >= 0; i--) {
+      const p = packets[i]; p.t += dt * p.speed;
+      if (p.t < 0) { p.mesh.visible = false; continue; }
+      p.mesh.visible = true;
+      if (p.t >= 1) { if (p.onArrive) p.onArrive(); root.remove(p.mesh); p.mesh.geometry.dispose(); packets.splice(i, 1); continue; }
+      p.mesh.position.copy(p.curve.getPoint(p.t));
+    }
+    // HTML labels follow bees, fields and the hive
+    const w = stage.clientWidth, h = stage.clientHeight; const v = new THREE.Vector3();
+    const place = (el, x, y, z) => { v.set(x, y, z).project(camera); el.style.left = ((v.x + 1) / 2 * w) + 'px'; el.style.top = ((1 - v.y) / 2 * h) + 'px'; el.style.opacity = v.z < 1 ? 1 : 0; };
+    Object.entries(meshes).forEach(([id, m]) => place(labels[id], m.position.x, m.position.y + 0.7, m.position.z));
+    if (ground) { const gs = ground.scale.x + (groundTarget / 17 - ground.scale.x) * Math.min(1, dt * 2); ground.scale.setScalar(gs); }
+    Object.values(farms).forEach(f => {
+      if (f.ta !== undefined && f.dying === undefined) {
+        const da = Math.atan2(Math.sin(f.ta - f.angle), Math.cos(f.ta - f.angle)), k = reduced ? 1 : Math.min(1, dt * 2.2);
+        if (Math.abs(da) > 1e-4 || Math.abs(f.tr - f.r) > 1e-3) { f.angle += da * k; f.r += (f.tr - f.r) * k; placeFarm(f); }
+      }
+      if (f.dying !== undefined) { f.dying = Math.max(0.001, f.dying - dt / 1.4); f.g.scale.setScalar(f.dying); f.g.position.y = GROUND_Y - (1 - f.dying) * 0.4; }
+      else if (f.grow < 1) { f.grow = Math.min(1, f.grow + dt / 1.4); const k = f.grow, s2 = 1.70158; f.g.scale.setScalar(Math.max(0.001, 1 + (s2 + 1) * Math.pow(k - 1, 3) + s2 * Math.pow(k - 1, 2))); }
+      if (f.shine) { const k = 1 + f.shine * 0.18; f.plants.scale.set(k, k, k); if (f.shine < 0.01) { f.shine = 0; f.plants.scale.set(1, 1, 1); } }
+      if (f.plantGrow < 1) { f.plantGrow = Math.min(1, f.plantGrow + dt / 1.2); f.plants.scale.set(1, Math.max(0.01, f.plantGrow), 1); }
+      const d = f.center.length(), out = f.center.clone().multiplyScalar((d + PLOT_HALF + 0.4) / d);
+      place(f.sign, out.x, 0.9, out.z);
+    });
+    placeCard(w, h);
+    place(labels.hub, 0, 4.6, 0);
+    updateSpot(now, w, h);
+    renderer.render(scene, camera);
+    requestAnimationFrame(tick);
+  }
+
+  // ---------- level-up effects ----------
+  const effects = [];
+  function levelUp(target, big) {
+    if (!has3D || !scene) return;
+    const g = new THREE.Group(); root.add(g);
+    const add = { blending: THREE.AdditiveBlending, transparent: true, depthWrite: false };
+    const s0 = big ? 3.2 : 0.9;
+    const rings = [0, 0.18, 0.36].map(delay => {
+      const m = new THREE.Mesh(new THREE.RingGeometry(0.85, 1, 48), new THREE.MeshBasicMaterial({ color: 0xffd35a, side: THREE.DoubleSide, ...add }));
+      m.rotation.x = -Math.PI / 2; g.add(m); return { m, delay };
+    });
+    const pillar = new THREE.Mesh(new THREE.CylinderGeometry(s0 * 0.75, s0 * 0.9, big ? 7 : 2.4, 24, 1, true), new THREE.MeshBasicMaterial({ color: 0xffe08a, side: THREE.DoubleSide, opacity: 0, ...add }));
+    g.add(pillar);
+    const sparks = Array.from({ length: big ? 36 : 14 }, (_, k) => {
+      const m = new THREE.Mesh(new THREE.OctahedronGeometry(big ? 0.12 : 0.07), new THREE.MeshBasicMaterial({ color: k % 3 ? 0xffe27a : 0xffffff, ...add }));
+      g.add(m); return { m, a: k / (big ? 36 : 14) * Math.PI * 2, r: s0 * (0.6 + (k % 5) * 0.12), d: (k % 7) * 0.06 };
+    });
+    effects.push({ g, rings, pillar, sparks, t: 0, dur: big ? 2.4 : 1.7, s0, big, target });
+  }
+  function updateEffects(dt) {
+    for (let i = effects.length - 1; i >= 0; i--) {
+      const e = effects[i]; e.t += dt; const u = e.t / e.dur;
+      if (e.custom) {
+        e.update(e, dt);
+        if (u >= 1) { if (e.cleanup) e.cleanup(); if (e.g) { root.remove(e.g); e.g.traverse(o => { if (o.geometry) o.geometry.dispose(); }); } effects.splice(i, 1); }
+        continue;
+      }
+      const pos = typeof e.target === 'function' ? e.target() : e.target;
+      e.g.position.copy(pos);
+      e.rings.forEach(({ m, delay }) => {
+        const k = Math.max(0, Math.min(1, (e.t - delay) / (e.dur * 0.6)));
+        m.scale.setScalar(e.s0 * (0.4 + k * 1.8)); m.material.opacity = k > 0 ? (1 - k) * 0.9 : 0;
+        m.position.y = e.big ? -0.2 : -0.5;
+      });
+      e.pillar.material.opacity = Math.sin(Math.min(1, u) * Math.PI) * 0.28;
+      e.pillar.position.y = (e.big ? 3.5 : 1.2) - 0.6;
+      e.sparks.forEach(sp => {
+        const k = Math.max(0, u - sp.d);
+        const a = sp.a + k * 5;
+        sp.m.position.set(Math.cos(a) * sp.r, -0.4 + k * (e.big ? 6 : 2.6), Math.sin(a) * sp.r);
+        sp.m.material.opacity = k > 0 ? Math.max(0, 1 - k) : 0; sp.m.rotation.y += dt * 6;
+      });
+      if (u >= 1) { root.remove(e.g); e.g.traverse(o => { if (o.geometry) o.geometry.dispose(); }); effects.splice(i, 1); }
+    }
+  }
+  // a temporary glow around a new bee, with a sparkle trail while it flies in
+  const auras = [], trail = [];
+  function aura(id, seconds) {
+    if (!has3D || !scene) return;
+    const add = { blending: THREE.AdditiveBlending, transparent: true, depthWrite: false };
+    const halo = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 18), new THREE.MeshBasicMaterial({ color: 0xffe08a, opacity: 0, ...add }));
+    const core = new THREE.Mesh(new THREE.SphereGeometry(0.55, 20, 14), new THREE.MeshBasicMaterial({ color: 0xffffff, opacity: 0, ...add }));
+    const light = new THREE.PointLight(0xffd35a, 0, 6);
+    const g = new THREE.Group(); g.add(halo, core, light); root.add(g);
+    auras.push({ id, g, halo, core, light, t: 0, dur: seconds, spawn: 0 });
+  }
+  function updateAuras(dt, now) {
+    const add = { blending: THREE.AdditiveBlending, transparent: true, depthWrite: false };
+    for (let i = auras.length - 1; i >= 0; i--) {
+      const a = auras[i], bee = meshes[a.id]; a.t += dt;
+      if (!bee || a.t >= a.dur) { root.remove(a.g); a.g.traverse(o => o.geometry && o.geometry.dispose()); auras.splice(i, 1); continue; }
+      const fade = Math.min(1, a.t / 0.8) * Math.min(1, (a.dur - a.t) / 1.5);
+      const pulse = 0.75 + Math.sin(now / 180) * 0.25;
+      a.g.position.copy(bee.position);
+      a.halo.scale.setScalar(1 + Math.sin(now / 260) * 0.12);
+      a.halo.material.opacity = 0.28 * fade * pulse; a.core.material.opacity = 0.35 * fade * pulse; a.light.intensity = 1.6 * fade;
+      // sparkles fall off behind the bee while it is still flying in
+      a.spawn -= dt;
+      if (bee.userData.fl.state === 'joining' && a.spawn <= 0 && !reduced) {
+        a.spawn = 0.05;
+        const sp = new THREE.Mesh(new THREE.OctahedronGeometry(0.1), new THREE.MeshBasicMaterial({ color: Math.random() < 0.5 ? 0xffe27a : 0xffffff, ...add }));
+        sp.position.copy(bee.position).add(new THREE.Vector3((Math.random() - 0.5) * 0.6, (Math.random() - 0.5) * 0.4, (Math.random() - 0.5) * 0.6));
+        root.add(sp); trail.push({ m: sp, t: 0 });
+      }
+    }
+    for (let i = trail.length - 1; i >= 0; i--) {
+      const sp = trail[i]; sp.t += dt;
+      sp.m.position.y -= dt * 0.6; sp.m.rotation.y += dt * 5; sp.m.material.opacity = Math.max(0, 1 - sp.t / 1.2);
+      if (sp.t > 1.2) { root.remove(sp.m); sp.m.geometry.dispose(); trail.splice(i, 1); }
+    }
+  }
+  const hivePos = () => new THREE.Vector3(0, 1.0, 0);
+  const beePos = id => () => meshes[id] ? meshes[id].position : hivePos();
+
+  // ---------- spotting frame + manual learning ----------
+  let spotId = null, spotUntil = 0;
+  function spot(id, ms) {
+    spotId = id; spotUntil = performance.now() + ms;
+    $('spotLabel').textContent = id; $('spot').hidden = false; $('spot').classList.add('pulse');
+  }
+  function updateSpot(now, w, h) {
+    const el = $('spot');
+    if (!spotId || now > spotUntil || !meshes[spotId]) { el.hidden = true; spotId = null; return; }
+    const v = meshes[spotId].position.clone().project(camera);
+    el.style.left = ((v.x + 1) / 2 * w) + 'px'; el.style.top = ((1 - v.y) / 2 * h) + 'px';
+  }
+  function related(a, b) { return a !== b && (cropOf(a) === cropOf(b) || settingOf(a) === settingOf(b)); }
+
+  // ---------- manual learning: freeze, blue skill-up, hive power-up, power transfer, farm sparkle ----------
+  const BLUE = 0x5ab8ff, ADD = () => ({ blending: THREE.AdditiveBlending, transparent: true, depthWrite: false });
+  // blue light climbing from the bottom to the top of a bee, a farm or the hive
+  const POWER = {
+    bee:  { h: 2.6, rad: 0.95, base: -0.9, dur: 1.8, n: 18, spark: 0.07 },
+    farm: { h: 4.4, rad: 2.3,  base: 0.1,  dur: 2.4, n: 34, spark: 0.1 },
+    hive: { h: 7,   rad: 3.3,  base: -0.2, dur: 2.2, n: 42, spark: 0.12 },
+  };
+  function powerUp(target, kind) {
+    if (!has3D || !scene) return;
+    const c = POWER[kind === true ? 'hive' : kind === false || !kind ? 'bee' : kind];
+    const g = new THREE.Group(); root.add(g);
+    const pillar = new THREE.Mesh(new THREE.CylinderGeometry(c.rad, c.rad * 1.05, 1, 32, 1, true), new THREE.MeshBasicMaterial({ color: BLUE, side: THREE.DoubleSide, opacity: 0, ...ADD() }));
+    g.add(pillar);
+    const rings = [0, 0.15, 0.3, 0.45].map(d => {
+      const m = new THREE.Mesh(new THREE.RingGeometry(0.9, 1, 48), new THREE.MeshBasicMaterial({ color: 0x9fdcff, side: THREE.DoubleSide, opacity: 0, ...ADD() }));
+      m.rotation.x = -Math.PI / 2; g.add(m); return { m, d };
+    });
+    const sparks = Array.from({ length: c.n }, (_, k) => {
+      const m = new THREE.Mesh(new THREE.OctahedronGeometry(c.spark), new THREE.MeshBasicMaterial({ color: k % 3 ? 0x8fd3ff : 0xffffff, opacity: 0, ...ADD() }));
+      g.add(m); return { m, a: k * 2.39, r: c.rad * (0.5 + (k % 4) * 0.15), d: (k % 9) * 0.05 };
+    });
+    effects.push({ custom: true, g, t: 0, dur: c.dur, update(e) {
+      const pos = typeof target === 'function' ? target() : target; g.position.copy(pos);
+      const u = e.t / e.dur, grow = Math.min(1, u / 0.55);
+      pillar.scale.set(1, Math.max(0.01, grow * c.h), 1); pillar.position.y = c.base + grow * c.h / 2;
+      pillar.material.opacity = 0.35 * Math.sin(Math.min(1, u) * Math.PI);
+      rings.forEach(({ m, d }) => { const k = Math.max(0, Math.min(1, (u - d) / 0.55)); m.position.y = c.base + k * c.h; m.scale.setScalar(c.rad * (1.15 - k * 0.35)); m.material.opacity = k > 0 && k < 1 ? 0.9 * (1 - k * 0.6) : 0; });
+      sparks.forEach(sp => { const k = Math.max(0, u - sp.d); const a = sp.a + k * 6; sp.m.position.set(Math.cos(a) * sp.r, c.base + k * c.h * 1.1, Math.sin(a) * sp.r); sp.m.material.opacity = k > 0 ? Math.max(0, 1 - k) : 0; });
+    } });
+  }
+  // a stream of glowing orbs flowing from the hive to a farm
+  function powerStream(farmId, onArrive) {
+    if (!has3D || !scene || !farms[farmId]) { onArrive && onArrive(); return; }
+    const a = new THREE.Vector3(0, HIVE_TOP + 0.6, 0), b = farms[farmId].center.clone().setY(0.9);
+    const mid = a.clone().add(b).multiplyScalar(0.5); mid.y += 2.6;
+    const curve = new THREE.QuadraticBezierCurve3(a, mid, b);
+    const orbs = Array.from({ length: 16 }, (_, k) => {
+      const m = new THREE.Mesh(new THREE.SphereGeometry(k === 0 ? 0.2 : 0.13 - k * 0.004, 10, 8), new THREE.MeshBasicMaterial({ color: k % 2 ? BLUE : 0xcfeeff, opacity: 0, ...ADD() }));
+      root.add(m); return { m, lag: k * 0.045 };
+    });
+    let fired = false;
+    effects.push({ custom: true, g: null, orbs, t: 0, dur: 2.1, update(e) {
+      const u = e.t / 1.3;
+      orbs.forEach(o => { const k = u - o.lag; o.m.visible = k > 0 && k < 1; if (o.m.visible) { o.m.position.copy(curve.getPoint(k)); o.m.material.opacity = 0.9 * (1 - Math.abs(k - 0.5)); } });
+      if (!fired && u >= 1) { fired = true; onArrive && onArrive(); }
+    }, cleanup() { orbs.forEach(o => { root.remove(o.m); o.m.geometry.dispose(); }); } });
+  }
+  // the transformation sparkle: stars swirl around the farm and rise, then a flash
+  function farmSparkle(farmId) {
+    const f = farms[farmId]; if (!f || !has3D || !scene) return;
+    const g = new THREE.Group(); g.position.copy(f.center); root.add(g);
+    const colors = [0xffffff, 0xffd6f5, 0xfff1a8, 0xb8e6ff];
+    const stars = Array.from({ length: 48 }, (_, k) => {
+      const m = new THREE.Mesh(new THREE.OctahedronGeometry(0.09 + (k % 3) * 0.03), new THREE.MeshBasicMaterial({ color: colors[k % 4], opacity: 0, ...ADD() }));
+      g.add(m); return { m, a: k * 0.52, d: (k % 12) * 0.035 };
+    });
+    const ribbon = new THREE.Mesh(new THREE.TorusGeometry(2.3, 0.07, 8, 64), new THREE.MeshBasicMaterial({ color: 0xffe3fa, opacity: 0, ...ADD() }));
+    ribbon.rotation.x = Math.PI / 2; g.add(ribbon);
+    const flash = new THREE.Mesh(new THREE.SphereGeometry(1.8, 24, 16), new THREE.MeshBasicMaterial({ color: 0xffffff, opacity: 0, ...ADD() }));
+    flash.position.y = 0.9; g.add(flash);
+    f.shine = 0;
+    effects.push({ custom: true, g, t: 0, dur: 2.4, update(e) {
+      const u = e.t / e.dur;
+      stars.forEach(st => {
+        const k = Math.max(0, Math.min(1, (u - st.d) / 0.8)), a = st.a + k * 9, r = 2.4 - k * 1.6;
+        st.m.position.set(Math.cos(a) * r, 0.1 + k * 3.2, Math.sin(a) * r); st.m.rotation.y = a * 2;
+        st.m.material.opacity = k > 0 ? Math.sin(k * Math.PI) : 0;
+      });
+      const rk = Math.min(1, u / 0.8); ribbon.position.y = 0.1 + rk * 2.6; ribbon.scale.setScalar(1 - rk * 0.6); ribbon.material.opacity = Math.sin(rk * Math.PI) * 0.8;
+      const fk = Math.max(0, (u - 0.72) / 0.28); flash.material.opacity = Math.sin(Math.min(1, fk) * Math.PI) * 0.55; flash.scale.setScalar(0.4 + fk * 0.9);
+      f.shine = Math.sin(Math.min(1, u) * Math.PI);
+    } });
+  }
+
+  // Manual learning: the selected farm learns from the hive. The hive powers up, sends a stream of
+  // knowledge to that farm only, and the farm (with its bee) powers up.
+  function manualLearn(id) {
+    const n = nodeById(id);
+    selected = id; confirmDel = null; refreshAll(); spot(id, 9000);
+    if (has3D && farms[id]) { const c = farms[id].center; yawTarget = Math.atan2(c.x, c.z); }
+    if (!n.backbone) { $('searchMsg').textContent = `${id} has no model yet. Set one up, then try again.`; return; }
+    if (n.learning) { $('searchMsg').textContent = `${id} is already learning.`; return; }
+    // what the hive holds for this farm: its own domain at full weight, related domains at half
+    const fromHive = state.rows.filter(r => r.node_id !== id && (r.domain === n.domain || related(r.domain, n.domain)));
+    const sourceFarms = new Set(fromHive.map(r => r.node_id)).size;
+    n.learning = true; n.frozen = true;
+    $('searchMsg').textContent = `The hive is gathering knowledge for ${id}.`;
+    powerUp(hivePos(), 'hive');
+    setTimeout(() => {
+      $('searchMsg').textContent = `Knowledge is flowing from the hive to ${id}.`;
+      powerStream(id, () => {
+        powerUp(() => farms[id] ? farms[id].center : hivePos(), 'farm');
+        powerUp(beePos(id), 'bee');
+        n.received = (n.received || 0) + 1;
+        setTimeout(() => {
+          n.frozen = false; n.learning = false;
+          const msg = fromHive.length
+            ? `${id} learned ${fromHive.length} knowledge version${fromHive.length === 1 ? '' : 's'} from ${sourceFarms} farm${sourceFarms === 1 ? '' : 's'} through the hive.`
+            : `${id} is up to date. The hive has no other knowledge for ${n.domain} yet.`;
+          $('searchMsg').textContent = msg;
+          log(`manual learning: <b>${id}</b> learned from the hive (${fromHive.length} version${fromHive.length === 1 ? '' : 's'}, ${sourceFarms} source farm${sourceFarms === 1 ? '' : 's'})`);
+          renderInspector();
+        }, 2400);
+      });
+    }, 1700);
+  }
+  $('searchForm').addEventListener('submit', e => {
+    e.preventDefault();
+    const q = $('mindSearch').value.trim().toLowerCase();
+    if (!q) { $('searchMsg').textContent = 'Type a Mind ID, for example tw-tainan-01.'; return; }
+    const n = state.nodes.find(x => x.id === q) || state.nodes.find(x => x.id.includes(q));
+    if (!n) { $('searchMsg').textContent = `No bee has a Mind ID matching "${q}".`; return; }
+    manualLearn(n.id);
+  });
+  function renderMindIds() { $('mindIds').innerHTML = state.nodes.map(n => `<option value="${n.id}">`).join(''); }
+
+  // ---------- add a farm ----------
+  Object.keys(CROPS).forEach(c => $('fcCrop').add(new Option(c, c)));
+  SETTINGS.forEach(v => $('fcSetting').add(new Option(v, v)));
+  $('fcCrop').add(new Option('+ New crop…', '__new')); $('fcSetting').add(new Option('+ New setting…', '__new'));
+  $('fcCrop').addEventListener('change', () => { $('fcCropNewWrap').hidden = $('fcCrop').value !== '__new'; if (!$('fcCropNewWrap').hidden) $('fcCropNew').focus(); });
+  $('fcSetting').addEventListener('change', () => { $('fcSettingNewWrap').hidden = $('fcSetting').value !== '__new'; if (!$('fcSettingNewWrap').hidden) $('fcSettingNew').focus(); });
+  // a new crop or setting becomes a choice everywhere (your node, new farms, the table editor)
+  function addChoice(value, ids) {
+    ids.forEach(id => {
+      const sel = $(id); if ([...sel.options].some(o => o.value === value)) return;
+      sel.add(new Option(value, value), sel.querySelector('option[value="__new"]'));
+    });
+  }
+  const titleCase = t => t.trim().replace(/\s+/g, ' ').toLowerCase().replace(/(^|\s)\S/g, c => c.toUpperCase());
+  const NAME_OK = /^[A-Za-z][A-Za-z ]{1,19}$/;
+  function resolveDomain() {
+    let crop = $('fcCrop').value, setting = $('fcSetting').value, created = [];
+    if (crop === '__new') {
+      const name = titleCase($('fcCropNew').value);
+      if (!NAME_OK.test(name)) return { error: 'New crop: use 2–20 letters, for example Durian.' };
+      if (!CROPS[name]) {
+        const conds = [...new Set(['Healthy', ...$('fcConds').value.split(',').map(titleCase).filter(c => NAME_OK.test(c))])];
+        if (conds.length < 2) conds.push('Diseased');
+        CROPS[name] = conds; created.push(`crop <b>${name}</b> (${conds.join(', ')})`);
+        addChoice(name, ['crop', 'fcCrop', 'edCrop']);
+      }
+      crop = name;
+    }
+    if (setting === '__new') {
+      const name = titleCase($('fcSettingNew').value);
+      if (!NAME_OK.test(name)) return { error: 'New setting: use 2–20 letters, for example Orchard.' };
+      if (!SETTINGS.includes(name)) { SETTINGS.push(name); created.push(`setting <b>${name}</b>`); addChoice(name, ['setting', 'fcSetting', 'edSetting']); }
+      setting = name;
+    }
+    return { domain: `${crop} · ${setting}`, created };
+  }
+  Object.entries(BACKBONES).forEach(([k, b]) => $('fcModel').add(new Option(`${b.name} · ${b.mb} MB`, k)));
+  $('fcThr').addEventListener('input', e => $('fcThrOut').textContent = (+e.target.value).toFixed(2));
+  $('fcWma').addEventListener('input', e => $('fcWmaOut').textContent = (+e.target.value).toFixed(2));
+  let pendingId = null;
+  function suggestId() {
+    let k = state.nodes.length + 1, id;
+    do { id = `mind-${String(k).padStart(2, '0')}`; k++; } while (nodeById(id));
+    return id;
+  }
+  function placeCard(w, h) {
+    const card = $('farmCard');
+    if (card.hidden || !pendingId || !farms[pendingId]) return;
+    const v = farms[pendingId].center.clone().setY(0.6).project(camera);
+    const x = (v.x + 1) / 2 * w, y = (1 - v.y) / 2 * h, cw = card.offsetWidth, ch = card.offsetHeight;
+    let left = x + 70; if (left + cw > w - 10) left = x - 70 - cw;
+    left = Math.max(10, Math.min(w - cw - 10, left));
+    const top = Math.max(10, Math.min(h - ch - 10, y - ch / 2));
+    card.style.left = left + 'px'; card.style.top = top + 'px';
+  }
+  function openCard(id) {
+    const n = nodeById(id);
+    $('fcId').value = id; $('fcWhy').textContent = '';
+    $('fcThr').value = n.threshold; $('fcThrOut').textContent = n.threshold.toFixed(2);
+    $('fcWma').value = n.alpha; $('fcWmaOut').textContent = n.alpha.toFixed(2);
+    $('farmCard').hidden = false; $('fcCrop').focus();
+  }
+  function renameNode(from, to) {
+    if (from === to) return;
+    const n = nodeById(from); n.id = to;
+    [meshes, labels, farms].forEach(map => { if (map[from]) { map[to] = map[from]; delete map[from]; } });
+    if (meshes[to]) meshes[to].userData.id = to;
+    if (farms[to]) farms[to].g.userData.id = to;
+    auras.forEach(a => { if (a.id === from) a.id = to; });
+    if (selected === from) selected = to; if (spotId === from) spotId = to;
+    if (pendingId === from) pendingId = to;
+    if (editId === from) editId = to;
+  }
+  $('addFarm').addEventListener('click', () => {
+    if (pendingId) { $('fcWhy').textContent = 'Finish setting up this farm first.'; $('fcCrop').focus(); return; }
+    const id = suggestId();
+    const node = { id, domain: '', backbone: null, threshold: 0.6, alpha: 0.85, hideBee: true };
+    state.nodes.push(node); pendingId = id;
+    if (has3D && scene) {
+      buildFarm(node, true);
+      const f = farms[id]; yawTarget = Math.atan2(f.center.x, f.center.z);
+      levelUp(() => f.center.clone().setY(0.2), false);
+      setTimeout(() => { node.hideBee = false; node.joining = true; updateScene(); spot(id, 8000); }, 1400);
+      setTimeout(() => openCard(id), 1500);
+    } else { node.hideBee = false; openCard(id); }
+    log(`a new farm <b>${id}</b> is joining the hive`);
+    selected = id; refreshAll();
+  });
+  $('farmCard').addEventListener('submit', e => {
+    e.preventDefault();
+    const n = nodeById(pendingId); if (!n) return;
+    const id = $('fcId').value.trim().toLowerCase();
+    if (!/^[a-z0-9-]{3,24}$/.test(id)) { $('fcWhy').textContent = 'Mind ID: use 3–24 lowercase letters, digits or dashes.'; return; }
+    if (id !== n.id && nodeById(id)) { $('fcWhy').textContent = `${id} is already in the hive. Pick another Mind ID.`; return; }
+    const dom = resolveDomain();
+    if (dom.error) { $('fcWhy').textContent = dom.error; return; }
+    renameNode(n.id, id);
+    n.domain = dom.domain; colorFor(n.domain);
+    if (dom.created.length) log(`new domain <b>${dom.domain}</b>: added ${dom.created.join(' and ')}`);
+    $('fcCrop').value = cropOf(n.domain); $('fcSetting').value = settingOf(n.domain);
+    $('fcCropNewWrap').hidden = $('fcSettingNewWrap').hidden = true; $('fcCropNew').value = $('fcConds').value = $('fcSettingNew').value = '';
+    n.backbone = $('fcModel').value; n.threshold = +$('fcThr').value; n.alpha = +$('fcWma').value;
+    $('farmCard').hidden = true; pendingId = null;
+    log(`<b>${id}</b> is farming <b>${n.domain}</b> with ${BACKBONES[n.backbone].name}, threshold ${n.threshold.toFixed(2)}, WMA α ${n.alpha.toFixed(2)}`);
+    selected = id; refreshAll(); spot(id, 4000);
+    if (farms[id]) levelUp(() => farms[id].center.clone().setY(0.2), false);
+  });
+  $('fcCancel').addEventListener('click', () => {
+    const id = pendingId; if (!id) return;
+    removeFarm(id); state.nodes = state.nodes.filter(n => n.id !== id);
+    $('farmCard').hidden = true; pendingId = null; if (selected === id) selected = null;
+    log(`farm <b>${id}</b> was removed before it started`); refreshAll();
+  });
+
+  // ---------- delete a farm ----------
+  function deleteFarm(id) {
+    const n = nodeById(id); if (!n || n.me || n.leaving) return;
+    confirmDel = null; n.leaving = true; if (has3D && scene) layoutFarms(false);
+    if (pendingId === id) { $('farmCard').hidden = true; pendingId = null; }
+    const f = farms[id]; if (f) { f.dying = 1; levelUp(() => f.center.clone().setY(0.2), false); }
+    renderInspector();
+    const versions = state.rows.filter(r => r.node_id === id).length;
+    setTimeout(() => {
+      removeFarm(id);
+      state.nodes = state.nodes.filter(x => x.id !== id);
+      if (selected === id) selected = null; if (spotId === id) spotId = null;
+      log(`farm <b>${id}</b> left the hive; its ${versions} knowledge version${versions === 1 ? '' : 's'} stay${versions === 1 ? 's' : ''} in the table`);
+      refreshAll();
+    }, has3D && scene ? 1700 : 0);
+  }
+
+  // ---------- boot ----------
+  state.nodes.forEach(n => colorFor(n.domain));
+  drawWma();
+  if (has3D) { try { initScene(); } catch (err) { stage.insertAdjacentHTML('beforeend', '<p class="help" style="position:absolute;inset:auto 14px 70px 14px">3D view unavailable in this browser. Everything else still works.</p>'); } }
+  else stage.insertAdjacentHTML('beforeend', '<p class="help" style="position:absolute;inset:auto 14px 70px 14px">3D view could not load. Everything else still works.</p>');
+  setMyDomain();
+  refreshAll();
+  log('hive loaded with example history from 7 nodes');
+})();
+</script>
+
+</body>
+</html>

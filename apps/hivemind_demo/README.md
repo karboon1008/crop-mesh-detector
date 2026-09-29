@@ -3,6 +3,20 @@
 Pick a bundled sample, upload a leaf photo or use the camera; the HiveMind-trained model
 predicts the crop and whether the leaf is healthy or diseased (and which disease).
 
+## HiveMind Studio (interactive 3D hive)
+
+`studio/` is a standalone page that shows the mesh as a farming game: each farm is a node with one
+bee flying to the Hive DB honeycomb. You can add, edit and delete farms, and search a Mind ID to
+watch that farm learn from the hive. The data is simulated. three.js is bundled in `studio/vendor/`,
+so it works without internet (fonts fall back to system fonts).
+
+```bash
+cd apps/hivemind_demo
+docker compose up studio        # then open http://localhost:8503
+```
+
+Stop it with `Ctrl+C`, then `docker compose down`. No Docker? Open `studio/index.html` in a browser.
+
 ## Using the dashboard
 
 1. **Choose a leaf photo** with *Sample photo*, *Upload* or *Camera*. Samples are held-out
