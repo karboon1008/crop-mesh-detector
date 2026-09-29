@@ -15,6 +15,7 @@ import streamlit as st
 from PIL import Image
 
 import db
+import farm_server
 import inference
 import leaf_detection
 import phone_alerts
@@ -121,6 +122,10 @@ with st.sidebar:
     field_lon = lon_col.number_input("Longitude", -180.0, 180.0, default_lon, format="%.5f")
     st.caption(f"**On the phone:** install the free **ntfy** app, tap **+** and subscribe to "
                f"`{ntfy_topic}` (server {ntfy_server.removeprefix('https://')}). Allow notifications.")
+    server = farm_server.config()
+    st.caption(f"Also sent to the **HiveMind Farmer** app through the alerts server at `{server[0]}` "
+               f"(as field camera `{server[1]}`)." if server else
+               "The HiveMind Farmer app isn't connected: set ALERTS_URL (docker-compose.yml does).")
     if st.button("Send a test alert"):
         try:
             phone_alerts.send(ntfy_server, ntfy_topic, "HiveMind test alert",
@@ -143,12 +148,20 @@ with st.sidebar:
             collect_folder = "".join(c for c in collect_folder if c.isalnum() or c in "-_") or "room"
             collect_dir = NEGATIVES_DIR / collect_folder
 
-def send_phone_alert(results: list[dict], image: Image.Image) -> None:
-    """One ntfy push per diagnosed photo that has at least one diseased leaf."""
-    if not alerts_on or not ntfy_topic:
+def send_phone_alert(results: list[dict], image: Image.Image, leaf_images: list[Image.Image]) -> None:
+    """For a diagnosed photo with at least one diseased leaf: one ntfy push, and each diseased
+    leaf reported to the alerts server so it appears in the HiveMind Farmer app.
+    """
+    if not alerts_on or not any(r["tier"] == "diseased" for r in results):
         return
+    server = farm_server.config()
+    if server:
+        try:
+            farm_server.report(*server, results, leaf_images, field_lat, field_lon)
+        except Exception as e:
+            st.warning(f"Not sent to the HiveMind Farmer app (alerts server {server[0]}): {e}")
     alert = phone_alerts.build_alert(results, field_name, field_lat, field_lon)
-    if alert is None:
+    if alert is None or not ntfy_topic:
         return
     photo = image.convert("RGB")
     photo.thumbnail((1280, 1280))
@@ -253,7 +266,7 @@ with right:
                 st.session_state["last_leaf_results"] = (targets, results)
                 alert_photo = (leaf_detection.draw_leaves(image, leaves, [r["tier"] for r in results], box_style)
                                if leaves else image)
-                send_phone_alert(results, alert_photo)
+                send_phone_alert(results, alert_photo, targets)
 
         targets, results = st.session_state.get("last_leaf_results", ([], []))
         if results:
@@ -296,7 +309,7 @@ with right:
                 )
                 st.session_state["last_photo_id"] = photo_id
                 st.session_state["last_result"] = result
-                send_phone_alert([result], image)
+                send_phone_alert([result], image, [image])
 
         result = st.session_state.get("last_result")
         if result is not None:

@@ -64,6 +64,15 @@ on an iPhone or the simulator.
    real one ("Disease detected: Tomato tomato yellow leaf curl virus").
 4. Tap it: the app opens on the plant's location. Show **Navigate**, the treatment guide, and **I've treated it**.
 
+## Connected to the dashboard (Docker)
+
+Start the dashboard with `cd apps/hivemind_demo && docker compose up --build`: that also starts the
+alerts server on port 8080. In the app (Simulator), set **Settings > Demo mode off**, keep the
+defaults (`http://localhost:8080`, farm code `demo-farm-token`) and tap **Connect**. Every disease
+the dashboard finds then shows up in the app within ~5 s, with a notification. While open, the app
+checks the server every 5 s and notifies for alerts it hasn't announced yet, with no Apple push
+account needed.
+
 ## Run it against the real alerts service
 
 On the laptop (same Wi-Fi as the phone), from the repo root:

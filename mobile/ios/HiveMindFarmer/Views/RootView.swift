@@ -20,6 +20,14 @@ struct RootView: View {
                 .tabItem { Label("Settings", systemImage: "gearshape.fill") }
                 .tag(AppRouter.Tab.settings)
         }
+        .task {
+            // While the app is open, check the farm server every 5 s; new alerts show up in the
+            // list and as a notification (AlertStore.notifyNewAlerts). Demo mode just reloads.
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(5))
+                await store.refresh()
+            }
+        }
     }
 }
 

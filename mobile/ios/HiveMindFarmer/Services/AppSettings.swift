@@ -33,8 +33,10 @@ final class AppSettings: ObservableObject {
 
     private init() {
         let defaults = UserDefaults.standard
-        serverURL = defaults.string(forKey: Keys.serverURL) ?? "http://192.168.1.10:8080"
-        farmToken = Keychain.get(Keys.farmToken) ?? ""
+        // Defaults match the demo Docker setup (apps/hivemind_demo/docker-compose.yml) seen from the
+        // iPhone Simulator on the same Mac. On a real iPhone use the Mac's network address instead.
+        serverURL = defaults.string(forKey: Keys.serverURL) ?? "http://localhost:8080"
+        farmToken = Keychain.get(Keys.farmToken) ?? "demo-farm-token"
         demoMode = defaults.object(forKey: Keys.demoMode) as? Bool ?? true
         deviceToken = defaults.string(forKey: Keys.deviceToken)
     }

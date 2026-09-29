@@ -12,3 +12,20 @@ services:
       FIELD_NAME: ${FIELD_NAME:-Tomato greenhouse A}
       FIELD_LAT: ${FIELD_LAT:-4.47212}
       FIELD_LON: ${FIELD_LON:-101.37913}
+      # Farmer alerts server (the iPhone app's backend): the dashboard reports diseased leaves
+      # to it as field camera node_0. Set ALERTS_URL to empty to turn this off.
+      ALERTS_URL: ${ALERTS_URL-http://alerts:8080}
+      ALERTS_NODE_ID: ${ALERTS_NODE_ID:-node_0}
+      ALERTS_NODE_KEY: ${ALERTS_NODE_KEY:-demo-node-0-key}
+    depends_on:
+      - alerts
+
+  alerts:
+    build:
+      context: ../..
+      dockerfile: services/alerts/Dockerfile
+    image: hivemind-alerts
+    ports:
+      - "8080:8080"        # the iPhone app (Simulator: http://localhost:8080)
+    volumes:
+      - ./data/alerts:/app/services/alerts/data   # alerts.db stays on the host

@@ -73,7 +73,7 @@ struct SettingsView: View {
                             let alert = DemoData.simulatedAlert(id: demoAlertID)
                             demoAlertID += 1
                             store.addDemoAlert(alert)
-                            NotificationAction.scheduleDemoNotification(for: alert)
+                            NotificationAction.scheduleAlertNotification(for: alert)
                         } label: { Label("Simulate a detection (in 5 s)", systemImage: "wand.and.stars") }
                     }
                 } header: {

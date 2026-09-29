@@ -55,9 +55,9 @@ enum NotificationAction {
         item.openInMaps(launchOptions: [MKLaunchOptionsDirectionsModeKey: MKLaunchOptionsDirectionsModeWalking])
     }
 
-    /// Demo mode: the same notification the server would push, delivered locally
-    /// after `delay` seconds (lock the phone to see it on the lock screen).
-    static func scheduleDemoNotification(for alert: DiseaseAlert, delay: TimeInterval = 5) {
+    /// The same notification the server would push through APNs, shown locally: for a new
+    /// alert found by polling the server, or (demo mode) a simulated one after `delay` seconds.
+    static func scheduleAlertNotification(for alert: DiseaseAlert, delay: TimeInterval = 5) {
         let content = UNMutableNotificationContent()
         content.title = "Disease detected: \(DisplayName.pretty(alert.crop)) \(DisplayName.pretty(alert.disease).lowercased())"
         content.body = "\(alert.fieldName) (\(Coordinates.decimal(alert.coordinate))), \(Int(alert.confidence * 100))% confidence. Tap to see where."
@@ -66,8 +66,8 @@ enum NotificationAction {
         content.threadIdentifier = "alert-\(alert.id)"
         content.userInfo = ["kind": "disease_alert", "alert_id": alert.id,
                             "latitude": alert.latitude, "longitude": alert.longitude]
-        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: delay, repeats: false)
-        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "demo-\(alert.id)", content: content, trigger: trigger))
+        let trigger = delay > 0 ? UNTimeIntervalNotificationTrigger(timeInterval: delay, repeats: false) : nil
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "alert-\(alert.id)", content: content, trigger: trigger))
     }
 }
 

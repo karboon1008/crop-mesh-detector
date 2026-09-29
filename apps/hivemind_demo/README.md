@@ -148,6 +148,24 @@ created once and kept in `data/ntfy_topic.txt`; set `NTFY_TOPIC` to fix it. Anyo
 topic can read the alerts on ntfy.sh, so keep it long and random. The dashboard needs internet
 access to send.
 
+## HiveMind Farmer iPhone app
+
+`docker compose up --build` also starts the **farmer alerts server** (port 8080), the backend of
+the iPhone app in `mobile/ios/`. Each diseased leaf the dashboard finds is reported to it as field
+camera `node_0`, with the field's coordinates and the leaf photo, and shows up in the app.
+
+1. Run the app in the Xcode **iPhone Simulator** (see `mobile/ios/README.md`).
+2. In the app: **Settings > Demo mode off**. The defaults are already the Docker setup: server
+   `http://localhost:8080`, farm code `demo-farm-token`. Tap **Connect**.
+3. Allow notifications (**Settings > Turn on disease alerts**).
+4. Diagnose a diseased leaf on the dashboard. Within ~5 s the app shows it in **Alerts** and on
+   the **Map**, and pops a **HiveMind Farmer** notification. Tap it for the location, photo and
+   treatment steps.
+
+The app checks the server every 5 s while it is open. Without a paid Apple developer account it
+can't be woken when closed, so for a locked phone use the ntfy alerts above. On a real iPhone,
+set the server to your Mac's network address, e.g. `http://192.168.1.23:8080`.
+
 ## Live camera
 
 With leaf detection on, **Use the camera** is a live view: the leaf detector runs in the browser

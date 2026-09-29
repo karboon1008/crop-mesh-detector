@@ -58,6 +58,7 @@ final class AlertStore: ObservableObject {
             loadDemo()
             return
         }
+        guard !isLoading else { return }  // the 5 s poll and a pull-to-refresh can overlap
         guard let client = settings.client else {
             errorMessage = APIError.notConfigured.errorDescription
             return
@@ -81,6 +82,7 @@ final class AlertStore: ObservableObject {
             isOffline = false
             errorMessage = nil
             saveCache()
+            notifyNewAlerts(openList)
         } catch {
             isOffline = true
             errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
@@ -189,7 +191,32 @@ final class AlertStore: ObservableObject {
         replace(alert)
     }
 
+    // MARK: - Notifications for new server alerts
+
+    private static let notifiedKey = "notifiedAlertIDs"
+    private static let primedKey = "notifiedAlertsPrimed"
+
+    /// Shows a notification for each alert the server has that this phone hasn't announced yet.
+    /// Works with a free Apple ID: the app polls the server (every 5 s while open, see RootView)
+    /// and posts a local notification, instead of the server pushing through APNs. The first
+    /// load only records what's already there, so opening the app doesn't replay old alerts.
+    private func notifyNewAlerts(_ alerts: [DiseaseAlert]) {
+        let defaults = UserDefaults.standard
+        var notified = Set(defaults.array(forKey: Self.notifiedKey) as? [Int] ?? [])
+        let primed = defaults.bool(forKey: Self.primedKey)
+        for alert in alerts where !notified.contains(alert.id) {
+            notified.insert(alert.id)
+            if primed && alert.status == .new {
+                NotificationAction.scheduleAlertNotification(for: alert, delay: 0)
+            }
+        }
+        defaults.set(Array(notified), forKey: Self.notifiedKey)
+        defaults.set(true, forKey: Self.primedKey)
+    }
+
     func resetForModeChange() {
+        UserDefaults.standard.removeObject(forKey: Self.notifiedKey)
+        UserDefaults.standard.removeObject(forKey: Self.primedKey)
         openAlerts = []
         closedAlerts = []
         nodes = []

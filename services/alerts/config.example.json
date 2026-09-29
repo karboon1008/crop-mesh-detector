@@ -1,0 +1,21 @@
+{
+  "_comment": "Demo config: two neighbouring farms in Cameron Highlands, Malaysia. Copy to config.json and change every token and key before real use. Add an \"apns\" block (team_id, key_id, key_path, bundle_id, use_sandbox) to send real push notifications; without it the service runs in dry-run mode.",
+  "db_path": "services/alerts/data/alerts.db",
+  "policy": {
+    "min_confidence": 0.6,
+    "merge_window_hours": 24,
+    "renotify_hours": 6,
+    "nearby_radius_km": 5.0,
+    "offline_after_minutes": 30
+  },
+  "farms": {
+    "farm_tanah_rata": {"name": "Tanah Rata Farm", "app_tokens": ["demo-farm-token"]},
+    "farm_brinchang": {"name": "Brinchang Farm", "app_tokens": ["demo-neighbour-token"]}
+  },
+  "nodes": {
+    "node_0": {"farm_id": "farm_tanah_rata", "key": "demo-node-0-key", "name": "Tomato greenhouse A", "latitude": 4.47212, "longitude": 101.37913},
+    "node_1": {"farm_id": "farm_tanah_rata", "key": "demo-node-1-key", "name": "Potato plot north", "latitude": 4.47580, "longitude": 101.38301},
+    "node_2": {"farm_id": "farm_tanah_rata", "key": "demo-node-2-key", "name": "Pepper row east", "latitude": 4.47031, "longitude": 101.38622},
+    "node_3": {"farm_id": "farm_brinchang", "key": "demo-node-3-key", "name": "Strawberry beds", "latitude": 4.49102, "longitude": 101.38845}
+  }
+}
