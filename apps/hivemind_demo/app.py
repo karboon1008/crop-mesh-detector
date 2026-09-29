@@ -188,93 +188,89 @@ detector = get_detector()
 
 # ---------------------------------------------------------------- sidebar
 with st.sidebar:
-    st.header("Model")
-    archs = list(ARCH_NAMES)
-    arch = st.selectbox(
-        "Architecture", archs, index=archs.index(BEST["arch"]),
-        format_func=lambda a: f"{ARCH_NAMES[a]} (up to {max(m['heldout_acc'] for m in MODELS if m['arch'] == a):.0%})",
-        help="The three network types HiveMind trained. Percentages are the best farm's held-out accuracy.",
-    )
-    farms = sorted((m for m in MODELS if m["arch"] == arch), key=lambda m: m["node"])
-    default = max(range(len(farms)), key=lambda i: farms[i]["heldout_acc"])
-    chosen = st.selectbox(
-        "Farm", farms, index=default,
-        format_func=lambda m: f"Farm {farm_no(m)}: {m['heldout_acc']:.1%}"
-                              + ("  ★ recommended" if m["path"] == BEST["path"] else ""),
-        help="Each farm's final model. The percentage is its held-out accuracy "
-             "(crop and condition both right on unseen photos).",
-    )
-    if chosen["path"] != BEST["path"]:
-        st.caption(f"★ The most accurate model is {model_name(BEST)} ({BEST['heldout_acc']:.1%}).")
-    st.markdown(f"**Held-out accuracy:** {chosen['heldout_acc']:.1%}  \n**Size:** {chosen['size_mb']} MB")
+    with st.container():
+        st.markdown("#### Model")
+        archs = list(ARCH_NAMES)
+        arch = st.selectbox(
+            "Architecture", archs, index=archs.index(BEST["arch"]),
+            format_func=lambda a: f"{ARCH_NAMES[a]} (up to {max(m['heldout_acc'] for m in MODELS if m['arch'] == a):.0%})",
+            help="The three network types HiveMind trained. Percentages are the best farm's held-out accuracy.",
+        )
+        farms = sorted((m for m in MODELS if m["arch"] == arch), key=lambda m: m["node"])
+        default = max(range(len(farms)), key=lambda i: farms[i]["heldout_acc"])
+        chosen = st.selectbox(
+            "Farm", farms, index=default,
+            format_func=lambda m: f"Farm {farm_no(m)}: {m['heldout_acc']:.1%}"
+                                  + ("  ★ recommended" if m["path"] == BEST["path"] else ""),
+            help="Each farm's final model. The percentage is its held-out accuracy "
+                 "(crop and condition both right on unseen photos).",
+        )
+        st.markdown(f"**Held-out accuracy:** {chosen['heldout_acc']:.1%}  \n**Size:** {chosen['size_mb']} MB")
+        if chosen["path"] != BEST["path"]:
+            st.caption(f"★ The most accurate model is {model_name(BEST)} ({BEST['heldout_acc']:.1%}).")
 
-    st.header("Leaf detection")
-    if detector is None:
-        find_leaves = False
-        st.caption("Off: no leaf detector in models/detector/. Without it, the whole (zoomed) photo "
-                   "is classified as one leaf. See README.md to add one.")
-    else:
-        find_leaves = st.toggle("Find every leaf first (two-stage)", value=True,
-                                help="Stage 1 finds each leaf; stage 2 classifies each crop with the farm model. "
-                                     "Turn it off to classify the whole photo as one leaf, with a zoom slider.")
-        leaf_threshold = st.slider("Leaf confidence threshold", 0.1, 0.9, detector.default_threshold, 0.05,
-                                   disabled=not find_leaves,
-                                   help="Lower it if leaves are missed, raise it if background is boxed.")
-        colour_check = st.toggle("Only plant-coloured boxes", value=True, disabled=not find_leaves,
-                                 help="Skips boxes whose pixels are mostly not leaf-coloured (cups, pets, sky, "
-                                      "walls). It can't reliably tell faces from leaves; retraining the detector "
-                                      "with no-leaf photos fixes that (see README).")
-        min_plant = leaf_detection.MIN_PLANT_FRACTION if colour_check else 0.0
-        box_style = st.radio("Boxes show", ["detector", "diagnosis"], horizontal=True, disabled=not find_leaves,
-                             format_func={"detector": "Leaf + score", "diagnosis": "Result number"}.get,
-                             help="Leaf + score: red boxes labelled like 'leaf 0.86'. "
-                                  "Result number: numbered to match the cards, coloured healthy/diseased/uncertain.")
+    # detector settings keep their defaults while hidden (collect mode still uses them)
+    leaf_threshold = detector.default_threshold if detector is not None else None
+    min_plant = leaf_detection.MIN_PLANT_FRACTION
+    box_style = "detector"
+    st.divider()
+    with st.container():
+        st.markdown("#### Leaf detection")
+        if detector is None:
+            find_leaves = False
+            st.caption("Off: no leaf detector in models/detector/. Without it, the whole (zoomed) photo "
+                       "is classified as one leaf. See README.md to add one.")
+        else:
+            find_leaves = st.toggle("Find every leaf first (two-stage)", value=True,
+                                    help="Stage 1 finds each leaf; stage 2 classifies each crop with the farm model. "
+                                         "Turn it off to classify the whole photo as one leaf, with a zoom slider.")
+            if find_leaves:
+                leaf_threshold = st.slider("Leaf confidence threshold", 0.1, 0.9, detector.default_threshold, 0.05,
+                                           help="Lower it if leaves are missed, raise it if background is boxed.")
+                colour_check = st.toggle("Only plant-coloured boxes", value=True,
+                                         help="Skips boxes whose pixels are mostly not leaf-coloured (cups, pets, sky, "
+                                              "walls). It can't reliably tell faces from leaves; retraining the detector "
+                                              "with no-leaf photos fixes that (see README).")
+                min_plant = leaf_detection.MIN_PLANT_FRACTION if colour_check else 0.0
+                box_style = st.radio("Boxes show", ["detector", "diagnosis"], horizontal=True,
+                                     format_func={"detector": "Leaf + score", "diagnosis": "Result number"}.get,
+                                     help="Leaf + score: red boxes labelled like 'leaf 0.86'. "
+                                          "Result number: numbered to match the cards, coloured healthy/diseased/uncertain.")
 
-    st.header("Phone alerts")
-    alerts_on = st.toggle("Alert my phone when a disease is found", value=True,
-                          help="Sends a push notification through the free ntfy app, with the diagnosis, "
-                               "the field's coordinates, a Navigate button and the photo. "
-                               "Uncertain results never send an alert.")
     ntfy_server = phone_alerts.default_server()
-    with st.expander("Alert settings"):
-        ntfy_topic = st.text_input("ntfy topic", phone_alerts.default_topic(HERE / "data"),
-                                   help="Anyone who knows this name can read the alerts, so keep it long and random.")
-        default_name, default_lat, default_lon = phone_alerts.default_field()
-        field_name = st.text_input("Field name", default_name)
-        lat_col, lon_col = st.columns(2)
-        field_lat = lat_col.number_input("Latitude", -90.0, 90.0, default_lat, format="%.5f")
-        field_lon = lon_col.number_input("Longitude", -180.0, 180.0, default_lon, format="%.5f")
-        st.caption(f"**On the phone:** install the free **ntfy** app, tap **+** and subscribe to "
-                   f"`{ntfy_topic}` (server {ntfy_server.removeprefix('https://')}). Allow notifications.")
-        server = farm_server.config()
-        st.caption(f"Also sent to the **HiveMind Farmer** app through the alerts server at `{server[0]}` "
-                   f"(as field camera `{server[1]}`)." if server else
-                   "The HiveMind Farmer app isn't connected: set ALERTS_URL (docker-compose.yml does).")
-        if st.button("Send a test alert", disabled=not ntfy_topic):
-            try:
-                phone_alerts.send(ntfy_server, ntfy_topic, "HiveMind test alert",
-                                  f"Phone alerts work. Field: {field_name} ({field_lat:.5f}, {field_lon:.5f})",
-                                  field_lat, field_lon, field_name)
-                st.success("Test alert sent. Check the phone.")
-            except Exception as e:
-                st.error(f"Could not send: {e}")
-    if alerts_on and not ntfy_topic:
-        st.warning("Alerts are on but the ntfy topic is empty. Set one under *Alert settings*.")
+    st.divider()
+    with st.container():
+        st.markdown("#### Phone alerts")
+        alerts_on = st.toggle("Alert my phone when a disease is found", value=True,
+                              help="Sends a push notification through the free ntfy app, with the diagnosis, "
+                                   "the field's coordinates, a Navigate button and the photo. "
+                                   "Uncertain results never send an alert.")
+        with st.expander("Alert settings"):
+            ntfy_topic = st.text_input("ntfy topic", phone_alerts.default_topic(HERE / "data"),
+                                       help="Anyone who knows this name can read the alerts, so keep it long and random.")
+            default_name, default_lat, default_lon = phone_alerts.default_field()
+            field_name = st.text_input("Field name", default_name)
+            lat_col, lon_col = st.columns(2)
+            field_lat = lat_col.number_input("Latitude", -90.0, 90.0, default_lat, format="%.5f")
+            field_lon = lon_col.number_input("Longitude", -180.0, 180.0, default_lon, format="%.5f")
+            if st.button("Send a test alert", disabled=not ntfy_topic, width="stretch"):
+                try:
+                    phone_alerts.send(ntfy_server, ntfy_topic, "HiveMind test alert",
+                                      f"Phone alerts work. Field: {field_name} ({field_lat:.5f}, {field_lon:.5f})",
+                                      field_lat, field_lon, field_name)
+                    st.success("Test alert sent. Check the phone.")
+                except Exception as e:
+                    st.error(f"Could not send: {e}")
+            st.caption(f"**On the phone:** install the free **ntfy** app, tap **+** and subscribe to "
+                       f"`{ntfy_topic}` (server {ntfy_server.removeprefix('https://')}). Allow notifications.")
+            server = farm_server.config()
+            st.caption(f"Also sent to the **HiveMind Farmer** app through the alerts server at `{server[0]}` "
+                       f"(as field camera `{server[1]}`)." if server else
+                       "The HiveMind Farmer app isn't connected: set ALERTS_URL (docker-compose.yml does).")
+        if alerts_on and not ntfy_topic:
+            st.warning("Alerts are on but the ntfy topic is empty. Set one under *Alert settings*.")
 
-    collect_mode = False
-    if detector is not None:
-        st.header("Retraining photos")
-        collect_mode = st.toggle(
-            "Collect no-leaf photos", value=False,
-            help="Saves webcam frames with NO leaves in them (people, faces, hands, the room) for "
-                 "retraining the leaf detector so it stops boxing them. See README.md.")
-        if collect_mode:
-            collect_target = int(st.number_input("Photos to collect", 50, 3000, 400, 50))
-            collect_folder = st.text_input("Folder name", "room").strip() or "room"
-            collect_folder = "".join(c for c in collect_folder if c.isalnum() or c in "-_") or "room"
-            collect_dir = NEGATIVES_DIR / collect_folder
-            st.caption("Open **📷 Camera** to start collecting.")
-
+    st.divider()
     with st.expander("Tips for a good result"):
         st.markdown(
             """
@@ -289,6 +285,20 @@ with st.sidebar:
 - **Weak:** corn northern leaf blight, grape healthy, and corn/potato/strawberry healthy.
 """
         )
+
+    collect_mode = False
+    if detector is not None:
+        with st.expander("Retraining photos"):
+            collect_mode = st.toggle(
+                "Collect no-leaf photos", value=False,
+                help="Saves webcam frames with NO leaves in them (people, faces, hands, the room) for "
+                     "retraining the leaf detector so it stops boxing them. See README.md.")
+            if collect_mode:
+                collect_target = int(st.number_input("Photos to collect", 50, 3000, 400, 50))
+                collect_folder = st.text_input("Folder name", "room").strip() or "room"
+                collect_folder = "".join(c for c in collect_folder if c.isalnum() or c in "-_") or "room"
+                collect_dir = NEGATIVES_DIR / collect_folder
+                st.caption("Open **📷 Camera** to start collecting.")
 
 
 def send_phone_alert(results: list[dict], image: Image.Image, leaf_images: list[Image.Image]) -> None:
