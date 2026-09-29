@@ -14,7 +14,7 @@ Pi field camera ──POST /api/detections──▶ services/alerts ──APNs p
 | Tab | |
 |---|---|
 | **Home** | The farm at a glance. Satellite map with a zone around each field camera (red: new alert, orange: seen, green: clear, grey: offline), with chips for cameras online, lowest battery, open alerts and nearby outbreaks. Tap a camera for its card. Crop chips with open alerts. **Hive intelligence:** outbreaks on nearby farms with the risk to yours, and 7 days of outbreak activity on your farm and around it. **Learning together:** your confirmed and false-alarm reports, which train the next model round while photos stay on the farm. Last activities. |
-| **Alerts** | Open alerts, most urgent first (new before seen, then by disease urgency). Resolved alerts below. Outbreaks reported by nearby farms at the top. Pull to refresh. |
+| **Alerts** | Open alerts, most urgent first (new before seen, then by disease urgency). When your cameras have found a disease, those alerts come first and outbreaks reported by nearby farms follow; with none, nearby outbreaks lead. Resolved alerts below. Pull to refresh. |
 | **Alert detail** | Map pin on the plant (satellite view), coordinates in decimal and degrees/minutes/seconds, distance and direction from you, **Navigate** (Apple Maps walking directions), copy or share the location with a worker, the leaf photo, detection history, a treatment guide that works offline, and **I've treated it** / **False alarm** buttons with an optional note. |
 | **Map** | All alerts, field cameras (blue online, grey offline) and nearby outbreaks (orange ~1 km circles). Tap a pin to open its alert. |
 | **Fields** | Each camera's online state, last contact, battery, open alerts. |

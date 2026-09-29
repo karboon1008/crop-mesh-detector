@@ -15,23 +15,13 @@ struct AlertsView: View {
                     Section { Label(error, systemImage: "exclamationmark.circle").foregroundStyle(.red) }
                 }
 
-                if !store.risks.isEmpty {
-                    Section("Near your farm") {
-                        ForEach(store.risks) { risk in
-                            Button { router.tab = .map } label: { RiskRow(risk: risk) }
-                                .buttonStyle(.plain)
-                        }
-                    }
-                }
-
-                Section("Needs attention") {
-                    if store.openAlerts.isEmpty {
-                        ContentUnavailableView("No open alerts", systemImage: "leaf.fill",
-                                               description: Text("Your field cameras haven't found any disease."))
-                    }
-                    ForEach(store.openAlerts) { alert in
-                        NavigationLink(value: alert.id) { AlertRow(alert: alert) }
-                    }
+                // A disease on this farm comes first; with none, nearby farms' outbreaks lead.
+                if store.openAlerts.isEmpty {
+                    nearbySection
+                    needsAttentionSection
+                } else {
+                    needsAttentionSection
+                    nearbySection
                 }
 
                 if !store.closedAlerts.isEmpty {
@@ -47,6 +37,30 @@ struct AlertsView: View {
             .navigationDestination(for: Int.self) { id in AlertDetailView(alertID: id) }
             .refreshable { await store.refresh() }
             .overlay { if store.isLoading && store.openAlerts.isEmpty { ProgressView() } }
+        }
+    }
+
+    @ViewBuilder
+    private var nearbySection: some View {
+        if !store.risks.isEmpty {
+            Section("Near your farm") {
+                ForEach(store.risks) { risk in
+                    Button { router.tab = .map } label: { RiskRow(risk: risk) }
+                        .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    private var needsAttentionSection: some View {
+        Section("Needs attention") {
+            if store.openAlerts.isEmpty {
+                ContentUnavailableView("No open alerts", systemImage: "leaf.fill",
+                                       description: Text("Your field cameras haven't found any disease."))
+            }
+            ForEach(store.openAlerts) { alert in
+                NavigationLink(value: alert.id) { AlertRow(alert: alert) }
+            }
         }
     }
 }
