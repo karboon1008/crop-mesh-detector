@@ -12,6 +12,7 @@ struct HomeView: View {
     @State private var selectedNodeID: String?
 
     private var allAlerts: [DiseaseAlert] { store.openAlerts + store.closedAlerts }
+    private var coverages: [DiseaseCoverage] { store.openAlerts.map { DiseaseCoverage(alert: $0) } }
 
     private var placedNodes: [(node: FieldNode, coordinate: CLLocationCoordinate2D)] {
         store.nodes.compactMap { node in node.coordinate.map { (node: node, coordinate: $0) } }
@@ -57,11 +58,26 @@ struct HomeView: View {
                     .foregroundStyle(.orange.opacity(0.18))
                     .stroke(.orange, lineWidth: 1)
             }
+            // what each camera watches: a neutral outline, so it isn't mistaken for disease
             ForEach(placedNodes, id: \.node.id) { placed in
-                let color = zoneColor(for: placed.node)
                 MapCircle(center: placed.coordinate, radius: 60)
-                    .foregroundStyle(color.opacity(0.35))
-                    .stroke(color, lineWidth: 2)
+                    .foregroundStyle(.white.opacity(0.08))
+                    .stroke(placed.node.online ? .white.opacity(0.7) : .gray, lineWidth: 1)
+            }
+            // where each open disease has spread, estimated from its detections
+            ForEach(coverages) { coverage in
+                let color = coverage.alert.status.color
+                if let outline = coverage.outline {
+                    MapPolygon(coordinates: outline)
+                        .foregroundStyle(color.opacity(0.35))
+                        .stroke(color, style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
+                } else {
+                    MapCircle(center: coverage.center, radius: coverage.radius)
+                        .foregroundStyle(color.opacity(0.35))
+                        .stroke(color, style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
+                }
+            }
+            ForEach(placedNodes, id: \.node.id) { placed in
                 Annotation(placed.node.name, coordinate: placed.coordinate) {
                     Button { withAnimation(.snappy) { selectedNodeID = placed.node.id } } label: {
                         Image(systemName: "sensor.fill")
@@ -73,14 +89,17 @@ struct HomeView: View {
                 }
                 .annotationTitles(.hidden)
             }
-            ForEach(store.openAlerts) { alert in
-                Annotation(alert.title, coordinate: alert.coordinate) {
-                    Button { router.openAlert(alert.id) } label: {
-                        Image(systemName: "leaf.fill")
-                            .font(.caption)
-                            .padding(6)
-                            .background(alert.status.color, in: Circle())
-                            .foregroundStyle(.white)
+            ForEach(coverages) { coverage in
+                Annotation(coverage.alert.title, coordinate: coverage.center, anchor: .bottom) {
+                    Button { router.openAlert(coverage.alert.id) } label: {
+                        VStack(spacing: 0) {
+                            Text(DisplayName.pretty(coverage.alert.disease)).font(.caption2.weight(.bold))
+                            Text("≈ " + coverage.areaText).font(.caption2.monospacedDigit())
+                        }
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(coverage.alert.status.color, in: RoundedRectangle(cornerRadius: 6))
+                        .foregroundStyle(.white)
                     }
                 }
                 .annotationTitles(.hidden)
@@ -139,17 +158,9 @@ struct HomeView: View {
         }
     }
 
-    /// Red: a new alert in this camera's zone; orange: a seen, untreated one; green: clear.
-    private func zoneColor(for node: FieldNode) -> Color {
-        guard node.online else { return .gray }
-        let open = store.openAlerts.filter { $0.nodeId == node.nodeId }
-        if open.contains(where: { $0.status == .new }) { return .red }
-        return open.isEmpty ? .green : .orange
-    }
-
     /// Frames the farm's own cameras and alerts; nearby farms' outbreaks can sit off screen.
     private func fitFarm() {
-        let coordinates = placedNodes.map(\.coordinate) + store.openAlerts.map(\.coordinate)
+        let coordinates = placedNodes.map(\.coordinate) + coverages.flatMap { $0.outline ?? [$0.center] }
         guard let minLat = coordinates.map(\.latitude).min(), let maxLat = coordinates.map(\.latitude).max(),
               let minLon = coordinates.map(\.longitude).min(), let maxLon = coordinates.map(\.longitude).max()
         else { return }
@@ -204,6 +215,86 @@ struct HomeView: View {
             }
         }
         .cardStyle()
+    }
+}
+
+// MARK: - Disease coverage
+
+/// The area a disease covers, estimated from where it was detected: the outline around every
+/// detection position plus a margin, or, with fewer than three distinct positions, a circle
+/// that grows with how often it was seen.
+struct DiseaseCoverage: Identifiable {
+    let alert: DiseaseAlert
+    let center: CLLocationCoordinate2D
+    let outline: [CLLocationCoordinate2D]?
+    let radius: CLLocationDistance
+    let areaM2: Double
+
+    var id: Int { alert.id }
+
+    /// Beyond the outermost detection: a leaf that was seen sits in a patch that wasn't.
+    static let margin: Double = 12
+
+    init(alert: DiseaseAlert) {
+        self.alert = alert
+        let points = (alert.detections ?? []).map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
+            + [alert.coordinate]
+        let center = CLLocationCoordinate2D(latitude: points.map(\.latitude).reduce(0, +) / Double(points.count),
+                                            longitude: points.map(\.longitude).reduce(0, +) / Double(points.count))
+        self.center = center
+
+        // metres east (x) and north (y) of the centre; fine at field scale
+        let metresPerLat = 111_320.0
+        let metresPerLon = 111_320.0 * cos(center.latitude * .pi / 180)
+        let local = points.map { CGPoint(x: ($0.longitude - center.longitude) * metresPerLon,
+                                         y: ($0.latitude - center.latitude) * metresPerLat) }
+        let hull = Self.convexHull(local)
+
+        if hull.count >= 3 {
+            let grown = hull.map { p -> CGPoint in
+                let d = hypot(p.x, p.y)
+                let scale = d == 0 ? 1 : (d + CGFloat(Self.margin)) / d
+                return CGPoint(x: p.x * scale, y: p.y * scale)
+            }
+            outline = grown.map { CLLocationCoordinate2D(latitude: center.latitude + $0.y / metresPerLat,
+                                                         longitude: center.longitude + $0.x / metresPerLon) }
+            radius = Double(grown.map { hypot($0.x, $0.y) }.max() ?? 0)
+            let twiceArea = zip(grown, Array(grown.dropFirst()) + [grown[0]])
+                .reduce(CGFloat(0)) { $0 + ($1.0.x * $1.1.y - $1.1.x * $1.0.y) }
+            areaM2 = Double(abs(twiceArea)) / 2
+        } else {
+            let spread = Double(local.map { hypot($0.x, $0.y) }.max() ?? 0)
+            let byCount = min(15 + 4 * Double(alert.detectionCount), 60)
+            outline = nil
+            radius = max(spread + Self.margin, byCount)
+            areaM2 = .pi * radius * radius
+        }
+    }
+
+    var areaText: String {
+        areaM2 < 10_000 ? "\(Int((areaM2 / 10).rounded()) * 10) m²" : String(format: "%.2f ha", areaM2 / 10_000)
+    }
+
+    /// Andrew's monotone chain, counter-clockwise, without repeated points.
+    private static func convexHull(_ points: [CGPoint]) -> [CGPoint] {
+        let sorted = Array(Set(points.map { SIMD2(Double($0.x), Double($0.y)) }))
+            .sorted { $0.x != $1.x ? $0.x < $1.x : $0.y < $1.y }
+            .map { CGPoint(x: $0.x, y: $0.y) }
+        guard sorted.count >= 3 else { return sorted }
+        func cross(_ o: CGPoint, _ a: CGPoint, _ b: CGPoint) -> CGFloat {
+            (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
+        }
+        var lower: [CGPoint] = []
+        for p in sorted {
+            while lower.count >= 2 && cross(lower[lower.count - 2], lower[lower.count - 1], p) <= 0 { lower.removeLast() }
+            lower.append(p)
+        }
+        var upper: [CGPoint] = []
+        for p in sorted.reversed() {
+            while upper.count >= 2 && cross(upper[upper.count - 2], upper[upper.count - 1], p) <= 0 { upper.removeLast() }
+            upper.append(p)
+        }
+        return Array(lower.dropLast()) + Array(upper.dropLast())
     }
 }
 
