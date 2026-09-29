@@ -112,7 +112,7 @@ class DataStream:
         """
         pool = self.remaining()
         if not pool:
-            raise ValueError("Every PlantVillage image has already been used — the stream is exhausted.")
+            raise ValueError("Every dataset image has already been used — the stream is exhausted.")
         batch_idx = self.num_batches
         sample = stratified_sample(dataset, pool, size, seed=seed + 1000 * batch_idx)
         probe_idx = stratified_sample(dataset, sample, round(len(sample) * probe_fraction), seed=seed + 1000 * batch_idx + 1)

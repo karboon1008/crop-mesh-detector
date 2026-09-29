@@ -189,6 +189,27 @@ pip install -r requirements.txt
 
 ### Get the data
 
+**Default on this branch: healthy vs diseased leaves.** `config.yaml` points at the Kaggle
+["Leaves: Healthy or Diseased"](https://www.kaggle.com/datasets/prasanshasatpathy/leaves-healthy-or-diseased)
+dataset, rewritten into PlantVillage-style folders (`<Plant>___healthy`, `<Plant>___diseased`), so the
+whole pipeline runs unchanged: the crop head learns the plant, and the disease head learns healthy vs
+diseased. Any sick leaf of those plants can then be shown, not only PlantVillage's 38 diseases.
+
+```bash
+pip install kagglehub          # may need a Kaggle API token (kaggle.com > Settings > API)
+python scripts/prepare_leaves_healthy_diseased.py --download
+# or download the zip from the Kaggle page, unzip it, then:
+python scripts/prepare_leaves_healthy_diseased.py --source ~/Downloads/leaves-healthy-or-diseased
+```
+
+This writes `data/LeavesHealthyDiseased/` and prints the images per class. Then run
+`python -m src.train` as below. The continual batches are sized for this smaller dataset
+(`continual.first_batch_size` 2000, `next_batch_size` 500). If you use `non_iid_strategy: "manual"`
+or the scenarios, replace their PlantVillage plant names in `config.yaml` with plants the prepare
+script printed.
+
+**PlantVillage instead:**
+
 ```bash
 python scripts/download_plantvillage.py
 ```

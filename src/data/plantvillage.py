@@ -270,15 +270,16 @@ def filter_dataset_by_crop(
 
 
 def load_full_dataset(root: str | Path, image_size: int = 224) -> PlantVillageDataset:
-    """Loads every PlantVillage class folder under `root` — PlantVillage is
-    the project's only dataset.
+    """Loads every <Crop>___<Disease> class folder under `root`: the Kaggle
+    healthy/diseased leaves dataset (config.yaml's default) or PlantVillage.
     """
     root = Path(root)
     if not root.exists():
         raise FileNotFoundError(
-            f"PlantVillage data not found at {root}. Run "
-            f"'python scripts/download_plantvillage.py' first, or point "
-            f"config.yaml's data.root at your existing copy."
+            f"Dataset not found at {root}. For the healthy/diseased leaves dataset run "
+            f"'python scripts/prepare_leaves_healthy_diseased.py --download' (or --source <unzipped "
+            f"Kaggle download>); for PlantVillage run 'python scripts/download_plantvillage.py'. Or "
+            f"point config.yaml's data.root at your existing copy."
         )
     return PlantVillageDataset(root, image_size=image_size)
 
