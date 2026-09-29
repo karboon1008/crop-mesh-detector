@@ -158,3 +158,26 @@ def test_plant_colour_check_keeps_leaves_and_drops_non_plant_boxes():
     kept = leaf_detection.detect_leaves(detector, photo, 0.5)
     assert [leaf.score for leaf in kept] == pytest.approx([0.9])  # the brown box is dropped
     assert len(leaf_detection.detect_leaves(detector, photo, 0.5, min_plant_fraction=0)) == 2
+
+
+def test_live_camera_flags_collect_frames(monkeypatch):
+    import base64 as b64
+    import io as _io
+
+    import live_camera
+
+    monkeypatch.setattr(live_camera, "_sync_detector", lambda: None)
+    buf = _io.BytesIO()
+    Image.new("RGB", (8, 8)).save(buf, format="JPEG")
+    frame = "data:image/jpeg;base64," + b64.b64encode(buf.getvalue()).decode()
+    seen = {}
+
+    def fake_component(**kwargs):
+        seen.update(kwargs)
+        return {"image": frame, "captured_at": 5, "collect": True}
+
+    monkeypatch.setattr(live_camera, "_component", fake_component)
+    detector = leaf_detection.Detector(None, {"image_size": 320, "leaf_label": 1})
+    photo = live_camera.live_camera(detector, 0.5, collect=True, collected=12, collect_target=400)
+    assert photo.collect and photo.file_id == "camera-5"
+    assert (seen["collect"], seen["collected"], seen["collect_target"], seen["collect_interval_ms"]) == (True, 12, 400, 500)

@@ -40,24 +40,33 @@ def _sync_detector() -> None:
 class CapturedPhoto(io.BytesIO):
     """A captured frame that looks like Streamlit's UploadedFile to app.py (name + file_id)."""
 
-    def __init__(self, data: bytes, captured_at: int):
+    def __init__(self, data: bytes, captured_at: int, collect: bool = False):
         super().__init__(data)
         self.name = f"camera-{captured_at}.jpg"
         self.file_id = f"camera-{captured_at}"
+        self.collect = collect  # a collect-mode frame for the no-leaf retraining set, not for diagnosis
 
 
 def live_camera(detector: leaf_detection.Detector, threshold: float, max_leaves: int = 10,
                 min_plant_fraction: float = leaf_detection.MIN_PLANT_FRACTION,
-                key: str = "live_camera") -> CapturedPhoto | None:
-    """Shows the live camera; returns the last captured frame, or None before the first capture."""
+                collect: bool = False, collected: int = 0, collect_target: int = 400,
+                collect_interval: float = 0.5, key: str = "live_camera") -> CapturedPhoto | None:
+    """Shows the live camera; returns the last captured frame, or None before the first capture.
+
+    collect=True turns it into a collector for leaf-free retraining photos: after "Start
+    collecting" it sends a frame every `collect_interval` seconds (flagged .collect) until
+    `collected` (what app.py has saved so far) reaches `collect_target`.
+    """
     _sync_detector()
     value = _component(threshold=float(threshold), max_leaves=int(max_leaves),
                        leaf_label=int(detector.manifest["leaf_label"]), min_box_fraction=0.02,
                        min_plant_fraction=float(min_plant_fraction),
+                       collect=bool(collect), collected=int(collected), collect_target=int(collect_target),
+                       collect_interval_ms=int(collect_interval * 1000),
                        key=key, default=None)
     if not value or "image" not in value:
         return None
     header, _, encoded = value["image"].partition(",")
     if not header.startswith("data:image/"):
         return None
-    return CapturedPhoto(base64.b64decode(encoded), int(value.get("captured_at", 0)))
+    return CapturedPhoto(base64.b64decode(encoded), int(value.get("captured_at", 0)), bool(value.get("collect")))

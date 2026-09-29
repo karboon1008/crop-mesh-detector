@@ -91,7 +91,15 @@ default). It drops boxes whose pixels are mostly not vegetation-coloured. That c
 false alarms to 12% while keeping every sample leaf, but it **cannot tell faces from leaves**.
 
 **The real fix: retrain with "no leaf" photos** (people, faces, hands, the room). They need no
-labelling. About 15 minutes on a laptop CPU, from the repo root:
+labelling.
+
+**All in Docker (no Python on your computer):**
+1. **Collect:** in the demo app's sidebar, turn on **Retraining photos > Collect no-leaf photos**.
+   Open **Use the camera**, press **Start collecting** and move around with no leaves in view.
+   The photos land in `apps/hivemind_demo/data/negatives/<folder>/` on your computer.
+2. **Retrain and export:** follow [`docker/detector-training/README.md`](../../docker/detector-training/README.md).
+
+**Or with Python installed**, about 15 minutes on a laptop CPU, from the repo root:
 
 ```bash
 # 1. Collect ~300-500 frames with NO leaves or plants in view: move around, faces near and far,

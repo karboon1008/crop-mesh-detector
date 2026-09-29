@@ -58,7 +58,10 @@ const small = document.createElement("canvas");
 small.width = SIZE; small.height = SIZE;
 const sctx = small.getContext("2d", { willReadFrequently: true });
 
-let args = { threshold: 0.5, max_leaves: 10, min_box_fraction: 0.02, leaf_label: 1, min_plant_fraction: 0.10 };
+let args = { threshold: 0.5, max_leaves: 10, min_box_fraction: 0.02, leaf_label: 1, min_plant_fraction: 0.10,
+             collect: false, collected: 0, collect_target: 400, collect_interval_ms: 500 };
+// Collect mode: save leaf-free frames for retraining (app.py writes them to data/negatives/).
+let collecting = false, collectTimer = null, countdownUntil = 0;
 const patch = document.createElement("canvas");  // 64x64 sample of a box, for the plant-colour check
 patch.width = 64; patch.height = 64;
 const pctx = patch.getContext("2d", { willReadFrequently: true });
@@ -89,6 +92,9 @@ function setHeight() { send("streamlit:setFrameHeight", { height: document.body.
 window.addEventListener("message", (event) => {
   if (event.data && event.data.type === "streamlit:render") {
     Object.assign(args, event.data.args || {});
+    if (!args.collect && collecting) stopCollecting();
+    if (collecting && args.collected >= args.collect_target) stopCollecting();
+    updateButtons();
     setHeight();
   }
 });
@@ -156,7 +162,8 @@ function draw() {
     detect().then((found) => {
       leaves = found;
       lastMs = performance.now() - start;
-      statusEl.textContent = `${found.length} ${found.length === 1 ? "leaf" : "leaves"} · ${Math.round(lastMs)} ms per frame`;
+      statusEl.textContent = collectStatus() +
+        `${found.length} ${found.length === 1 ? "leaf" : "leaves"} · ${Math.round(lastMs)} ms per frame`;
     }).catch((e) => { statusEl.textContent = "Detection error: " + e.message; })
       .finally(() => { busy = false; });
   }
@@ -197,15 +204,58 @@ async function startCamera() {
   setHeight();
 }
 
-captureBtn.addEventListener("click", () => {
+function sendFrame(extra) {
   const full = document.createElement("canvas");
   full.width = video.videoWidth;
   full.height = video.videoHeight;
   full.getContext("2d").drawImage(video, 0, 0);   // the clean frame, without boxes
   send("streamlit:setComponentValue", {
-    value: { image: full.toDataURL("image/jpeg", 0.92), captured_at: Date.now() },
+    value: Object.assign({ image: full.toDataURL("image/jpeg", 0.92), captured_at: Date.now() }, extra || {}),
     dataType: "json",
   });
+}
+
+function collectStatus() {
+  if (!args.collect) return "";
+  const waiting = Math.ceil((countdownUntil - Date.now()) / 1000);
+  if (collecting && waiting > 0) return `Starting in ${waiting}s, no leaves in view! · `;
+  return `Saved ${args.collected}/${args.collect_target}${collecting ? " · keep moving" : ""} · `;
+}
+
+function updateButtons() {
+  if (!args.collect) {
+    captureBtn.textContent = "Capture & diagnose";
+    return;
+  }
+  captureBtn.textContent = args.collected >= args.collect_target ? "Done"
+    : collecting ? "Pause collecting" : (args.collected > 0 ? "Continue collecting" : "Start collecting");
+  captureBtn.disabled = !session || args.collected >= args.collect_target;
+}
+
+function stopCollecting() {
+  collecting = false;
+  clearInterval(collectTimer);
+  collectTimer = null;
+  updateButtons();
+}
+
+function startCollecting() {
+  collecting = true;
+  countdownUntil = Date.now() + 5000;
+  collectTimer = setInterval(() => {
+    if (Date.now() < countdownUntil) return;
+    if (args.collected >= args.collect_target) { stopCollecting(); return; }
+    sendFrame({ collect: true });
+  }, Math.max(200, args.collect_interval_ms));
+  updateButtons();
+}
+
+captureBtn.addEventListener("click", () => {
+  if (args.collect) {
+    if (collecting) stopCollecting(); else startCollecting();
+    return;
+  }
+  sendFrame();
   captureBtn.textContent = "Captured ✓";
   setTimeout(() => { captureBtn.textContent = "Capture & diagnose"; }, 1500);
 });
@@ -223,6 +273,7 @@ flipBtn.addEventListener("click", async () => {
     msg.style.display = "none";
     captureBtn.disabled = false;
     flipBtn.disabled = false;
+    updateButtons();
     requestAnimationFrame(draw);
   } catch (e) {
     const denied = e && (e.name === "NotAllowedError" || e.name === "SecurityError");

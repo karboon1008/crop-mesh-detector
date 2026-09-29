@@ -1,0 +1,13 @@
+# Run from the repo root, e.g.:
+#   docker compose -f docker/detector-training/docker-compose.yml run --rm train \
+#     python scripts/check_false_alarms.py apps/hivemind_demo/data/negatives
+services:
+  train:
+    build: .
+    image: hivemind-detector-training
+    working_dir: /work
+    volumes:
+      - ../..:/work                      # the whole repo: data/, outputs/, apps/ stay on the host
+      - torch-cache:/root/.cache/torch   # COCO starting weights, downloaded once
+volumes:
+  torch-cache: {}

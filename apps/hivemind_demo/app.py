@@ -20,6 +20,9 @@ from live_camera import live_camera
 
 HERE = Path(__file__).resolve().parent
 DB_PATH = HERE / "data" / "detections.db"
+# Leaf-free photos collected for retraining the leaf detector. data/ is the Docker volume, so
+# they land in apps/hivemind_demo/data/negatives/ on the host.
+NEGATIVES_DIR = HERE / "data" / "negatives"
 
 TIER_STYLE = {
     "healthy": ("#2e7d32", "Healthy"),
@@ -102,6 +105,19 @@ with st.sidebar:
         st.caption(f"Stage 1: SSDLite-MobileNetV3 leaf detector (COCO-initialised, fine-tuned on leaf "
                    f"boxes{map_text}). It is shared by every farm and not part of the mesh.")
 
+    collect_mode = False
+    if detector is not None:
+        st.header("Retraining photos")
+        collect_mode = st.toggle(
+            "Collect no-leaf photos", value=False,
+            help="Saves webcam frames with NO leaves in them (people, faces, hands, the room) for "
+                 "retraining the leaf detector so it stops boxing them. See README.md.")
+        if collect_mode:
+            collect_target = int(st.number_input("Photos to collect", 50, 3000, 400, 50))
+            collect_folder = st.text_input("Folder name", "room").strip() or "room"
+            collect_folder = "".join(c for c in collect_folder if c.isalnum() or c in "-_") or "room"
+            collect_dir = NEGATIVES_DIR / collect_folder
+
 try:
     session = get_session(chosen["path"])
 except (FileNotFoundError, ValueError) as e:
@@ -114,7 +130,26 @@ with left:
     with upload_tab:
         uploaded = st.file_uploader("Leaf photo (JPG/PNG)", type=["jpg", "jpeg", "png"])
     with camera_tab:
-        if find_leaves:
+        if collect_mode:
+            collect_dir.mkdir(parents=True, exist_ok=True)
+            saved = len(list(collect_dir.glob("*.jpg")))
+            st.info("**Collecting no-leaf photos.** Keep all leaves and plants out of view. After "
+                    "Start collecting (5 s countdown) a photo is saved every 0.5 s: move your face "
+                    "near and far, hold up empty hands, bring in other people, show green clothes, "
+                    "the desk, walls and windows. Red boxes you see now are the false alarms "
+                    "these photos will fix.")
+            captured = live_camera(detector, leaf_threshold, min_plant_fraction=min_plant, collect=True,
+                                   collected=saved, collect_target=collect_target, key="collect_camera")
+            if captured is not None and captured.collect and saved < collect_target \
+                    and st.session_state.get("last_collect_id") != captured.file_id:
+                st.session_state["last_collect_id"] = captured.file_id
+                (collect_dir / f"neg-{captured.file_id}.jpg").write_bytes(captured.getvalue())
+                saved += 1
+            st.success(f"{saved} photo{'s' if saved != 1 else ''} saved in "
+                       f"`apps/hivemind_demo/data/negatives/{collect_folder}/`. Delete any that show a "
+                       f"plant, then retrain (README.md).")
+            captured = None  # collected frames are for retraining, not diagnosis
+        elif find_leaves:
             # Live view: the leaf detector runs in the browser on every frame; "Capture & diagnose"
             # sends the sharp full-resolution frame here for the two-stage diagnosis.
             captured = live_camera(detector, leaf_threshold, min_plant_fraction=min_plant)
