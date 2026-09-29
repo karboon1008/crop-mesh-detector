@@ -208,9 +208,7 @@ with st.sidebar:
         st.caption(f"★ The most accurate model is {model_name(BEST)} ({BEST['heldout_acc']:.1%}).")
     st.markdown(f"**Held-out accuracy:** {chosen['heldout_acc']:.1%}  \n**Size:** {chosen['size_mb']} MB")
     st.caption(f"{len(inference.CROP_CLASSES)} crops, {len(inference.DISEASE_CLASSES)} conditions · "
-               "ONNX with int8 heads, runs on CPU · HiveMind continual run `kb-fresh-01`, 13 rounds. "
-               "Each farm trained only on its own photos; farms shared class prototypes and "
-               "probe-set predictions, never images or weights.")
+               "ONNX with int8 heads, runs on CPU · HiveMind continual run `kb-fresh-01`, 13 rounds.")
 
     st.header("Leaf detection")
     if detector is None:
