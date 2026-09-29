@@ -113,3 +113,30 @@ def test_detector_style_labels_every_box_red():
     assert red_share((24, 4, 40, 10)) > 0.15  # inside the top box, under its top edge
     assert red_share((154, 50, 170, 56)) > 0.15  # above the second box
     assert red_share((154, 64, 170, 70)) == 0.0  # not inside the second box
+
+
+def test_live_camera_decodes_capture_and_ships_detector(tmp_path, monkeypatch):
+    import base64 as b64
+    import io as _io
+
+    import live_camera
+
+    # The component serves only its own folder, so it gets a copy of the detector.
+    src_dir, web_dir = tmp_path / "detector", tmp_path / "web"
+    src_dir.mkdir(), web_dir.mkdir()
+    (src_dir / "detector.onnx").write_bytes(b"onnx-bytes")
+    monkeypatch.setattr(leaf_detection, "DETECTOR_DIR", src_dir)
+    monkeypatch.setattr(live_camera, "WEB_DIR", web_dir)
+    live_camera._sync_detector()
+    assert (web_dir / "detector.onnx").read_bytes() == b"onnx-bytes"
+
+    buf = _io.BytesIO()
+    Image.new("RGB", (64, 48), (30, 140, 30)).save(buf, format="JPEG")
+    frame = "data:image/jpeg;base64," + b64.b64encode(buf.getvalue()).decode()
+    detector = leaf_detection.Detector(None, {"image_size": 320, "leaf_label": 1})
+    monkeypatch.setattr(live_camera, "_component", lambda **kw: {"image": frame, "captured_at": 1234})
+    photo = live_camera.live_camera(detector, 0.5)
+    assert photo.file_id == "camera-1234" and Image.open(photo).size == (64, 48)
+
+    monkeypatch.setattr(live_camera, "_component", lambda **kw: None)
+    assert live_camera.live_camera(detector, 0.5) is None

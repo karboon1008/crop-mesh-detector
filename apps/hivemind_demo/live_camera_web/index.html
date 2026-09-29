@@ -1,0 +1,217 @@
+<!doctype html>
+<!--
+  Live leaf camera for the HiveMind demo (a Streamlit custom component, see ../live_camera.py).
+  The browser runs the stage-1 leaf detector (detector.onnx, copied here by live_camera.py) on
+  every video frame with onnxruntime-web, and draws "leaf 0.86" boxes live. "Capture & diagnose"
+  sends the full-resolution frame back to Python, which runs the same two-stage pipeline as an
+  uploaded photo (detect, then classify each leaf with the farm model).
+  Detection runs in the browser, not on the server, so it works the same under Docker (no video
+  streaming to the container) and needs no internet (onnxruntime-web is vendored in vendor/).
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { margin: 0; font-family: "Source Sans Pro", system-ui, sans-serif; color: #31333f; background: transparent; }
+  #wrap { position: relative; width: 100%; background: #111; border-radius: 8px; overflow: hidden; min-height: 200px; }
+  canvas { display: block; width: 100%; height: auto; }
+  video { display: none; }
+  #msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+         color: #eee; text-align: center; padding: 16px; font-size: 15px; }
+  .bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+  button { font: inherit; font-size: 14px; padding: 6px 14px; border-radius: 8px; border: 1px solid #d0d0d7;
+           background: #fff; color: #31333f; cursor: pointer; }
+  button.primary { background: #ff4b4b; color: #fff; border-color: #ff4b4b; }
+  button:disabled { opacity: .5; cursor: default; }
+  #status { font-size: 13px; color: #6b6f7b; }
+  #warn { font-size: 13px; color: #c62828; margin-top: 6px; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="view" width="640" height="480"></canvas>
+  <div id="msg">Loading the leaf detector…</div>
+</div>
+<div class="bar">
+  <button id="capture" class="primary" disabled>Capture &amp; diagnose</button>
+  <button id="flip" disabled>Switch camera</button>
+  <span id="status"></span>
+</div>
+<div id="warn"></div>
+<video id="video" playsinline muted></video>
+
+<script src="vendor/ort.wasm.min.js"></script>
+<script>
+"use strict";
+const SIZE = 320;                    // the exported SSDLite graph's input size
+const BOX_COLOR = "#ff3b1f";         // same red as leaf_detection.DETECTOR_BOX_COLOR
+
+const video = document.getElementById("video");
+const view = document.getElementById("view");
+const ctx = view.getContext("2d");
+const msg = document.getElementById("msg");
+const statusEl = document.getElementById("status");
+const warnEl = document.getElementById("warn");
+const captureBtn = document.getElementById("capture");
+const flipBtn = document.getElementById("flip");
+const small = document.createElement("canvas");
+small.width = SIZE; small.height = SIZE;
+const sctx = small.getContext("2d", { willReadFrequently: true });
+
+let args = { threshold: 0.5, max_leaves: 10, min_box_fraction: 0.02, leaf_label: 1 };
+let session = null, stream = null, facing = "environment";
+let leaves = [], busy = false, lastMs = 0;
+
+// --- Streamlit component protocol (what streamlit-component-lib does, without the dependency) ---
+function send(type, extra) {
+  window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type }, extra || {}), "*");
+}
+function setHeight() { send("streamlit:setFrameHeight", { height: document.body.scrollHeight }); }
+window.addEventListener("message", (event) => {
+  if (event.data && event.data.type === "streamlit:render") {
+    Object.assign(args, event.data.args || {});
+    setHeight();
+  }
+});
+send("streamlit:componentReady", { apiVersion: 1 });
+new ResizeObserver(setHeight).observe(document.body);
+
+// --- model ---
+ort.env.wasm.wasmPaths = new URL("vendor/", location.href).href;
+ort.env.wasm.numThreads = 1;  // multi-threading needs cross-origin isolation, which Streamlit pages don't have
+
+function frameTensor() {
+  sctx.drawImage(video, 0, 0, SIZE, SIZE);
+  const px = sctx.getImageData(0, 0, SIZE, SIZE).data;
+  const n = SIZE * SIZE, data = new Float32Array(3 * n);
+  for (let i = 0; i < n; i++) {             // RGBA HWC [0,255] -> RGB CHW [0,1]; the graph normalises itself
+    data[i] = px[4 * i] / 255;
+    data[n + i] = px[4 * i + 1] / 255;
+    data[2 * n + i] = px[4 * i + 2] / 255;
+  }
+  return new ort.Tensor("float32", data, [3, SIZE, SIZE]);
+}
+
+async function detect() {
+  const out = await session.run({ [session.inputNames[0]]: frameTensor() });
+  const [boxes, scores, labels] = session.outputNames.map((name) => out[name].data);
+  const w = video.videoWidth, h = video.videoHeight, sx = w / SIZE, sy = h / SIZE;
+  const minSide = args.min_box_fraction * Math.min(w, h);
+  const found = [];
+  for (let i = 0; i < scores.length; i++) {  // same filtering as leaf_detection.detect_leaves
+    if (Number(labels[i]) !== args.leaf_label || scores[i] < args.threshold) continue;
+    const box = [boxes[4 * i] * sx, boxes[4 * i + 1] * sy, boxes[4 * i + 2] * sx, boxes[4 * i + 3] * sy];
+    if (Math.min(box[2] - box[0], box[3] - box[1]) < minSide) continue;
+    found.push({ box, score: scores[i] });
+  }
+  found.sort((a, b) => b.score - a.score);
+  return found.slice(0, args.max_leaves);
+}
+
+// --- drawing: same look as leaf_detection.draw_leaves(style="detector") ---
+function draw() {
+  if (video.readyState >= 2) {
+    ctx.drawImage(video, 0, 0, view.width, view.height);
+    const line = Math.max(2, Math.round(Math.min(view.width, view.height) / 150));
+    const fontSize = Math.max(14, Math.round(Math.min(view.width, view.height) / 22));
+    ctx.font = `${fontSize}px "Source Sans Pro", system-ui, sans-serif`;
+    ctx.textBaseline = "top";
+    for (const leaf of [...leaves].reverse()) {  // most confident drawn last, so its label is on top
+      const [x1, y1, x2, y2] = leaf.box;
+      ctx.lineWidth = line;
+      ctx.strokeStyle = BOX_COLOR;
+      ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+      const label = `leaf ${leaf.score.toFixed(2)}`;
+      const tagW = ctx.measureText(label).width + 2 * line, tagH = fontSize + 2 * line;
+      const tx = Math.min(x1, view.width - tagW), ty = y1 - tagH >= 0 ? y1 - tagH : y1;
+      ctx.fillStyle = BOX_COLOR;
+      ctx.fillRect(tx, ty, tagW, tagH);
+      ctx.fillStyle = "#fff";
+      ctx.fillText(label, tx + line, ty + line);
+    }
+  }
+  if (session && !busy && video.readyState >= 2) {
+    busy = true;
+    const start = performance.now();
+    detect().then((found) => {
+      leaves = found;
+      lastMs = performance.now() - start;
+      statusEl.textContent = `${found.length} ${found.length === 1 ? "leaf" : "leaves"} · ${Math.round(lastMs)} ms per frame`;
+    }).catch((e) => { statusEl.textContent = "Detection error: " + e.message; })
+      .finally(() => { busy = false; });
+  }
+  requestAnimationFrame(draw);
+}
+
+// --- camera ---
+async function avoidBackgroundBlur(track) {
+  // Some laptops (Windows Studio Effects, some Chrome/macOS video effects) blur the background of
+  // the camera feed, which hides the leaves behind you from the detector. Turn it off where the
+  // browser allows; otherwise tell the user where to turn it off.
+  warnEl.textContent = "";
+  const caps = track.getCapabilities ? track.getCapabilities() : {};
+  if (!("backgroundBlur" in caps)) return;
+  try { await track.applyConstraints({ backgroundBlur: false }); } catch (e) { /* not adjustable */ }
+  if (track.getSettings().backgroundBlur) {
+    warnEl.textContent = "Your computer is blurring the camera background, which hides leaves from the detector. " +
+      "Turn off Background blur in the system camera settings (Windows: Settings > Bluetooth & devices > Cameras, " +
+      "or the Studio Effects panel; Mac: Control Centre > Video Effects), then press Switch camera.";
+  }
+}
+
+async function startCamera() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    throw new Error("The camera needs a secure page: open the demo at http://localhost, not a network address.");
+  }
+  if (stream) stream.getTracks().forEach((t) => t.stop());
+  stream = await navigator.mediaDevices.getUserMedia({
+    audio: false,
+    video: { facingMode: { ideal: facing }, width: { ideal: 1280 }, height: { ideal: 720 },
+             backgroundBlur: false },
+  });
+  video.srcObject = stream;
+  await video.play();
+  view.width = video.videoWidth;
+  view.height = video.videoHeight;
+  await avoidBackgroundBlur(stream.getVideoTracks()[0]);
+  setHeight();
+}
+
+captureBtn.addEventListener("click", () => {
+  const full = document.createElement("canvas");
+  full.width = video.videoWidth;
+  full.height = video.videoHeight;
+  full.getContext("2d").drawImage(video, 0, 0);   // the clean frame, without boxes
+  send("streamlit:setComponentValue", {
+    value: { image: full.toDataURL("image/jpeg", 0.92), captured_at: Date.now() },
+    dataType: "json",
+  });
+  captureBtn.textContent = "Captured ✓";
+  setTimeout(() => { captureBtn.textContent = "Capture & diagnose"; }, 1500);
+});
+
+flipBtn.addEventListener("click", async () => {
+  facing = facing === "environment" ? "user" : "environment";
+  try { await startCamera(); } catch (e) { msg.style.display = "flex"; msg.textContent = e.message; }
+});
+
+(async () => {
+  try {
+    session = await ort.InferenceSession.create("detector.onnx", { executionProviders: ["wasm"] });
+    msg.textContent = "Starting camera…";
+    await startCamera();
+    msg.style.display = "none";
+    captureBtn.disabled = false;
+    flipBtn.disabled = false;
+    requestAnimationFrame(draw);
+  } catch (e) {
+    const denied = e && (e.name === "NotAllowedError" || e.name === "SecurityError");
+    msg.textContent = denied
+      ? "Camera access was blocked. Allow the camera for this page (the icon in the address bar), then reload."
+      : "Could not start: " + (e && e.message ? e.message : e);
+  }
+  setHeight();
+})();
+</script>
+</body>
+</html>

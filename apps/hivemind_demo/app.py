@@ -16,6 +16,7 @@ from PIL import Image
 import db
 import inference
 import leaf_detection
+from live_camera import live_camera
 
 HERE = Path(__file__).resolve().parent
 DB_PATH = HERE / "data" / "detections.db"
@@ -108,8 +109,22 @@ with left:
     with upload_tab:
         uploaded = st.file_uploader("Leaf photo (JPG/PNG)", type=["jpg", "jpeg", "png"])
     with camera_tab:
-        captured = st.camera_input("Capture a leaf")
-    photo = uploaded or captured
+        if find_leaves:
+            # Live view: the leaf detector runs in the browser on every frame; "Capture & diagnose"
+            # sends the sharp full-resolution frame here for the two-stage diagnosis.
+            captured = live_camera(detector, leaf_threshold)
+            st.caption("Hold the camera so the leaves are in view; the red boxes show what the "
+                       "detector finds. Then press Capture & diagnose.")
+        else:
+            captured = st.camera_input("Capture a leaf")
+    # Diagnose whichever photo is newest: a fresh capture replaces an earlier upload and vice versa.
+    for source, item in (("upload", uploaded), ("camera", captured)):
+        item_id = getattr(item, "file_id", None) if item is not None else None
+        if item_id is not None and st.session_state.get(f"last_{source}_id") != item_id:
+            st.session_state[f"last_{source}_id"] = item_id
+            st.session_state["photo_source"] = source
+    newest = captured if st.session_state.get("photo_source") == "camera" else uploaded
+    photo = newest or uploaded or captured
     if photo is not None and find_leaves:
         image = Image.open(photo).convert("RGB")
         zoom = None

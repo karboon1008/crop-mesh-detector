@@ -80,6 +80,25 @@ in the sidebar. Restart the app (or `docker compose up --build`) to pick it up.
 - **Leaf confidence threshold**: lower it if leaves are missed, raise it if background is
   boxed. If nothing passes, the whole photo is classified as one leaf, with a warning.
 
+## Live camera
+
+With leaf detection on, **Use the camera** is a live view: the leaf detector runs in the browser
+on every frame and draws red `leaf 0.86` boxes as you move the camera. **Capture & diagnose**
+sends the sharp, full-resolution frame through the same two-stage diagnosis as an uploaded photo.
+**Switch camera** toggles front/back on phones and tablets.
+
+- **Where it runs:** detection happens in the browser (onnxruntime-web, bundled in
+  `live_camera_web/vendor/`, no internet needed). It works the same under Docker: no video is
+  streamed to the container.
+- **Secure page:** browsers only allow the camera on a secure page. Open the demo at
+  `http://localhost:8501` / `:8502` on the same machine, not at a network address.
+- **Background blur:** if the laptop blurs the camera background, the leaves behind you vanish
+  for the detector. The page asks the browser to switch blur off, and shows a warning with where
+  to turn it off when the system forces it (Windows: Settings > Bluetooth & devices > Cameras or
+  Studio Effects; Mac: Control Centre > Video Effects > Portrait/Background off).
+- **Fallback:** with leaf detection switched off, the tab falls back to the plain snapshot camera
+  with centre-zoom.
+
 ## Demo tips
 
 - **Two-stage mode:** show a photo with several leaves and point out the numbered boxes and
