@@ -10,6 +10,13 @@ classifier's job.
 Some public VOC exports record a <size> that doesn't match the image file
 on disk (PlantDoc has several). Boxes are rescaled from the annotated
 size to the real one so they still line up.
+
+Negative examples: every PlantDoc photo contains leaves, so a detector
+trained on it alone never learns what is NOT a leaf, and fires on faces,
+people and rooms. `load_negative_folder` takes plain images with no leaves
+in them (people, faces, hands, desks, rooms, soil, sky...) and returns them
+with zero boxes; mixed into training they teach the detector that all of
+it is background. No annotation needed.
 """
 
 from __future__ import annotations
@@ -89,6 +96,19 @@ def load_voc_folder(folder: Path) -> list[AnnotatedImage]:
     return items
 
 
+def load_negative_folder(folder: Path) -> list[AnnotatedImage]:
+    """Every image under `folder` (searched recursively), as an image with no
+    leaves. Only use photos that really contain no leaves or plants: a leaf
+    in a "negative" photo teaches the detector to ignore real leaves.
+    """
+    folder = Path(folder)
+    items = [AnnotatedImage(path, []) for path in sorted(folder.rglob("*"))
+             if path.suffix.lower() in IMAGE_EXTENSIONS]
+    if not items:
+        raise FileNotFoundError(f"No images found in {folder}")
+    return items
+
+
 class LeafBoxDataset(Dataset):
     """Yields (image tensor in [0, 1], target dict) in torchvision's
     detection format. Normalisation and resizing to 320x320 happen inside
@@ -107,7 +127,7 @@ class LeafBoxDataset(Dataset):
     def __getitem__(self, idx: int):
         item = self.items[idx]
         image = Image.open(item.image_path).convert("RGB")
-        boxes = torch.tensor(item.boxes, dtype=torch.float32)
+        boxes = torch.tensor(item.boxes, dtype=torch.float32).reshape(-1, 4)  # (0, 4) for a negative
         if self.train and random.random() < self.flip_prob:
             image = TF.hflip(image)
             width = image.size[0]

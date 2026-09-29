@@ -43,7 +43,8 @@ def test_missing_detector_means_single_leaf_mode(tmp_path):
 def test_detect_leaves_rescales_filters_and_sorts():
     session = _StubSession()
     detector = leaf_detection.Detector(session, {"image_size": 320, "leaf_label": 1, "score_threshold": 0.5})
-    leaves = leaf_detection.detect_leaves(detector, Image.new("RGB", (640, 480)), score_threshold=0.5)
+    leaves = leaf_detection.detect_leaves(detector, Image.new("RGB", (640, 480)), score_threshold=0.5,
+                                          min_plant_fraction=0)  # a blank photo: colour check off here
 
     assert session.last_input.shape == (3, 320, 320) and session.last_input.max() <= 1.0
     # 0.95 box is 4x3 px after rescale (< 2% of 480) -> dropped; 0.2 below threshold.
@@ -140,3 +141,20 @@ def test_live_camera_decodes_capture_and_ships_detector(tmp_path, monkeypatch):
 
     monkeypatch.setattr(live_camera, "_component", lambda **kw: None)
     assert live_camera.live_camera(detector, 0.5) is None
+
+
+def test_plant_colour_check_keeps_leaves_and_drops_non_plant_boxes():
+    photo = Image.new("RGB", (200, 100), (200, 160, 140))  # skin-ish / brown background
+    photo.paste((50, 140, 40), (0, 0, 100, 100))  # a green leaf on the left half
+    assert leaf_detection.plant_colour_fraction(photo, (0, 0, 100, 100)) > 0.9
+    assert leaf_detection.plant_colour_fraction(photo, (100, 0, 200, 100)) == 0.0
+    grey = Image.new("RGB", (50, 50), (120, 128, 120))  # slightly green grey wall: not "colourful"
+    assert leaf_detection.plant_colour_fraction(grey, (0, 0, 50, 50)) == 0.0
+
+    session = _StubSession()  # boxes on both halves (after rescale to 200x100)
+    session.run = lambda _, feeds: (np.array([[0, 0, 160, 320], [160, 0, 320, 320]], dtype=np.float32),
+                                     np.array([0.9, 0.95], dtype=np.float32), np.array([1, 1], dtype=np.int64))
+    detector = leaf_detection.Detector(session, {"image_size": 320, "leaf_label": 1, "score_threshold": 0.5})
+    kept = leaf_detection.detect_leaves(detector, photo, 0.5)
+    assert [leaf.score for leaf in kept] == pytest.approx([0.9])  # the brown box is dropped
+    assert len(leaf_detection.detect_leaves(detector, photo, 0.5, min_plant_fraction=0)) == 2

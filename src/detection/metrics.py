@@ -92,3 +92,17 @@ def detection_report(predictions: list[dict], targets: list[dict], score_thresho
         "num_images": len(targets),
         "num_gt_boxes": total_gt,
     }
+
+
+def false_alarm_report(predictions: list[dict], score_threshold: float = 0.5) -> dict:
+    """On images that contain no leaves (people, faces, rooms...), every kept
+    box is a false alarm. Reports the share of those images with at least one
+    box at `score_threshold`, and the average number of such boxes per image.
+    """
+    counts = [int((pred["scores"] >= score_threshold).sum()) for pred in predictions]
+    n = len(counts)
+    return {
+        "negative_images": n,
+        "false_alarm_image_rate": round(sum(c > 0 for c in counts) / n, 4) if n else 0.0,
+        "false_boxes_per_image": round(sum(counts) / n, 4) if n else 0.0,
+    }

@@ -145,3 +145,55 @@ def test_detector_trains_and_predicts_on_synthetic_boxes(voc_folder, tmp_path):
     output = model([torch.rand(3, 64, 96)])[0]
     assert set(output) == {"boxes", "scores", "labels"}
     assert output["labels"].numel() == 0 or set(output["labels"].tolist()) == {LEAF_LABEL}
+
+
+def test_negatives_have_no_boxes_and_split_is_stable(tmp_path):
+    from src.detection.dataset import load_negative_folder
+    from src.detection.train_detector import split_negatives
+
+    neg = tmp_path / "negatives" / "room"
+    neg.mkdir(parents=True)
+    for i in range(10):
+        Image.new("RGB", (40, 30), (200, 170, 150)).save(neg / f"face_{i}.jpg")
+    items = load_negative_folder(tmp_path / "negatives")  # recursive
+    assert len(items) == 10 and all(item.boxes == [] for item in items)
+
+    image, target = LeafBoxDataset(items, train=True, flip_prob=1.0)[0]
+    assert target["boxes"].shape == (0, 4) and target["labels"].numel() == 0
+
+    train, test = split_negatives(tmp_path / "negatives", None)
+    assert (len(train), len(test)) == (8, 2)  # 15% held out, rounded
+    assert split_negatives(tmp_path / "negatives", None)[1] == test  # same split every run
+
+
+def test_false_alarm_report_counts_images_with_any_box():
+    from src.detection.metrics import false_alarm_report
+
+    preds = [{"scores": torch.tensor([0.9, 0.2])}, {"scores": torch.tensor([0.3])}, {"scores": torch.zeros(0)},
+             {"scores": torch.tensor([0.6, 0.55])}]
+    report = false_alarm_report(preds, score_threshold=0.5)
+    assert report == {"negative_images": 4, "false_alarm_image_rate": 0.5, "false_boxes_per_image": 0.75}
+
+
+def test_training_with_negatives_and_init_checkpoint(voc_folder, tmp_path):
+    from src.detection.train_detector import train_detector
+
+    neg = tmp_path / "neg"
+    neg.mkdir()
+    for i in range(6):
+        Image.new("RGB", (96, 64), (190, 150, 130)).save(neg / f"person_{i}.jpg")
+
+    torch.manual_seed(0)
+    first = tmp_path / "det" / "leaf.pt"
+    train_detector(voc_folder, voc_folder, first, epochs=1, batch_size=2, pretrained=False,
+                   device="cpu", num_workers=0, energy_enabled=False)
+    second = tmp_path / "det" / "leaf_neg.pt"
+    report = train_detector(voc_folder, voc_folder, second, epochs=1, batch_size=2, pretrained=False,
+                            device="cpu", num_workers=0, energy_enabled=False,
+                            negatives_dir=neg, init_checkpoint=first)
+    assert report["num_train_negatives"] == 5 and report["num_test_negatives"] == 1
+    assert report["num_train_images"] == 4 + 5
+    best = report["best"]
+    assert 0.0 <= best["false_alarm_image_rate"] <= 1.0
+    assert best["selection_score"] == pytest.approx(best["map_50"] * (1 - best["false_alarm_image_rate"]), abs=1e-4)
+    assert second.exists()

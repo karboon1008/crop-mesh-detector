@@ -47,11 +47,13 @@ class CapturedPhoto(io.BytesIO):
 
 
 def live_camera(detector: leaf_detection.Detector, threshold: float, max_leaves: int = 10,
+                min_plant_fraction: float = leaf_detection.MIN_PLANT_FRACTION,
                 key: str = "live_camera") -> CapturedPhoto | None:
     """Shows the live camera; returns the last captured frame, or None before the first capture."""
     _sync_detector()
     value = _component(threshold=float(threshold), max_leaves=int(max_leaves),
                        leaf_label=int(detector.manifest["leaf_label"]), min_box_fraction=0.02,
+                       min_plant_fraction=float(min_plant_fraction),
                        key=key, default=None)
     if not value or "image" not in value:
         return None

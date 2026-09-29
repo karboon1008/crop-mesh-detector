@@ -61,15 +61,39 @@ def load_detector(detector_dir: Path = DETECTOR_DIR) -> Detector | None:
     return Detector(ort.InferenceSession(str(onnx_path)), json.loads(manifest_path.read_text()))
 
 
+# Plant-colour check. The detector was trained only on photos that contain leaves, so it
+# also boxes the main object of photos without any (a cup, a cat, sky, a wall). A box is kept
+# only if at least MIN_PLANT_FRACTION of its pixels are vegetation-coloured: "excess green"
+# 2g - r - b > 0.05 in normalised rgb (a standard crop-imaging index), on pixels with some
+# colour (max - min channel >= 15, so grey walls and white paper don't count). Every sample
+# leaf, diseased ones included, scores >= 0.13; cups, cats, bricks, coins and sky score <= 0.02.
+# It does NOT reliably reject faces (a face with background can reach ~0.15): retraining with
+# negative photos (src/detection/train_detector.py --negatives-dir) is the fix for people.
+MIN_PLANT_FRACTION = 0.10
+
+
+def plant_colour_fraction(image: Image.Image, box) -> float:
+    x1, y1, x2, y2 = (int(round(v)) for v in box)
+    if x2 - x1 < 1 or y2 - y1 < 1:
+        return 0.0
+    crop = np.asarray(image.crop((x1, y1, x2, y2)).resize((64, 64), Image.BILINEAR), dtype=np.float32)
+    total = crop.sum(axis=-1) + 1e-6
+    r, g, b = crop[..., 0] / total, crop[..., 1] / total, crop[..., 2] / total
+    colourful = crop.max(axis=-1) - crop.min(axis=-1) >= 15
+    return float(((2 * g - r - b > 0.05) & colourful).mean())
+
+
 def detect_leaves(
     detector: Detector, image: Image.Image, score_threshold: float, max_leaves: int = 10,
-    min_box_fraction: float = 0.02,
+    min_box_fraction: float = 0.02, min_plant_fraction: float = MIN_PLANT_FRACTION,
 ) -> list[Leaf]:
     """Leaves in `image`, best first. The exported graph takes a 320x320
     RGB image in [0, 1] (it normalises internally, and NMS is already in
     it) and returns boxes in 320x320 pixels, rescaled here to the photo.
     Boxes whose short side is under `min_box_fraction` of the photo's are
-    dropped: too small to classify once upscaled.
+    dropped: too small to classify once upscaled. Boxes that aren't
+    plant-coloured (see MIN_PLANT_FRACTION) are dropped too; pass
+    min_plant_fraction=0 to keep them.
     """
     image = image.convert("RGB")
     size = detector.manifest["image_size"]
@@ -85,6 +109,8 @@ def detect_leaves(
             continue
         x1, y1, x2, y2 = float(box[0]) * sx, float(box[1]) * sy, float(box[2]) * sx, float(box[3]) * sy
         if min(x2 - x1, y2 - y1) < min_side:
+            continue
+        if min_plant_fraction > 0 and plant_colour_fraction(image, (x1, y1, x2, y2)) < min_plant_fraction:
             continue
         leaves.append(Leaf((x1, y1, x2, y2), float(score)))
     leaves.sort(key=lambda leaf: leaf.score, reverse=True)

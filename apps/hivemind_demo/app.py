@@ -89,6 +89,11 @@ with st.sidebar:
                                 help="Stage 1 finds each leaf; stage 2 classifies each crop with the farm model.")
         leaf_threshold = st.slider("Leaf confidence threshold", 0.1, 0.9, detector.default_threshold, 0.05,
                                    disabled=not find_leaves)
+        colour_check = st.toggle("Only plant-coloured boxes", value=True,
+                                 help="Skips boxes whose pixels are mostly not leaf-coloured (cups, pets, sky, "
+                                      "walls). It can't reliably tell faces from leaves; retraining the detector "
+                                      "with no-leaf photos fixes that (see README).")
+        min_plant = leaf_detection.MIN_PLANT_FRACTION if colour_check else 0.0
         box_style = st.radio("Boxes show", ["detector", "diagnosis"], horizontal=True, disabled=not find_leaves,
                              format_func={"detector": "Leaf + score", "diagnosis": "Result number"}.get,
                              help="Leaf + score: red boxes labelled like 'leaf 0.86'. "
@@ -112,7 +117,7 @@ with left:
         if find_leaves:
             # Live view: the leaf detector runs in the browser on every frame; "Capture & diagnose"
             # sends the sharp full-resolution frame here for the two-stage diagnosis.
-            captured = live_camera(detector, leaf_threshold)
+            captured = live_camera(detector, leaf_threshold, min_plant_fraction=min_plant)
             st.caption("Hold the camera so the leaves are in view; the red boxes show what the "
                        "detector finds. Then press Capture & diagnose.")
         else:
@@ -128,7 +133,7 @@ with left:
     if photo is not None and find_leaves:
         image = Image.open(photo).convert("RGB")
         zoom = None
-        leaves = leaf_detection.detect_leaves(detector, image, leaf_threshold)
+        leaves = leaf_detection.detect_leaves(detector, image, leaf_threshold, min_plant_fraction=min_plant)
         if not leaves:
             st.warning("No leaf found at this threshold, so the whole photo is classified as one leaf. "
                        "Try a lower threshold, or turn leaf detection off and use the zoom.")
@@ -150,7 +155,7 @@ with right:
     if photo is None:
         st.info("Upload a leaf photo (or take one) to see the prediction.")
     elif find_leaves:
-        photo_id = f"{getattr(photo, 'file_id', photo.name)}@leaves@{leaf_threshold}@{chosen['path']}"
+        photo_id = f"{getattr(photo, 'file_id', photo.name)}@leaves@{leaf_threshold}@{min_plant}@{chosen['path']}"
         if st.session_state.get("last_photo_id") != photo_id:
             try:
                 targets = [leaf_detection.crop_leaf(image, leaf) for leaf in leaves] or [image]

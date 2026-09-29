@@ -80,6 +80,43 @@ in the sidebar. Restart the app (or `docker compose up --build`) to pick it up.
 - **Leaf confidence threshold**: lower it if leaves are missed, raise it if background is
   boxed. If nothing passes, the whole photo is classified as one leaf, with a warning.
 
+## Stopping false "leaf" boxes on people, faces and objects
+
+Every PlantDoc training photo contains leaves, so the shipped detector never learned what is
+*not* a leaf. It tends to box the main object of any photo: on 17 leaf-free test photos it
+boxed 15 (88%), including a face (0.59), a cup (0.96) and a cat (0.99).
+
+**Built in now: the plant-colour check** (sidebar toggle *Only plant-coloured boxes*, on by
+default). It drops boxes whose pixels are mostly not vegetation-coloured. That cut the leaf-free
+false alarms to 12% while keeping every sample leaf, but it **cannot tell faces from leaves**.
+
+**The real fix: retrain with "no leaf" photos** (people, faces, hands, the room). They need no
+labelling. About 15 minutes on a laptop CPU, from the repo root:
+
+```bash
+# 1. Collect ~300-500 frames with NO leaves or plants in view: move around, faces near and far,
+#    several people, green clothes, the desk and walls. Do it in the demo room if you can.
+python scripts/capture_negatives.py --out data/negatives/room --count 400
+#    (any other leaf-free photos can go in data/negatives/ too; delete frames showing a plant)
+
+# 2. How bad is the current model on them? (the "before" number)
+python scripts/check_false_alarms.py data/negatives
+
+# 3. Fine-tune the existing detector with the negatives (15% are held out to score false alarms)
+python -m src.detection.train_detector --train-dir data/PlantDoc-OD/TRAIN --test-dir data/PlantDoc-OD/TEST \
+    --negatives-dir data/negatives --init-checkpoint outputs/detector/leaf_ssdlite.pt \
+    --checkpoint outputs/detector/leaf_ssdlite_neg.pt --epochs 10
+
+# 4. Export it into the app (and for the Pi), then check the "after" number
+python scripts/export_detector_for_pi.py --checkpoint outputs/detector/leaf_ssdlite_neg.pt \
+    --output-dir apps/hivemind_demo/models/detector
+python scripts/check_false_alarms.py data/negatives
+```
+
+Each epoch prints mAP@0.5 and the false-alarm rate on the held-out negatives. The kept epoch is
+the one with the best mAP@0.5 x (1 - false-alarm rate). Photos you then use to test the demo
+must not be in the negatives folder, or the "after" number will look better than it is.
+
 ## Live camera
 
 With leaf detection on, **Use the camera** is a live view: the leaf detector runs in the browser
