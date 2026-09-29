@@ -17,6 +17,7 @@ models/detector/detector.onnx exists. Build it with:
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -58,7 +59,14 @@ def load_detector(detector_dir: Path = DETECTOR_DIR) -> Detector | None:
     manifest_path = detector_dir / "detector_manifest.json"
     if not onnx_path.exists() or not manifest_path.exists():
         return None
-    return Detector(ort.InferenceSession(str(onnx_path)), json.loads(manifest_path.read_text()))
+    # onnxruntime's default thread pool sizes itself off the physical host's core count, which
+    # on a shared HPC node can be 10-100x the job's actual CPU allocation (OMP_NUM_THREADS is not
+    # read by onnxruntime's own threadpool) -- causing severe oversubscription for what is only
+    # ever single-image inference. Cap it explicitly; harmless on a laptop/Pi too.
+    sess_options = ort.SessionOptions()
+    sess_options.intra_op_num_threads = max(1, min(4, os.cpu_count() or 4))
+    sess_options.inter_op_num_threads = 1
+    return Detector(ort.InferenceSession(str(onnx_path), sess_options=sess_options), json.loads(manifest_path.read_text()))
 
 
 # Plant-colour check. The detector was trained only on photos that contain leaves, so it
