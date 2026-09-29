@@ -229,9 +229,6 @@ with st.sidebar:
                              format_func={"detector": "Leaf + score", "diagnosis": "Result number"}.get,
                              help="Leaf + score: red boxes labelled like 'leaf 0.86'. "
                                   "Result number: numbered to match the cards, coloured healthy/diseased/uncertain.")
-        map_text = f", mAP@0.5 {detector.map_50:.1%} on held-out field photos" if detector.map_50 is not None else ""
-        st.caption(f"Stage 1: SSDLite-MobileNetV3 leaf detector (COCO-initialised, fine-tuned on leaf "
-                   f"boxes{map_text}). It is shared by every farm and not part of the mesh.")
 
     st.header("Phone alerts")
     alerts_on = st.toggle("Alert my phone when a disease is found", value=True,
