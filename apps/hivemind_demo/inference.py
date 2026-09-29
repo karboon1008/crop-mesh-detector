@@ -138,8 +138,10 @@ def predict(session: ort.InferenceSession, image: Image.Image) -> dict:
     disease_confidence = float(disease_probs[0, disease_idx])
     disease_label = DISEASE_CLASSES[disease_idx]
     top3 = np.argsort(disease_probs[0])[::-1][:3]
+    top3_crops = np.argsort(crop_probs[0])[::-1][:3]
     return {
         "top_diseases": [(DISEASE_CLASSES[i], float(disease_probs[0, i])) for i in top3],
+        "top_crops": [(CROP_CLASSES[i], float(crop_probs[0, i])) for i in top3_crops],
         "predicted_crop": CROP_CLASSES[crop_idx],
         "crop_confidence": crop_confidence,
         "predicted_disease": disease_label,

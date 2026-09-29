@@ -20,10 +20,15 @@ def init_db(db_path: Path) -> None:
                 crop_confidence REAL NOT NULL,
                 predicted_disease TEXT NOT NULL,
                 disease_confidence REAL NOT NULL,
-                tier TEXT NOT NULL
+                tier TEXT NOT NULL,
+                model TEXT NOT NULL DEFAULT ''
             )
             """
         )
+        # databases created before the model column existed
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(detections)")}
+        if "model" not in columns:
+            conn.execute("ALTER TABLE detections ADD COLUMN model TEXT NOT NULL DEFAULT ''")
         conn.commit()
     finally:
         conn.close()
@@ -37,16 +42,17 @@ def save_detection(
     predicted_disease: str,
     disease_confidence: float,
     tier: str,
+    model: str = "",
 ) -> None:
     conn = sqlite3.connect(str(db_path))
     try:
         conn.execute(
             """
             INSERT INTO detections
-                (captured_at, predicted_crop, crop_confidence, predicted_disease, disease_confidence, tier)
-            VALUES (?, ?, ?, ?, ?, ?)
+                (captured_at, predicted_crop, crop_confidence, predicted_disease, disease_confidence, tier, model)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (captured_at, predicted_crop, crop_confidence, predicted_disease, disease_confidence, tier),
+            (captured_at, predicted_crop, crop_confidence, predicted_disease, disease_confidence, tier, model),
         )
         conn.commit()
     finally:
@@ -59,7 +65,7 @@ def get_recent(db_path: Path, limit: int = 20) -> list[dict]:
     try:
         rows = conn.execute(
             """
-            SELECT captured_at, predicted_crop, crop_confidence, predicted_disease, disease_confidence, tier
+            SELECT captured_at, predicted_crop, crop_confidence, predicted_disease, disease_confidence, tier, model
             FROM detections
             ORDER BY id DESC
             LIMIT ?
@@ -67,5 +73,14 @@ def get_recent(db_path: Path, limit: int = 20) -> list[dict]:
             (limit,),
         ).fetchall()
         return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def clear_detections(db_path: Path) -> None:
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute("DELETE FROM detections")
+        conn.commit()
     finally:
         conn.close()

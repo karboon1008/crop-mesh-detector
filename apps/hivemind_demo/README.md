@@ -1,7 +1,21 @@
 # HiveMind crop-disease demo
 
-Upload a leaf photo in the browser; the HiveMind-trained model predicts the crop and
-whether the leaf is healthy or diseased (and which disease).
+Pick a bundled sample, upload a leaf photo or use the camera; the HiveMind-trained model
+predicts the crop and whether the leaf is healthy or diseased (and which disease).
+
+## Using the dashboard
+
+1. **Choose a leaf photo** with *Sample photo*, *Upload* or *Camera*. Samples are held-out
+   photos with a known label, so the app says whether the model got them right.
+2. **Check what the model sees:** the detected leaf boxes, or (with leaf detection off) the
+   centre crop, adjusted with the zoom slider until the leaf fills the box.
+3. **Read the result:** Healthy, Diseased or Uncertain, with the top 3 crops and conditions.
+   A result is **Uncertain** when the crop or condition confidence is below 60%, or when
+   the predicted crop/condition pair never occurs in PlantVillage (e.g. apple + common rust),
+   which means the model's two outputs disagree. Uncertain results never send a phone alert.
+
+Every detection is logged in *Recent detections* with the model that made it. Use
+*Clear history* before a demo to start fresh.
 
 ## Run it
 
@@ -198,8 +212,9 @@ sends the sharp, full-resolution frame through the same two-stage diagnosis as a
   usually as strawberry leaf scorch. The model only saw full-frame lab photos, so it
   never learned to ignore the background.
 
-- `sample_images/` holds 26 held-out photos, never trained on by any farm. Each was
-  checked to be predicted correctly: `healthy_*.jpg` and `diseased_*.jpg`.
+- `sample_images/` holds 26 held-out photos, never trained on by any farm, shown under
+  *Sample photo* (the label is read from the file name: `healthy_*.jpg`, `diseased_*.jpg`).
+  The default model gets all 26 right, with leaf detection on or off.
 - Reliable classes (>= 88% on held-out images):
   - Apple: healthy, cedar rust, black rot
   - Tomato: healthy, yellow leaf curl virus, mosaic virus
